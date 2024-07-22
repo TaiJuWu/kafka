@@ -47,6 +47,8 @@ import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.internals.ClusterResourceListeners;
+import org.apache.kafka.common.message.ConsumerGroupHeartbeatRequestData;
+import org.apache.kafka.common.message.ConsumerGroupHeartbeatResponseData;
 import org.apache.kafka.common.message.FetchResponseData;
 import org.apache.kafka.common.message.HeartbeatResponseData;
 import org.apache.kafka.common.message.JoinGroupRequestData;
@@ -69,6 +71,8 @@ import org.apache.kafka.common.record.MemoryRecordsBuilder;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.AbstractResponse;
+import org.apache.kafka.common.requests.ConsumerGroupHeartbeatRequest;
+import org.apache.kafka.common.requests.ConsumerGroupHeartbeatResponse;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.requests.FetchResponse;
 import org.apache.kafka.common.requests.FindCoordinatorResponse;
@@ -913,6 +917,32 @@ public class KafkaConsumerTest {
 
         mockClient.updateMetadata(initialMetadata);
     }
+
+    @ParameterizedTest
+    @EnumSource(GroupProtocol.class)
+    public void testEffectiveReceiveMemebrIDAfterConsumerClose(GroupProtocol groupProtocol) {
+        SubscriptionState subscription = new SubscriptionState(new LogContext(), OffsetResetStrategy.NONE);
+        ConsumerMetadata metadata = createMetadata(subscription);
+        MockClient client = new MockClient(time, metadata);
+
+        initMetadata(client, Collections.singletonMap(topic, 1));
+
+        consumer = newConsumer(groupProtocol, time, client, subscription, metadata, assignor,
+                true, groupId, groupInstanceId, false);
+        consumer.subscribe(Collections.singletonList(topic));
+        consumer.poll(Duration.ZERO);
+
+        consumer.close();
+
+        String memberId = Uuid.randomUuid().toString();
+
+        client.respond(body -> body instanceof ConsumerGroupHeartbeatRequest, asyncHeartbeatResponse(memberId));
+        assertTrue(client.requests().stream().anyMatch(request ->
+                request.apiKey() == ApiKeys.CONSUMER_GROUP_HEARTBEAT &&
+                ((ConsumerGroupHeartbeatRequestData) request.requestBuilder().build().data()).memberId().equals(memberId)
+        ));
+    }
+
 
     @ParameterizedTest
     @EnumSource(value = GroupProtocol.class)
@@ -2671,6 +2701,14 @@ public class KafkaConsumerTest {
 
     private OffsetCommitResponse offsetCommitResponse(Map<TopicPartition, Errors> responseData) {
         return new OffsetCommitResponse(responseData);
+    }
+
+    private ConsumerGroupHeartbeatResponse asyncHeartbeatResponse(String memberId) {
+        return new ConsumerGroupHeartbeatResponse(
+                new ConsumerGroupHeartbeatResponseData()
+                        .setMemberEpoch(1)
+                        .setMemberId(memberId)
+        );
     }
 
     private JoinGroupResponse joinGroupFollowerResponse(ConsumerPartitionAssignor assignor, int generationId, String memberId, String leaderId, Errors error) {
