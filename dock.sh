@@ -1,0 +1,1 @@
+docker run -v ~/ws/kafka:/kafka --rm -ti azul/zulu-openjdk:22 /bin/bash
