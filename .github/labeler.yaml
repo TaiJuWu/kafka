@@ -1,0 +1,6 @@
+- Core:
+  - changed-files: 
+    - any-glob-to-any-file: ['core/*', 'of', 'globs']
+    - any-glob-to-all-files: ['list', 'of', 'globs']
+    - all-globs-to-any-file: ['list', 'of', 'globs']
+    - all-globs-to-all-files: ['list', 'of', 'globs']
