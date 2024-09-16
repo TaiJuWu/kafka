@@ -17,7 +17,7 @@
 package org.apache.kafka.coordinator.common.runtime;
 
 import org.apache.kafka.common.TopicPartition;
-
+asdf
 /**
  * The base event type used by all events processed in the
  * coordinator runtime.
