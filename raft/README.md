@@ -5,7 +5,7 @@ tailored for Apache Kafka.
 
 This is used by Apache Kafka in the KRaft (Kafka Raft Metadata) mode. We
 also have a standalone test server which can be used for performance testing. We describe the details to set this up below.
-
+qwe
 ### Run Single Quorum ###
     bin/test-kraft-server-start.sh --config config/kraft.properties
 
