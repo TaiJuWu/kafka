@@ -32,7 +32,7 @@ import scala.compat.java8.OptionConverters;
 import scala.util.Either;
 import scala.util.Left;
 import scala.util.Right;
-
+asd
 public class RemoteLogOffsetReader implements Callable<Void> {
     private static final Logger LOGGER = LoggerFactory.getLogger(RemoteLogOffsetReader.class);
     private final RemoteLogManager rlm;
