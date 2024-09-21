@@ -29,3 +29,8 @@ jobs:
     - uses: actions/labeler@v5
       with:
         configuration-path: .github/configs/labeler.yml
+    - uses: codelytv/pr-size-labeler@v1
+      with:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        xs_label: 'mirror'
+        xs_max_size: '10'
