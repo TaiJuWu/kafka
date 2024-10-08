@@ -45,7 +45,7 @@ GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN")
 REPO_KAFKA_SITE: str = "apache/kafka-site"
 REPO_KAFKA: str = "apache/kafka"
 ASF_YAML_PATH: str = "../.asf.yaml"
-TOP_N_CONTRIBUTORS: int = 10
+TOP_N_CONTRIBUTORS: int = 20
 
 
 def get_github_client() -> Github:
@@ -94,6 +94,10 @@ def get_top_contributors(repo: Repository, committers: List[str]) -> List[str]:
     sorted_contributors: List[Tuple[str, int]] = sorted(
         contributors.items(), key=lambda x: x[1], reverse=True
     )
+
+    from pprint import pprint
+    for i, contro in enumerate(sorted_contributors[:TOP_N_CONTRIBUTORS]):
+        print(i, contro)
 
     top_contributors = [login for login, _ in sorted_contributors][:TOP_N_CONTRIBUTORS]
     logging.info(
