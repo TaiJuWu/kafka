@@ -15,7 +15,8 @@
  * limitations under the License.
  */
 package org.apache.kafka.clients.consumer;
-
+import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.KafkaClient;
@@ -101,6 +102,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.MockedStatic;
 import org.mockito.internal.stubbing.answers.CallsRealMethods;
 
@@ -1961,7 +1963,7 @@ public class KafkaConsumerTest {
         client.prepareResponseFrom(joinGroupFollowerResponse(assignor, 1, memberId, leaderId, Errors.NONE), coordinator);
         client.prepareResponseFrom(syncGroupResponse(singletonList(tp0), Errors.NONE), coordinator);
 
-        client.prepareResponseFrom(body -> body instanceof FetchRequest 
+        client.prepareResponseFrom(body -> body instanceof FetchRequest
             && ((FetchRequest) body).fetchData(topicNames).containsKey(new TopicIdPartition(topicId, tp0)), fetchResponse(tp0, 1, 1), node);
         time.sleep(heartbeatIntervalMs);
         Thread.sleep(heartbeatIntervalMs);
@@ -3399,9 +3401,9 @@ public void testClosingConsumerUnregistersConsumerMetrics(GroupProtocol groupPro
             Node node = metadata.fetch().nodes().get(0);
             client.prepareResponseFrom(FindCoordinatorResponse.prepareResponse(Errors.NONE, groupId, node), node);
         }
-        
+
         final KafkaConsumer<String, String> consumer = newConsumer(groupProtocol, time, client, subscription, metadata, assignor, false, groupInstanceId);
-        
+
         int maxPreparedResponses = GroupProtocol.CLASSIC.equals(groupProtocol) ? 10 : 1;
         for (int i = 0; i < maxPreparedResponses; i++) {
             client.prepareResponse(
@@ -3422,26 +3424,73 @@ public void testClosingConsumerUnregistersConsumerMetrics(GroupProtocol groupPro
     @EnumSource(GroupProtocol.class)
     public void testCommittedThrowsTimeoutExceptionForNoResponse(GroupProtocol groupProtocol) {
         Time time = new MockTime(Duration.ofSeconds(1).toMillis());
-        
+
         ConsumerMetadata metadata = createMetadata(subscription);
         MockClient client = new MockClient(time, metadata);
-        
+
         initMetadata(client, Collections.singletonMap(topic, 2));
         Node node = metadata.fetch().nodes().get(0);
 
         client.prepareResponseFrom(FindCoordinatorResponse.prepareResponse(Errors.NONE, groupId, node), node);
         consumer = newConsumer(groupProtocol, time, client, subscription, metadata, assignor, true, groupInstanceId);
         consumer.assign(singletonList(tp0));
-        
+
         // lookup coordinator
         Node coordinator = new Node(Integer.MAX_VALUE - node.id(), node.host(), node.port());
-        
+
         // try to get committed offsets for one topic-partition - but it is disconnected so there's no response and it will time out
         client.prepareResponseFrom(offsetResponse(Collections.singletonMap(tp0, 0L), Errors.NONE), coordinator, true);
         org.apache.kafka.common.errors.TimeoutException timeoutException = assertThrows(org.apache.kafka.common.errors.TimeoutException.class,
             () -> consumer.committed(Collections.singleton(tp0), Duration.ofMillis(1000L)));
         assertEquals("Timeout of 1000ms expired before the last committed offset for partitions [test-0] could be determined. " +
             "Try tuning default.api.timeout.ms larger to relax the threshold.", timeoutException.getMessage());
+    }
+
+    private static class TestCase {
+        GroupProtocol groupProtocol;
+        String methodName;
+        List<Object> parameters;
+
+        TestCase(GroupProtocol groupProtocol, String methodName, List<Object> parameters) {
+            this.groupProtocol = groupProtocol;
+            this.methodName = methodName;
+            this.parameters = parameters;
+        }
+
+        public String toString() {
+            return methodName;
+        }
+    }
+
+    static Stream<TestCase> generate() {
+        return Stream.of(new TestCase(GroupProtocol.CONSUMER, "poll", Collections.singletonList(Duration.ZERO)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("generate")
+    public void test(TestCase testCase) throws InterruptedException, NoSuchMethodException {
+        GroupProtocol groupProtocol = testCase.groupProtocol;
+        ConsumerMetadata metadata = createMetadata(subscription);
+        MockClient client = new MockClient(time, metadata);
+        initMetadata(client, Collections.singletonMap(topic, 1));
+        KafkaConsumer<String, String> consumer = newConsumer(groupProtocol, time, client, subscription, metadata,
+                new RoundRobinAssignor(), true, groupInstanceId);
+        consumer.subscribe(singletonList(topic));
+        Method specificMethod = consumer.getClass().getMethod(testCase.methodName, testCase.parameters.get(0).getClass());
+
+        client.enableBlockingUntilWakeup(1);
+        ExecutorService service = Executors.newSingleThreadExecutor();
+        service.execute(() -> consumer.poll(Duration.ofSeconds(5)));
+        try {
+            TimeUnit.SECONDS.sleep(1);
+            Throwable e = assertThrows(InvocationTargetException.class, () -> specificMethod.invoke(consumer, testCase.parameters.get(0)));
+            assertTrue(e.getCause().toString().contains("ConcurrentModificationException"));
+            client.wakeup();
+            consumer.wakeup();
+        } finally {
+            service.shutdown();
+            service.awaitTermination(10, TimeUnit.SECONDS);
+        }
     }
 
     @ParameterizedTest
@@ -3465,6 +3514,7 @@ public void testClosingConsumerUnregistersConsumerMetrics(GroupProtocol groupPro
             assertThrows(ConcurrentModificationException.class, () -> consumer.subscription());
             assertThrows(ConcurrentModificationException.class, () -> consumer.subscribe(Collections.emptyList()));
             assertThrows(ConcurrentModificationException.class, () -> consumer.unsubscribe());
+            assertThrows(ConcurrentModificationException.class, () -> consumer.assign(Collections.singleton(tp)));
             assertThrows(ConcurrentModificationException.class, () -> consumer.commitSync());
             assertThrows(ConcurrentModificationException.class, () -> consumer.commitAsync());
             assertThrows(ConcurrentModificationException.class, () -> consumer.seek(tp, 0));
@@ -3472,6 +3522,10 @@ public void testClosingConsumerUnregistersConsumerMetrics(GroupProtocol groupPro
             assertThrows(ConcurrentModificationException.class, () -> consumer.seekToEnd(Collections.singleton(tp)));
             assertThrows(ConcurrentModificationException.class, () -> consumer.position(tp));
             assertThrows(ConcurrentModificationException.class, () -> consumer.committed(Collections.singleton(tp)));
+//            assertThrows(ConcurrentModificationException.class, () -> consumer.clientInstanceId(Duration.ZERO));
+//            assertThrows(ConcurrentModificationException.class, () -> consumer.metrics());
+            assertThrows(ConcurrentModificationException.class, () -> consumer.partitionsFor("test"));
+            assertThrows(ConcurrentModificationException.class, () -> consumer.pause(Collections.singleton(tp)));
             assertThrows(ConcurrentModificationException.class, () -> consumer.listTopics());
             assertThrows(ConcurrentModificationException.class, () -> consumer.paused());
             assertThrows(ConcurrentModificationException.class, () -> consumer.resume(Collections.emptyList()));
@@ -3479,11 +3533,20 @@ public void testClosingConsumerUnregistersConsumerMetrics(GroupProtocol groupPro
             assertThrows(ConcurrentModificationException.class, () -> consumer.beginningOffsets(Collections.emptyList(), Duration.ZERO));
             assertThrows(ConcurrentModificationException.class, () -> consumer.endOffsets(Collections.emptyList(), Duration.ZERO));
             assertThrows(ConcurrentModificationException.class, () -> consumer.currentLag(tp));
+            assertThrows(ConcurrentModificationException.class, () -> consumer.groupMetadata());
+//            assertThrows(ConcurrentModificationException.class, () -> consumer.enforceRebalance()); // does not work for asyncConsumer
+            assertThrows(ConcurrentModificationException.class, () -> consumer.close());
+//            assertThrows(ConcurrentModificationException.class, () -> consumer.wakeup());
+            assertThrows(ConcurrentModificationException.class, () -> consumer.clientId());
+            assertThrows(ConcurrentModificationException.class, () -> consumer.metricsRegistry());
+            assertThrows(ConcurrentModificationException.class, () -> consumer.kafkaConsumerMetrics());
+            assertThrows(ConcurrentModificationException.class, () -> consumer.updateAssignmentMetadataIfNeeded(time.timer(Long.MAX_VALUE)));
+//            assertThrows(ConcurrentModificationException.class, () -> consumer.registerMetricForSubscription(time.timer(Long.MAX_VALUE)));
             client.wakeup();
             consumer.wakeup();
         } finally {
             service.shutdown();
-            assertTrue(service.awaitTermination(10, TimeUnit.SECONDS));
+            service.awaitTermination(10, TimeUnit.SECONDS);
         }
     }
 
