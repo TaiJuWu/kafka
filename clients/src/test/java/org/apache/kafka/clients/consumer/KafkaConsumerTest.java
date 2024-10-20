@@ -3463,7 +3463,45 @@ public void testClosingConsumerUnregistersConsumerMetrics(GroupProtocol groupPro
     }
 
     static Stream<TestCase> generate() {
-        return Stream.of(new TestCase(GroupProtocol.CONSUMER, "poll", Collections.singletonList(Duration.ZERO)));
+        List<TestCase> testCases = new ArrayList<>();
+        TopicPartition tp = new TopicPartition("test", 0);
+        for (GroupProtocol groupProtocol : GroupProtocol.values()) {
+//            testCases.add(new TestCase(groupProtocol, "poll", Collections.singletonList(Duration.ZERO)));
+//            testCases.add(new TestCase(groupProtocol, "assignment", Collections.emptyList()));
+//            testCases.add(new TestCase(groupProtocol, "subscription", Collections.emptyList()));
+            testCases.add(new TestCase(groupProtocol, "subscribe", Collections.singletonList(Collections.singleton(tp))));
+//            testCases.add(new TestCase(groupProtocol, "unsubscribe", Collections.singletonList(Duration.ZERO)));
+//            testCases.add(new TestCase(groupProtocol, "commitSync", Collections.emptyList()));
+//            testCases.add(new TestCase(groupProtocol, "seek", ArrayList.of((Object) tp, (Object)0)));
+//            testCases.add(new TestCase(groupProtocol, "poll", Collections.singletonList(Duration.ZERO)));
+//            testCases.add(new TestCase(groupProtocol, "poll", Collections.singletonList(Duration.ZERO)));
+//            testCases.add(new TestCase(groupProtocol, "poll", Collections.singletonList(Duration.ZERO)));
+//            testCases.add(new TestCase(groupProtocol, "poll", Collections.singletonList(Duration.ZERO)));
+
+        }
+
+        return testCases.stream();
+    }
+
+    private void invokeSpecificMethod(KafkaConsumer<String, String> consumer, TestCase testCase)
+            throws NoSuchMethodException, IllegalAccessException, IllegalArgumentException, InvocationTargetException {
+        if (testCase.parameters.size() == 0) {
+            Method specificMethod = consumer.getClass().getMethod(testCase.methodName);
+            specificMethod.invoke(consumer);
+        } else if (testCase.parameters.size() == 1) {
+            System.out.print("lllll " + testCase.parameters.get(0).getClass().getClass());
+            Method specificMethod = consumer.getClass().getMethod(testCase.methodName, testCase.parameters.get(0).getClass());
+//            Method specificMethod = consumer.getClass().getMethod(testCase.methodName, Collection.class);
+            specificMethod.invoke(consumer, testCase.parameters.get(0));
+        } else if (testCase.parameters.size() == 2) {
+            Method specificMethod = consumer.getClass().getMethod(testCase.methodName, testCase.parameters.get(0).getClass(),
+                    testCase.parameters.get(1).getClass());
+            specificMethod.invoke(consumer, testCase.parameters.get(0), testCase.parameters.get(1));
+        } else {
+            Method specificMethod = consumer.getClass().getMethod(testCase.methodName, testCase.parameters.get(0).getClass(),
+                    testCase.parameters.get(1).getClass(), testCase.parameters.get(2).getClass());
+            specificMethod.invoke(consumer, testCase.parameters.get(0), testCase.parameters.get(1), testCase.parameters.get(2));
+        }
     }
 
     @ParameterizedTest
@@ -3476,14 +3514,13 @@ public void testClosingConsumerUnregistersConsumerMetrics(GroupProtocol groupPro
         KafkaConsumer<String, String> consumer = newConsumer(groupProtocol, time, client, subscription, metadata,
                 new RoundRobinAssignor(), true, groupInstanceId);
         consumer.subscribe(singletonList(topic));
-        Method specificMethod = consumer.getClass().getMethod(testCase.methodName, testCase.parameters.get(0).getClass());
 
         client.enableBlockingUntilWakeup(1);
         ExecutorService service = Executors.newSingleThreadExecutor();
         service.execute(() -> consumer.poll(Duration.ofSeconds(5)));
         try {
             TimeUnit.SECONDS.sleep(1);
-            Throwable e = assertThrows(InvocationTargetException.class, () -> specificMethod.invoke(consumer, testCase.parameters.get(0)));
+            Throwable e = assertThrows(InvocationTargetException.class, () -> invokeSpecificMethod(consumer, testCase));
             assertTrue(e.getCause().toString().contains("ConcurrentModificationException"));
             client.wakeup();
             consumer.wakeup();
