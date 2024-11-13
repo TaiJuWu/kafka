@@ -80,17 +80,18 @@ public final class ProducerBatch {
     private long drainedMs;
     private boolean retry;
     private boolean reopened;
+    private short acks;
 
     // Tracks the current-leader's epoch to which this batch would be sent, in the current to produce the batch.
     private OptionalInt currentLeaderEpoch;
     // Tracks the attempt in which leader was changed to currentLeaderEpoch for the 1st time.
     private int attemptsWhenLeaderLastChanged;
 
-    public ProducerBatch(TopicPartition tp, MemoryRecordsBuilder recordsBuilder, long createdMs) {
-        this(tp, recordsBuilder, createdMs, false);
+    public ProducerBatch(TopicPartition tp, MemoryRecordsBuilder recordsBuilder, long createdMs, short acks) {
+        this(tp, recordsBuilder, createdMs, false, acks);
     }
 
-    public ProducerBatch(TopicPartition tp, MemoryRecordsBuilder recordsBuilder, long createdMs, boolean isSplitBatch) {
+    public ProducerBatch(TopicPartition tp, MemoryRecordsBuilder recordsBuilder, long createdMs, boolean isSplitBatch, short acks) {
         this.createdMs = createdMs;
         this.lastAttemptMs = createdMs;
         this.recordsBuilder = recordsBuilder;
@@ -103,6 +104,7 @@ public final class ProducerBatch {
                                                                                 recordsBuilder.compression().type());
         this.currentLeaderEpoch = OptionalInt.empty();
         this.attemptsWhenLeaderLastChanged = 0;
+        this.acks = acks;
         recordsBuilder.setEstimatedCompressionRatio(compressionRatioEstimation);
     }
 
@@ -386,11 +388,15 @@ public final class ProducerBatch {
         // with how normal batches are handled).
         MemoryRecordsBuilder builder = MemoryRecords.builder(buffer, magic(), recordsBuilder.compression(),
                 TimestampType.CREATE_TIME, 0L);
-        return new ProducerBatch(topicPartition, builder, this.createdMs, true);
+        return new ProducerBatch(topicPartition, builder, this.createdMs, true, acks);
     }
 
     public boolean isCompressed() {
         return recordsBuilder.compression().type() != CompressionType.NONE;
+    }
+
+    public short acks() {
+        return acks;
     }
 
     /**
@@ -408,7 +414,7 @@ public final class ProducerBatch {
 
     @Override
     public String toString() {
-        return "ProducerBatch(topicPartition=" + topicPartition + ", recordCount=" + recordCount + ")";
+        return "ProducerBatch(topicPartition=" + topicPartition + ", recordCount=" + recordCount + ", acks=" + acks + ")";
     }
 
     boolean hasReachedDeliveryTimeout(long deliveryTimeoutMs, long now) {

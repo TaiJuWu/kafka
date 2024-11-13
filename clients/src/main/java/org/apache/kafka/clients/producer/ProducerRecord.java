@@ -54,6 +54,7 @@ public class ProducerRecord<K, V> {
     private final K key;
     private final V value;
     private final Long timestamp;
+    private final Short acks;
 
     /**
      * Creates a record with a specified timestamp to be sent to a specified topic and partition
@@ -65,8 +66,9 @@ public class ProducerRecord<K, V> {
      * @param key The key that will be included in the record
      * @param value The record contents
      * @param headers the headers that will be included in the record
+     * @param acks acks that will be included in the record
      */
-    public ProducerRecord(String topic, Integer partition, Long timestamp, K key, V value, Iterable<Header> headers) {
+    public ProducerRecord(String topic, Integer partition, Long timestamp, K key, V value, Iterable<Header> headers, Short acks) {
         if (topic == null)
             throw new IllegalArgumentException("Topic cannot be null.");
         if (timestamp != null && timestamp < 0)
@@ -81,6 +83,23 @@ public class ProducerRecord<K, V> {
         this.value = value;
         this.timestamp = timestamp;
         this.headers = new RecordHeaders(headers);
+        this.acks = acks;
+    }
+
+
+    /**
+     * Creates a record with a specified timestamp to be sent to a specified topic and partition
+     *
+     * @param topic The topic the record will be appended to
+     * @param partition The partition to which the record should be sent
+     * @param timestamp The timestamp of the record, in milliseconds since epoch. If null, the producer will assign
+     *                  the timestamp using System.currentTimeMillis().
+     * @param key The key that will be included in the record
+     * @param value The record contents
+     * @param headers the headers that will be included in the record
+     */
+    public ProducerRecord(String topic, Integer partition, Long timestamp, K key, V value, Iterable<Header> headers) {
+        this(topic, partition, timestamp, key, value, headers, null);
     }
 
     /**
@@ -185,14 +204,19 @@ public class ProducerRecord<K, V> {
         return partition;
     }
 
+    public Short acks() {
+        return acks;
+    }
+
     @Override
     public String toString() {
         String headers = this.headers == null ? "null" : this.headers.toString();
         String key = this.key == null ? "null" : this.key.toString();
         String value = this.value == null ? "null" : this.value.toString();
         String timestamp = this.timestamp == null ? "null" : this.timestamp.toString();
+        String acks = this.acks == null ? "null" : this.acks.toString();
         return "ProducerRecord(topic=" + topic + ", partition=" + partition + ", headers=" + headers + ", key=" + key + ", value=" + value +
-            ", timestamp=" + timestamp + ")";
+            ", timestamp=" + timestamp + ", acks=" + acks + ")";
     }
 
     @Override
@@ -209,7 +233,8 @@ public class ProducerRecord<K, V> {
             Objects.equals(topic, that.topic) &&
             Objects.equals(headers, that.headers) &&
             Objects.equals(value, that.value) &&
-            Objects.equals(timestamp, that.timestamp);
+            Objects.equals(timestamp, that.timestamp) &&
+            Objects.equals(acks, that.acks);
     }
 
     @Override
@@ -220,6 +245,7 @@ public class ProducerRecord<K, V> {
         result = 31 * result + (key != null ? key.hashCode() : 0);
         result = 31 * result + (value != null ? value.hashCode() : 0);
         result = 31 * result + (timestamp != null ? timestamp.hashCode() : 0);
+        result = 31 * result + (acks != null ? acks.hashCode() : 0);
         return result;
     }
 }

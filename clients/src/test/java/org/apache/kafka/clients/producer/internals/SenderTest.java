@@ -492,7 +492,7 @@ public class SenderTest {
                     expiryCallbackCount.incrementAndGet();
                     try {
                         accumulator.append(tp1.topic(), tp1.partition(), 0L, key, value,
-                            Record.EMPTY_HEADERS, null, maxBlockTimeMs, false, time.milliseconds(), metadataCache.cluster());
+                            Record.EMPTY_HEADERS, ACKS_ALL, null, maxBlockTimeMs, false, time.milliseconds(), metadataCache.cluster());
                     } catch (InterruptedException e) {
                         throw new RuntimeException("Unexpected interruption", e);
                     }
@@ -503,7 +503,7 @@ public class SenderTest {
 
         final long nowMs = time.milliseconds();
         for (int i = 0; i < messagesPerBatch; i++)
-            accumulator.append(tp1.topic(), tp1.partition(), 0L, key, value, null, callbacks, maxBlockTimeMs, false, nowMs, metadataCache.cluster());
+            accumulator.append(tp1.topic(), tp1.partition(), 0L, key, value, null, ACKS_ALL, callbacks, maxBlockTimeMs, false, nowMs, metadataCache.cluster());
 
         // Advance the clock to expire the first batch.
         time.sleep(10000);
@@ -522,9 +522,9 @@ public class SenderTest {
         assertEquals(messagesPerBatch, expiryCallbackCount.get(), "Callbacks not invoked for expiry");
         assertNull(unexpectedException.get(), "Unexpected exception");
         // Make sure that the records were appended back to the batch.
-        assertNotNull(accumulator.getDeque(tp1));
-        assertEquals(1, accumulator.getDeque(tp1).size());
-        assertEquals(messagesPerBatch, accumulator.getDeque(tp1).peekFirst().recordCount);
+        assertNotNull(accumulator.getDeque(tp1, ACKS_ALL));
+        assertEquals(1, accumulator.getDeque(tp1, ACKS_ALL).size());
+        assertEquals(messagesPerBatch, accumulator.getDeque(tp1, ACKS_ALL).peekFirst().recordCount);
     }
 
     /**
@@ -1296,7 +1296,7 @@ public class SenderTest {
         client.respondToRequest(secondClientRequest, produceResponse(tp0, -1, Errors.OUT_OF_ORDER_SEQUENCE_NUMBER, -1));
 
         sender.runOnce(); // receive response 1
-        Deque<ProducerBatch> queuedBatches = accumulator.getDeque(tp0);
+        Deque<ProducerBatch> queuedBatches = accumulator.getDeque(tp0, ACKS_ALL);
 
         // Make sure that we are queueing the second batch first.
         assertEquals(1, queuedBatches.size());
@@ -1377,7 +1377,7 @@ public class SenderTest {
         assertTrue(request2.isDone());
         assertEquals(1, request2.get().offset());
         assertFalse(request1.isDone());
-        Deque<ProducerBatch> queuedBatches = accumulator.getDeque(tp0);
+        Deque<ProducerBatch> queuedBatches = accumulator.getDeque(tp0, ACKS_ALL);
 
         assertEquals(0, queuedBatches.size());
         assertEquals(1, client.inFlightRequestCount());
@@ -1485,7 +1485,7 @@ public class SenderTest {
         assertEquals(1, request2.get().offset());
         assertEquals(0, sender.inFlightBatches(tp0).size());
 
-        Deque<ProducerBatch> batches = accumulator.getDeque(tp0);
+        Deque<ProducerBatch> batches = accumulator.getDeque(tp0, ACKS_ALL);
         assertEquals(1, batches.size());
         assertFalse(batches.peekFirst().hasSequence());
         assertFalse(client.hasInFlightRequests());
@@ -1540,7 +1540,7 @@ public class SenderTest {
         sendIdempotentProducerResponse(1, tp0, Errors.OUT_OF_ORDER_SEQUENCE_NUMBER, 1);
         sender.runOnce(); // receive second response, the third request shouldn't be sent since we are in an unresolved state.
 
-        Deque<ProducerBatch> batches = accumulator.getDeque(tp0);
+        Deque<ProducerBatch> batches = accumulator.getDeque(tp0, ACKS_ALL);
 
         // The epoch should be bumped and the second request should be requeued
         assertEquals(2, batches.size());
@@ -1620,7 +1620,7 @@ public class SenderTest {
         assertFutureFailure(request1, TimeoutException.class);
         assertTrue(transactionManager.hasUnresolvedSequence(tp0));
         assertFalse(client.hasInFlightRequests());
-        Deque<ProducerBatch> batches = accumulator.getDeque(tp0);
+        Deque<ProducerBatch> batches = accumulator.getDeque(tp0, ACKS_ALL);
         assertEquals(0, batches.size());
         assertEquals(producerId, transactionManager.producerIdAndEpoch().producerId);
 
@@ -2435,9 +2435,9 @@ public class SenderTest {
             long nowMs = time.milliseconds();
             Cluster cluster = TestUtils.singletonCluster();
             Future<RecordMetadata> f1 =
-                    accumulator.append(tp.topic(), tp.partition(), 0L, "key1".getBytes(), new byte[batchSize / 2], null, null, MAX_BLOCK_TIMEOUT, false, nowMs, cluster).future;
+                    accumulator.append(tp.topic(), tp.partition(), 0L, "key1".getBytes(), new byte[batchSize / 2], null, ACKS_ALL, null, MAX_BLOCK_TIMEOUT, false, nowMs, cluster).future;
             Future<RecordMetadata> f2 =
-                    accumulator.append(tp.topic(), tp.partition(), 0L, "key2".getBytes(), new byte[batchSize / 2], null, null, MAX_BLOCK_TIMEOUT, false, nowMs, cluster).future;
+                    accumulator.append(tp.topic(), tp.partition(), 0L, "key2".getBytes(), new byte[batchSize / 2], null, ACKS_ALL, null, MAX_BLOCK_TIMEOUT, false, nowMs, cluster).future;
             sender.runOnce(); // connect
             sender.runOnce(); // send produce request
 
@@ -2492,7 +2492,7 @@ public class SenderTest {
             assertEquals(2, txnManager.sequenceNumber(tp), "The next sequence number should be 2");
             assertEquals(OptionalInt.of(1), txnManager.lastAckedSequence(tp), "The last ack'd sequence number should be 1");
             assertEquals(1L, f2.get().offset(), "Offset of the first message should be 1");
-            assertTrue(accumulator.getDeque(tp).isEmpty(), "There should be no batch in the accumulator");
+            assertTrue(accumulator.getDeque(tp, ACKS_ALL).isEmpty(), "There should be no batch in the accumulator");
             assertTrue((Double) (m.metrics().get(senderMetrics.batchSplitRate).metricValue()) > 0, "There should be a split");
         }
     }
@@ -3600,7 +3600,7 @@ public class SenderTest {
 
     private FutureRecordMetadata appendToAccumulator(TopicPartition tp, long timestamp, String key, String value) throws InterruptedException {
         return accumulator.append(tp.topic(), tp.partition(), timestamp, key.getBytes(), value.getBytes(), Record.EMPTY_HEADERS,
-                null, MAX_BLOCK_TIMEOUT, false, time.milliseconds(), TestUtils.singletonCluster()).future;
+                ACKS_ALL, null, MAX_BLOCK_TIMEOUT, false, time.milliseconds(), TestUtils.singletonCluster()).future;
     }
 
     @SuppressWarnings("deprecation")
