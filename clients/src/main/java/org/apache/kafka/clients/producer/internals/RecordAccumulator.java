@@ -69,6 +69,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class RecordAccumulator {
 
+    public static final short[] ACKS_ORDER = {0, 1, -1};
+
     private final LogContext logContext;
     private final Logger log;
     private volatile boolean closed;
@@ -289,6 +291,7 @@ public class RecordAccumulator {
                                      byte[] key,
                                      byte[] value,
                                      Header[] headers,
+                                     Short acks,
                                      AppendCallbacks callbacks,
                                      long maxTimeToBlock,
                                      boolean abortOnNewBatch,
@@ -322,7 +325,7 @@ public class RecordAccumulator {
                 setPartition(callbacks, effectivePartition);
 
                 // check if we have an in-progress batch
-                Deque<ProducerBatch> dq = topicInfo.batches.computeIfAbsent(effectivePartition, k -> new ArrayDeque<>());
+                Deque<ProducerBatch> dq = topicInfo.batchesWithAcks.get(acks).computeIfAbsent(effectivePartition, k -> new ArrayDeque<>());
                 synchronized (dq) {
                     // After taking the lock, validate that the partition hasn't changed and retry.
                     if (partitionChanged(topic, topicInfo, partitionInfo, dq, nowMs, cluster))
@@ -360,7 +363,7 @@ public class RecordAccumulator {
                     if (partitionChanged(topic, topicInfo, partitionInfo, dq, nowMs, cluster))
                         continue;
 
-                    RecordAppendResult appendResult = appendNewBatch(topic, effectivePartition, dq, timestamp, key, value, headers, callbacks, buffer, nowMs);
+                    RecordAppendResult appendResult = appendNewBatch(topic, effectivePartition, dq, timestamp, key, value, headers, acks, callbacks, buffer, nowMs);
                     // Set buffer to null, so that deallocate doesn't return it back to free pool, since it's used in the batch.
                     if (appendResult.newBatchCreated)
                         buffer = null;
@@ -397,6 +400,7 @@ public class RecordAccumulator {
                                               byte[] key,
                                               byte[] value,
                                               Header[] headers,
+                                              Short acks,
                                               AppendCallbacks callbacks,
                                               ByteBuffer buffer,
                                               long nowMs) {
@@ -409,7 +413,7 @@ public class RecordAccumulator {
         }
 
         MemoryRecordsBuilder recordsBuilder = recordsBuilder(buffer, apiVersions.maxUsableProduceMagic());
-        ProducerBatch batch = new ProducerBatch(new TopicPartition(topic, partition), recordsBuilder, nowMs);
+        ProducerBatch batch = new ProducerBatch(new TopicPartition(topic, partition), recordsBuilder, nowMs, acks);
         FutureRecordMetadata future = Objects.requireNonNull(batch.tryAppend(timestamp, key, value, headers,
                 callbacks, nowMs));
 
@@ -487,18 +491,20 @@ public class RecordAccumulator {
     public List<ProducerBatch> expiredBatches(long now) {
         List<ProducerBatch> expiredBatches = new ArrayList<>();
         for (TopicInfo topicInfo : topicInfoMap.values()) {
-            for (Deque<ProducerBatch> deque : topicInfo.batches.values()) {
-                // expire the batches in the order of sending
-                synchronized (deque) {
-                    while (!deque.isEmpty()) {
-                        ProducerBatch batch = deque.getFirst();
-                        if (batch.hasReachedDeliveryTimeout(deliveryTimeoutMs, now)) {
-                            deque.poll();
-                            batch.abortRecordAppends();
-                            expiredBatches.add(batch);
-                        } else {
-                            maybeUpdateNextBatchExpiryTime(batch);
-                            break;
+            for (ConcurrentMap<Integer, Deque<ProducerBatch>> deques : topicInfo.batchesWithAcks.values()) {
+                for (Deque<ProducerBatch> deque : deques.values()) {
+                    // expire the batches in the order of sending
+                    synchronized (deque) {
+                        while (!deque.isEmpty()) {
+                            ProducerBatch batch = deque.getFirst();
+                            if (batch.hasReachedDeliveryTimeout(deliveryTimeoutMs, now)) {
+                                deque.poll();
+                                batch.abortRecordAppends();
+                                expiredBatches.add(batch);
+                            } else {
+                                maybeUpdateNextBatchExpiryTime(batch);
+                                break;
+                            }
                         }
                     }
                 }
@@ -517,7 +523,7 @@ public class RecordAccumulator {
      */
     public void reenqueue(ProducerBatch batch, long now) {
         batch.reenqueued(now);
-        Deque<ProducerBatch> deque = getOrCreateDeque(batch.topicPartition);
+        Deque<ProducerBatch> deque = getOrCreateDeque(batch.topicPartition, batch.acks());
         synchronized (deque) {
             if (transactionManager != null)
                 insertInSequenceOrder(deque, batch);
@@ -538,7 +544,7 @@ public class RecordAccumulator {
                                                 Math.max(1.0f, (float) bigBatch.compressionRatio()));
         Deque<ProducerBatch> dq = bigBatch.split(this.batchSize);
         int numSplitBatches = dq.size();
-        Deque<ProducerBatch> partitionDequeue = getOrCreateDeque(bigBatch.topicPartition);
+        Deque<ProducerBatch> partitionDequeue = getOrCreateDeque(bigBatch.topicPartition, bigBatch.acks());
         while (!dq.isEmpty()) {
             ProducerBatch batch = dq.pollLast();
             incomplete.add(batch);
@@ -665,99 +671,102 @@ public class RecordAccumulator {
     private long partitionReady(MetadataSnapshot metadataSnapshot, long nowMs, String topic,
                                 TopicInfo topicInfo,
                                 long nextReadyCheckDelayMs, Set<Node> readyNodes, Set<String> unknownLeaderTopics) {
-        ConcurrentMap<Integer, Deque<ProducerBatch>> batches = topicInfo.batches;
-        // Collect the queue sizes for available partitions to be used in adaptive partitioning.
-        int[] queueSizes = null;
-        int[] partitionIds = null;
-        if (enableAdaptivePartitioning && batches.size() >= metadataSnapshot.cluster().partitionsForTopic(topic).size()) {
-            // We don't do adaptive partitioning until we scheduled at least a batch for all
-            // partitions (i.e. we have the corresponding entries in the batches map), we just
-            // do uniform.  The reason is that we build queue sizes from the batches map,
-            // and if an entry is missing in the batches map, then adaptive partitioning logic
-            // won't know about it and won't switch to it.
-            queueSizes = new int[batches.size()];
-            partitionIds = new int[queueSizes.length];
-        }
-
-        int queueSizesIndex = -1;
-        boolean exhausted = this.free.queued() > 0;
-        for (Map.Entry<Integer, Deque<ProducerBatch>> entry : batches.entrySet()) {
-            TopicPartition part = new TopicPartition(topic, entry.getKey());
-            // Advance queueSizesIndex so that we properly index available
-            // partitions.  Do it here so that it's done for all code paths.
-
-            Node leader = metadataSnapshot.cluster().leaderFor(part);
-            if (leader != null && queueSizes != null) {
-                ++queueSizesIndex;
-                assert queueSizesIndex < queueSizes.length;
-                partitionIds[queueSizesIndex] = part.partition();
+        // TODO: Could be optimized?
+        for (short acks : ACKS_ORDER) {
+            ConcurrentMap<Integer, Deque<ProducerBatch>> batches = topicInfo.batchesWithAcks.get(acks);
+            // Collect the queue sizes for available partitions to be used in adaptive partitioning.
+            int[] queueSizes = null;
+            int[] partitionIds = null;
+            if (enableAdaptivePartitioning && batches.size() >= metadataSnapshot.cluster().partitionsForTopic(topic).size()) {
+                // We don't do adaptive partitioning until we scheduled at least a batch for all
+                // partitions (i.e. we have the corresponding entries in the batches map), we just
+                // do uniform.  The reason is that we build queue sizes from the batches map,
+                // and if an entry is missing in the batches map, then adaptive partitioning logic
+                // won't know about it and won't switch to it.
+                queueSizes = new int[batches.size()];
+                partitionIds = new int[queueSizes.length];
             }
 
-            Deque<ProducerBatch> deque = entry.getValue();
+            int queueSizesIndex = -1;
+            boolean exhausted = this.free.queued() > 0;
+            for (Map.Entry<Integer, Deque<ProducerBatch>> entry : batches.entrySet()) {
+                TopicPartition part = new TopicPartition(topic, entry.getKey());
+                // Advance queueSizesIndex so that we properly index available
+                // partitions.  Do it here so that it's done for all code paths.
 
-            final long waitedTimeMs;
-            final boolean backingOff;
-            final int backoffAttempts;
-            final int dequeSize;
-            final boolean full;
-
-            OptionalInt leaderEpoch = metadataSnapshot.leaderEpochFor(part);
-
-            // This loop is especially hot with large partition counts. So -
-
-            // 1. We should avoid code that increases synchronization between application thread calling
-            // send(), and background thread running runOnce(), see https://issues.apache.org/jira/browse/KAFKA-16226
-
-            // 2. We are careful to only perform the minimum required inside the
-            // synchronized block, as this lock is also used to synchronize producer threads
-            // attempting to append() to a partition/batch.
-
-            synchronized (deque) {
-                // Deques are often empty in this path, esp with large partition counts,
-                // so we exit early if we can.
-                ProducerBatch batch = deque.peekFirst();
-                if (batch == null) {
-                    continue;
+                Node leader = metadataSnapshot.cluster().leaderFor(part);
+                if (leader != null && queueSizes != null) {
+                    ++queueSizesIndex;
+                    assert queueSizesIndex < queueSizes.length;
+                    partitionIds[queueSizesIndex] = part.partition();
                 }
 
-                waitedTimeMs = batch.waitedTimeMs(nowMs);
-                batch.maybeUpdateLeaderEpoch(leaderEpoch);
-                backingOff = shouldBackoff(batch.hasLeaderChangedForTheOngoingRetry(), batch, waitedTimeMs);
-                backoffAttempts = batch.attempts();
-                dequeSize = deque.size();
-                full = dequeSize > 1 || batch.isFull();
-            }
+                Deque<ProducerBatch> deque = entry.getValue();
 
-            if (leader == null) {
-                // This is a partition for which leader is not known, but messages are available to send.
-                // Note that entries are currently not removed from batches when deque is empty.
-                unknownLeaderTopics.add(part.topic());
-            } else {
-                if (queueSizes != null)
-                    queueSizes[queueSizesIndex] = dequeSize;
-                if (partitionAvailabilityTimeoutMs > 0) {
-                    // Check if we want to exclude the partition from the list of available partitions
-                    // if the broker hasn't responded for some time.
-                    NodeLatencyStats nodeLatencyStats = nodeStats.get(leader.id());
-                    if (nodeLatencyStats != null) {
-                        // NOTE: there is no synchronization between reading metrics,
-                        // so we read ready time first to avoid accidentally marking partition
-                        // unavailable if we read while the metrics are being updated.
-                        long readyTimeMs = nodeLatencyStats.readyTimeMs;
-                        if (readyTimeMs - nodeLatencyStats.drainTimeMs > partitionAvailabilityTimeoutMs)
-                            --queueSizesIndex;
+                final long waitedTimeMs;
+                final boolean backingOff;
+                final int backoffAttempts;
+                final int dequeSize;
+                final boolean full;
+
+                OptionalInt leaderEpoch = metadataSnapshot.leaderEpochFor(part);
+
+                // This loop is especially hot with large partition counts. So -
+
+                // 1. We should avoid code that increases synchronization between application thread calling
+                // send(), and background thread running runOnce(), see https://issues.apache.org/jira/browse/KAFKA-16226
+
+                // 2. We are careful to only perform the minimum required inside the
+                // synchronized block, as this lock is also used to synchronize producer threads
+                // attempting to append() to a partition/batch.
+
+                synchronized (deque) {
+                    // Deques are often empty in this path, esp with large partition counts,
+                    // so we exit early if we can.
+                    ProducerBatch batch = deque.peekFirst();
+                    if (batch == null) {
+                        continue;
                     }
+
+                    waitedTimeMs = batch.waitedTimeMs(nowMs);
+                    batch.maybeUpdateLeaderEpoch(leaderEpoch);
+                    backingOff = shouldBackoff(batch.hasLeaderChangedForTheOngoingRetry(), batch, waitedTimeMs);
+                    backoffAttempts = batch.attempts();
+                    dequeSize = deque.size();
+                    full = dequeSize > 1 || batch.isFull();
                 }
 
-                nextReadyCheckDelayMs = batchReady(exhausted, part, leader, waitedTimeMs, backingOff,
-                    backoffAttempts, full, nextReadyCheckDelayMs, readyNodes);
-            }
-        }
+                if (leader == null) {
+                    // This is a partition for which leader is not known, but messages are available to send.
+                    // Note that entries are currently not removed from batches when deque is empty.
+                    unknownLeaderTopics.add(part.topic());
+                } else {
+                    if (queueSizes != null)
+                        queueSizes[queueSizesIndex] = dequeSize;
+                    if (partitionAvailabilityTimeoutMs > 0) {
+                        // Check if we want to exclude the partition from the list of available partitions
+                        // if the broker hasn't responded for some time.
+                        NodeLatencyStats nodeLatencyStats = nodeStats.get(leader.id());
+                        if (nodeLatencyStats != null) {
+                            // NOTE: there is no synchronization between reading metrics,
+                            // so we read ready time first to avoid accidentally marking partition
+                            // unavailable if we read while the metrics are being updated.
+                            long readyTimeMs = nodeLatencyStats.readyTimeMs;
+                            if (readyTimeMs - nodeLatencyStats.drainTimeMs > partitionAvailabilityTimeoutMs)
+                                --queueSizesIndex;
+                        }
+                    }
 
-        // We've collected the queue sizes for partitions of this topic, now we can calculate
-        // load stats.  NOTE: the stats are calculated in place, modifying the
-        // queueSizes array.
-        topicInfo.builtInPartitioner.updatePartitionLoadStats(queueSizes, partitionIds, queueSizesIndex + 1);
+                    nextReadyCheckDelayMs = batchReady(exhausted, part, leader, waitedTimeMs, backingOff,
+                            backoffAttempts, full, nextReadyCheckDelayMs, readyNodes);
+                }
+            }
+
+            // We've collected the queue sizes for partitions of this topic, now we can calculate
+            // load stats.  NOTE: the stats are calculated in place, modifying the
+            // queueSizes array.
+            topicInfo.builtInPartitioner.updatePartitionLoadStats(queueSizes, partitionIds, queueSizesIndex + 1);
+        }
         return nextReadyCheckDelayMs;
     }
 
@@ -800,7 +809,7 @@ public class RecordAccumulator {
      */
     public boolean hasUndrained() {
         for (TopicInfo topicInfo : topicInfoMap.values()) {
-            for (Deque<ProducerBatch> deque : topicInfo.batches.values()) {
+            for (Deque<ProducerBatch> deque : topicInfo.getAllBatches()) {
                 synchronized (deque) {
                     if (!deque.isEmpty())
                         return true;
@@ -866,6 +875,7 @@ public class RecordAccumulator {
         return false;
     }
 
+    // TODO: should return hashMap and index is acks
     private List<ProducerBatch> drainBatchesForOneNode(MetadataSnapshot metadataSnapshot, Node node, int maxSize, long now) {
         int size = 0;
         List<PartitionInfo> parts = metadataSnapshot.cluster().partitionsForNode(node.id());
@@ -884,71 +894,75 @@ public class RecordAccumulator {
             // Only proceed if the partition has no in-flight batches.
             if (isMuted(tp))
                 continue;
-            Deque<ProducerBatch> deque = getDeque(tp);
-            if (deque == null)
-                continue;
 
-            OptionalInt leaderEpoch = metadataSnapshot.leaderEpochFor(tp);
-
-            final ProducerBatch batch;
-            synchronized (deque) {
-                // invariant: !isMuted(tp,now) && deque != null
-                ProducerBatch first = deque.peekFirst();
-                if (first == null)
+            // FIXME: the key should be partition instead of acks!
+            for (short acks: ACKS_ORDER) {
+                Deque<ProducerBatch> deque = getDeque(tp, acks);
+                if (deque == null)
                     continue;
 
-                // first != null
-                // Only drain the batch if it is not during backoff period.
-                first.maybeUpdateLeaderEpoch(leaderEpoch);
-                if (shouldBackoff(first.hasLeaderChangedForTheOngoingRetry(), first, first.waitedTimeMs(now)))
-                    continue;
+                OptionalInt leaderEpoch = metadataSnapshot.leaderEpochFor(tp);
 
-                if (size + first.estimatedSizeInBytes() > maxSize && !ready.isEmpty()) {
-                    // there is a rare case that a single batch size is larger than the request size due to
-                    // compression; in this case we will still eventually send this batch in a single request
-                    break;
-                } else {
-                    if (shouldStopDrainBatchesForPartition(first, tp))
+                final ProducerBatch batch;
+                synchronized (deque) {
+                    // invariant: !isMuted(tp,now) && deque != null
+                    ProducerBatch first = deque.peekFirst();
+                    if (first == null)
+                        continue;
+
+                    // first != null
+                    // Only drain the batch if it is not during backoff period.
+                    first.maybeUpdateLeaderEpoch(leaderEpoch);
+                    if (shouldBackoff(first.hasLeaderChangedForTheOngoingRetry(), first, first.waitedTimeMs(now)))
+                        continue;
+
+                    if (size + first.estimatedSizeInBytes() > maxSize && !ready.isEmpty()) {
+                        // there is a rare case that a single batch size is larger than the request size due to
+                        // compression; in this case we will still eventually send this batch in a single request
                         break;
+                    } else {
+                        if (shouldStopDrainBatchesForPartition(first, tp))
+                            break;
+                    }
+
+                    batch = deque.pollFirst();
+
+                    boolean isTransactional = transactionManager != null && transactionManager.isTransactional();
+                    ProducerIdAndEpoch producerIdAndEpoch =
+                            transactionManager != null ? transactionManager.producerIdAndEpoch() : null;
+                    if (producerIdAndEpoch != null && !batch.hasSequence()) {
+                        // If the producer id/epoch of the partition do not match the latest one
+                        // of the producer, we update it and reset the sequence. This should be
+                        // only done when all its in-flight batches have completed. This is guarantee
+                        // in `shouldStopDrainBatchesForPartition`.
+                        transactionManager.maybeUpdateProducerIdAndEpoch(batch.topicPartition);
+
+                        // If the batch already has an assigned sequence, then we should not change the producer id and
+                        // sequence number, since this may introduce duplicates. In particular, the previous attempt
+                        // may actually have been accepted, and if we change the producer id and sequence here, this
+                        // attempt will also be accepted, causing a duplicate.
+                        //
+                        // Additionally, we update the next sequence number bound for the partition, and also have
+                        // the transaction manager track the batch so as to ensure that sequence ordering is maintained
+                        // even if we receive out of order responses.
+                        batch.setProducerState(producerIdAndEpoch, transactionManager.sequenceNumber(batch.topicPartition), isTransactional);
+                        transactionManager.incrementSequenceNumber(batch.topicPartition, batch.recordCount);
+                        log.debug("Assigned producerId {} and producerEpoch {} to batch with base sequence " +
+                                        "{} being sent to partition {}", producerIdAndEpoch.producerId,
+                                producerIdAndEpoch.epoch, batch.baseSequence(), tp);
+
+                        transactionManager.addInFlightBatch(batch);
+                    }
                 }
 
-                batch = deque.pollFirst();
+                // the rest of the work by processing outside the lock
+                // close() is particularly expensive
+                batch.close();
+                size += batch.records().sizeInBytes();
+                ready.add(batch);
 
-                boolean isTransactional = transactionManager != null && transactionManager.isTransactional();
-                ProducerIdAndEpoch producerIdAndEpoch =
-                    transactionManager != null ? transactionManager.producerIdAndEpoch() : null;
-                if (producerIdAndEpoch != null && !batch.hasSequence()) {
-                    // If the producer id/epoch of the partition do not match the latest one
-                    // of the producer, we update it and reset the sequence. This should be
-                    // only done when all its in-flight batches have completed. This is guarantee
-                    // in `shouldStopDrainBatchesForPartition`.
-                    transactionManager.maybeUpdateProducerIdAndEpoch(batch.topicPartition);
-
-                    // If the batch already has an assigned sequence, then we should not change the producer id and
-                    // sequence number, since this may introduce duplicates. In particular, the previous attempt
-                    // may actually have been accepted, and if we change the producer id and sequence here, this
-                    // attempt will also be accepted, causing a duplicate.
-                    //
-                    // Additionally, we update the next sequence number bound for the partition, and also have
-                    // the transaction manager track the batch so as to ensure that sequence ordering is maintained
-                    // even if we receive out of order responses.
-                    batch.setProducerState(producerIdAndEpoch, transactionManager.sequenceNumber(batch.topicPartition), isTransactional);
-                    transactionManager.incrementSequenceNumber(batch.topicPartition, batch.recordCount);
-                    log.debug("Assigned producerId {} and producerEpoch {} to batch with base sequence " +
-                            "{} being sent to partition {}", producerIdAndEpoch.producerId,
-                        producerIdAndEpoch.epoch, batch.baseSequence(), tp);
-
-                    transactionManager.addInFlightBatch(batch);
-                }
+                batch.drained(now);
             }
-
-            // the rest of the work by processing outside the lock
-            // close() is particularly expensive
-            batch.close();
-            size += batch.records().sizeInBytes();
-            ready.add(batch);
-
-            batch.drained(now);
         } while (start != drainIndex);
         return ready;
     }
@@ -1023,20 +1037,32 @@ public class RecordAccumulator {
     }
 
       /* Visible for testing */
-    public Deque<ProducerBatch> getDeque(TopicPartition tp) {
+    Deque<ProducerBatch> getDeque(TopicPartition tp, Short acks) {
         TopicInfo topicInfo = topicInfoMap.get(tp.topic());
         if (topicInfo == null)
             return null;
-        return topicInfo.batches.get(tp.partition());
+        return topicInfo.batchesWithAcks.get(acks).get(tp.partition());
+    }
+
+    List<Deque<ProducerBatch>> getAllDequeueForPartition(TopicPartition tp) {
+        TopicInfo topicInfo = topicInfoMap.get(tp.topic());
+        if (topicInfo == null)
+            return null;
+        List<Deque<ProducerBatch>> res = new ArrayList<>();
+        topicInfo.batchesWithAcks.forEach((acks, batches) -> batches.forEach((topicPartition, dq) -> {
+            if (tp.partition() == topicPartition)
+                res.add(dq);
+        }));
+        return res;
     }
 
     /**
      * Get the deque for the given topic-partition, creating it if necessary.
      */
-    private Deque<ProducerBatch> getOrCreateDeque(TopicPartition tp) {
+    private Deque<ProducerBatch> getOrCreateDeque(TopicPartition tp, Short acks) {
         TopicInfo topicInfo = topicInfoMap.computeIfAbsent(tp.topic(),
                 k -> new TopicInfo(createBuiltInPartitioner(logContext, k, batchSize)));
-        return topicInfo.batches.computeIfAbsent(tp.partition(), k -> new ArrayDeque<>());
+        return topicInfo.batchesWithAcks.get(acks).computeIfAbsent(tp.partition(), k -> new ArrayDeque<>());
     }
 
     BuiltInPartitioner createBuiltInPartitioner(LogContext logContext, String topic, int stickyBatchSize) {
@@ -1138,11 +1164,13 @@ public class RecordAccumulator {
      */
     void abortBatches(final RuntimeException reason) {
         for (ProducerBatch batch : incomplete.copyAll()) {
-            Deque<ProducerBatch> dq = getDeque(batch.topicPartition);
-            synchronized (dq) {
-                batch.abortRecordAppends();
-                dq.remove(batch);
-            }
+            List<Deque<ProducerBatch>> dqs = getAllDequeueForPartition(batch.topicPartition);
+            dqs.forEach(dq -> {
+                synchronized (dq) {
+                    batch.abortRecordAppends();
+                    dq.remove(batch);
+                }
+            });
             batch.abort(reason);
             deallocate(batch);
         }
@@ -1153,19 +1181,21 @@ public class RecordAccumulator {
      */
     void abortUndrainedBatches(RuntimeException reason) {
         for (ProducerBatch batch : incomplete.copyAll()) {
-            Deque<ProducerBatch> dq = getDeque(batch.topicPartition);
-            boolean aborted = false;
-            synchronized (dq) {
-                if ((transactionManager != null && !batch.hasSequence()) || (transactionManager == null && !batch.isClosed())) {
-                    aborted = true;
-                    batch.abortRecordAppends();
-                    dq.remove(batch);
+            List<Deque<ProducerBatch>> dqs = getAllDequeueForPartition(batch.topicPartition);
+            dqs.forEach(dq -> {
+                boolean aborted = false;
+                synchronized (dq) {
+                    if ((transactionManager != null && !batch.hasSequence()) || (transactionManager == null && !batch.isClosed())) {
+                        aborted = true;
+                        batch.abortRecordAppends();
+                        dq.remove(batch);
+                    }
                 }
-            }
-            if (aborted) {
-                batch.abort(reason);
-                deallocate(batch);
-            }
+                if (aborted) {
+                    batch.abort(reason);
+                    deallocate(batch);
+                }
+            });
         }
     }
 
@@ -1260,15 +1290,48 @@ public class RecordAccumulator {
         }
     }
 
+
+//    private class TestCopyOnWriteMap<K, V> extends ConcurrentHashMap<K, V> {
+//        @Override
+//        public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
+//            V res = super.computeIfAbsent(key, mappingFunction);
+//            log.debug("kkkkk put ProducerBatch List " + res + " to partition:" + key);
+//            return res;
+//        }
+//    }
+//
+//    private class TestArrayDeque<E> extends ArrayDeque<E> {
+//        @Override
+//        public void addLast(E e) {
+//            log.debug("addLast deque KKK " + e + " to dq.hashCode():" + this.hashCode());
+//            super.addLast(e);
+//        }
+//
+//        @Override
+//        public void addFirst(E e) {
+//            log.debug("addFirst deque KKK " + e + " to " + this.hashCode());
+//            super.addFirst(e);
+//        }
+//    }
+
     /**
      * Per topic info.
      */
     private static class TopicInfo {
-        public final ConcurrentMap<Integer /*partition*/, Deque<ProducerBatch>> batches = new CopyOnWriteMap<>();
+        public final ConcurrentMap<Short, ConcurrentMap<Integer /*partition*/, Deque<ProducerBatch>>> batchesWithAcks = new CopyOnWriteMap<>();
         public final BuiltInPartitioner builtInPartitioner;
 
         public TopicInfo(BuiltInPartitioner builtInPartitioner) {
+            batchesWithAcks.put((short) 0, new CopyOnWriteMap<>());
+            batchesWithAcks.put((short) -1, new CopyOnWriteMap<>());
+            batchesWithAcks.put((short) 1, new CopyOnWriteMap<>());
+
             this.builtInPartitioner = builtInPartitioner;
+        }
+        public List<Deque<ProducerBatch>> getAllBatches() {
+            List<Deque<ProducerBatch>> res = new ArrayList<>();
+            batchesWithAcks.values().forEach(batches -> res.addAll(batches.values()));
+            return res;
         }
     }
 

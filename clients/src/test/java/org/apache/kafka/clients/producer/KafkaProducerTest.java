@@ -152,6 +152,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class KafkaProducerTest {
+    private static final short ACKS_ALL = -1;
     private final String topic = "topic";
     private final Collection<Node> nodes = Collections.singletonList(NODE);
     private final Cluster emptyCluster = new Cluster(
@@ -2264,14 +2265,15 @@ public class KafkaProducerTest {
             eq(serializedKey),                               // 3
             eq(serializedValue),                             // 4
             eq(Record.EMPTY_HEADERS),                        // 5
-            any(RecordAccumulator.AppendCallbacks.class),    // 6 <--
+            eq(Short.valueOf(ACKS_ALL)),                     // 6
+            any(RecordAccumulator.AppendCallbacks.class),    // 7 <--
             anyLong(),
             eq(true),
             anyLong(),
             any()
         )).thenAnswer(invocation -> {
             RecordAccumulator.AppendCallbacks callbacks =
-                (RecordAccumulator.AppendCallbacks) invocation.getArguments()[6];
+                (RecordAccumulator.AppendCallbacks) invocation.getArguments()[7];
             callbacks.setPartition(initialSelectedPartition.partition());
             return new RecordAccumulator.RecordAppendResult(
                 futureRecordMetadata,
@@ -2322,14 +2324,15 @@ public class KafkaProducerTest {
             eq(serializedKey),                               // 3
             eq(serializedValue),                             // 4
             eq(Record.EMPTY_HEADERS),                        // 5
-            any(RecordAccumulator.AppendCallbacks.class),    // 6 <--
+            eq(Short.valueOf(ACKS_ALL)),                     // 6
+            any(RecordAccumulator.AppendCallbacks.class),    // 7 <--
             anyLong(),
             eq(true), // abortOnNewBatch
             anyLong(),
             any()
         )).thenAnswer(invocation -> {
             RecordAccumulator.AppendCallbacks callbacks =
-                (RecordAccumulator.AppendCallbacks) invocation.getArguments()[6];
+                (RecordAccumulator.AppendCallbacks) invocation.getArguments()[7];
             callbacks.setPartition(initialSelectedPartition.partition());
             return new RecordAccumulator.RecordAppendResult(
                 null,
@@ -2346,14 +2349,15 @@ public class KafkaProducerTest {
             eq(serializedKey),                               // 3
             eq(serializedValue),                             // 4
             eq(Record.EMPTY_HEADERS),                        // 5
-            any(RecordAccumulator.AppendCallbacks.class),    // 6 <--
+            eq(Short.valueOf(ACKS_ALL)),                     // 6
+            any(RecordAccumulator.AppendCallbacks.class),    // 7 <--
             anyLong(),
             eq(false), // abortOnNewBatch
             anyLong(),
             any()
         )).thenAnswer(invocation -> {
             RecordAccumulator.AppendCallbacks callbacks =
-                (RecordAccumulator.AppendCallbacks) invocation.getArguments()[6];
+                (RecordAccumulator.AppendCallbacks) invocation.getArguments()[7];
             callbacks.setPartition(retrySelectedPartition.partition());
             return new RecordAccumulator.RecordAppendResult(
                 futureRecordMetadata,

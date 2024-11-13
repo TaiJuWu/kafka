@@ -64,7 +64,7 @@ public class ProducerBatchTest {
 
     @Test
     public void testBatchAbort() throws Exception {
-        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now);
+        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now, (short) -1);
         MockCallback callback = new MockCallback();
         FutureRecordMetadata future = batch.tryAppend(now, null, new byte[10], Record.EMPTY_HEADERS, callback, now);
 
@@ -91,7 +91,7 @@ public class ProducerBatchTest {
 
     @Test
     public void testBatchCannotAbortTwice() throws Exception {
-        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now);
+        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now, (short) -1);
         MockCallback callback = new MockCallback();
         FutureRecordMetadata future = batch.tryAppend(now, null, new byte[10], Record.EMPTY_HEADERS, callback, now);
         KafkaException exception = new KafkaException();
@@ -119,7 +119,7 @@ public class ProducerBatchTest {
 
     @Test
     public void testBatchCannotCompleteTwice() throws Exception {
-        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now);
+        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now, (short) -1);
         MockCallback callback = new MockCallback();
         FutureRecordMetadata future = batch.tryAppend(now, null, new byte[10], Record.EMPTY_HEADERS, callback, now);
         batch.complete(500L, 10L);
@@ -141,7 +141,7 @@ public class ProducerBatchTest {
                     Compression.of(compressionType).build(),
                     TimestampType.CREATE_TIME,
                     0L);
-            ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), builder, now);
+            ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), builder, now, (short) -1);
             Header header = new RecordHeader("header-key", "header-value".getBytes());
 
             while (true) {
@@ -180,7 +180,7 @@ public class ProducerBatchTest {
                 MemoryRecordsBuilder builder = MemoryRecords.builder(ByteBuffer.allocate(1024), magic,
                         Compression.of(compressionType).build(), TimestampType.CREATE_TIME, 0L);
 
-                ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), builder, now);
+                ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), builder, now, (short) -1);
                 while (true) {
                     FutureRecordMetadata future = batch.tryAppend(now, "hi".getBytes(), "there".getBytes(),
                             Record.EMPTY_HEADERS, null, now);
@@ -212,7 +212,7 @@ public class ProducerBatchTest {
     @Test
     public void testBatchExpiration() {
         long deliveryTimeoutMs = 10240;
-        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now);
+        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now, (short) -1);
         // Set `now` to 2ms before the create time.
         assertFalse(batch.hasReachedDeliveryTimeout(deliveryTimeoutMs, now - 2));
         // Set `now` to deliveryTimeoutMs.
@@ -225,7 +225,7 @@ public class ProducerBatchTest {
      */
     @Test
     public void testBatchExpirationAfterReenqueue() {
-        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now);
+        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now, (short) -1);
         // Set batch.retry = true
         batch.reenqueued(now);
         // Set `now` to 2ms before the create time.
@@ -234,7 +234,7 @@ public class ProducerBatchTest {
 
     @Test
     public void testShouldNotAttemptAppendOnceRecordsBuilderIsClosedForAppends() {
-        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now);
+        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now, (short) -1);
         FutureRecordMetadata result0 = batch.tryAppend(now, null, new byte[10], Record.EMPTY_HEADERS, null, now);
         assertNotNull(result0);
         assertTrue(memoryRecordsBuilder.hasRoomFor(now, null, new byte[10], Record.EMPTY_HEADERS));
@@ -275,7 +275,7 @@ public class ProducerBatchTest {
 
     @Test
     public void testWithLeaderChangesAcrossRetries() {
-        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now);
+        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now, (short) -1);
 
         // Starting state for the batch, no attempt made to send it yet.
         assertEquals(OptionalInt.empty(), batch.currentLeaderEpoch());
@@ -338,7 +338,8 @@ public class ProducerBatchTest {
         ProducerBatch batch = new ProducerBatch(
             new TopicPartition("topic", 1),
             memoryRecordsBuilder,
-            now
+            now,
+            (short) -1
         );
 
         List<FutureRecordMetadata> futures = new ArrayList<>(recordCount);
