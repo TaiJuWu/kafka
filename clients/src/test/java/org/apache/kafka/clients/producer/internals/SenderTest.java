@@ -207,6 +207,51 @@ public class SenderTest {
     }
 
     @Test
+    public void testDifferentAcksInSamePartition() throws Exception {
+        long offset = 0;
+        Future<RecordMetadata> futureWithDefaultAcks = appendToAccumulator(tp0, 0L, "key", "value");
+        Future<RecordMetadata> futureWithAcksOne = appendToAccumulator(tp0, 0L, "key", "value", (short) 1);
+        sender.runOnce(); // connect
+        sender.runOnce(); // send produce request
+        assertEquals(2, client.inFlightRequestCount(), "We should have two produce request in flight.");
+        assertEquals(2, sender.inFlightBatches(tp0).size());
+        assertTrue(client.hasInFlightRequests());
+        client.respond(produceResponse(tp0, offset, Errors.NONE, 0));
+        client.respond(produceResponse(tp0, offset, Errors.NONE, 0));
+        sender.runOnce();
+        assertEquals(0, client.inFlightRequestCount(), "All requests completed.");
+        assertEquals(0, sender.inFlightBatches(tp0).size());
+        assertFalse(client.hasInFlightRequests());
+        sender.runOnce();
+        assertTrue(futureWithDefaultAcks.isDone(), "Request should be completed");
+        assertEquals(offset, futureWithDefaultAcks.get().offset());
+        assertTrue(futureWithAcksOne.isDone(), "Request should be completed");
+        assertEquals(offset, futureWithAcksOne.get().offset());
+    }
+
+    @Test
+    public void testSameAcksInDifferentPartition() throws Exception {
+        long offset = 0;
+        Future<RecordMetadata> futureWithDefaultAcks = appendToAccumulator(tp0, 0L, "key", "value");
+        Future<RecordMetadata> futureWithAcksOne = appendToAccumulator(tp1, 0L, "key", "value");
+        sender.runOnce(); // connect
+        sender.runOnce(); // send produce request
+        assertEquals(1, client.inFlightRequestCount(), "We should have a single produce request in flight.");
+        assertEquals(1, sender.inFlightBatches(tp0).size());
+        assertTrue(client.hasInFlightRequests());
+        client.respond(produceResponse(List.of(tp0, tp1), offset, Errors.NONE, 0));
+        sender.runOnce();
+        assertEquals(0, client.inFlightRequestCount(), "All requests completed.");
+        assertEquals(0, sender.inFlightBatches(tp0).size());
+        assertFalse(client.hasInFlightRequests());
+        sender.runOnce();
+        assertTrue(futureWithDefaultAcks.isDone(), "Request should be completed");
+        assertEquals(offset, futureWithDefaultAcks.get().offset());
+        assertTrue(futureWithAcksOne.isDone(), "Request should be completed");
+        assertEquals(offset, futureWithAcksOne.get().offset());
+    }
+
+    @Test
     public void testMessageFormatDownConversion() throws Exception {
         // this test case verifies the behavior when the version of the produce request supported by the
         // broker changes after the record set is created
@@ -3599,8 +3644,27 @@ public class SenderTest {
     }
 
     private FutureRecordMetadata appendToAccumulator(TopicPartition tp, long timestamp, String key, String value) throws InterruptedException {
+        return appendToAccumulator(tp, timestamp, key, value, ACKS_ALL);
+    }
+
+    private FutureRecordMetadata appendToAccumulator(TopicPartition tp, long timestamp, String key, String value, short acks) throws InterruptedException {
         return accumulator.append(tp.topic(), tp.partition(), timestamp, key.getBytes(), value.getBytes(), Record.EMPTY_HEADERS,
-                ACKS_ALL, null, MAX_BLOCK_TIMEOUT, false, time.milliseconds(), TestUtils.singletonCluster()).future;
+                acks, null, MAX_BLOCK_TIMEOUT, false, time.milliseconds(), TestUtils.singletonCluster()).future;
+    }
+
+    private ProduceResponse produceResponse(List<TopicPartition> tps, long offset, Errors error, int throttleTimeMs) {
+        return produceResponse(tps, offset, error, throttleTimeMs, -1L, null);
+    }
+
+    private ProduceResponse produceResponse(List<TopicPartition> tps, long offset, Errors error, int throttleTimeMs, long logStartOffset, String errorMessage) {
+        Map<TopicPartition, ProduceResponse.PartitionResponse> partResp = new HashMap<>();
+        for (TopicPartition tp : tps) {
+            ProduceResponse.PartitionResponse resp = new ProduceResponse.PartitionResponse(error, offset,
+                    RecordBatch.NO_TIMESTAMP, logStartOffset, Collections.emptyList(), errorMessage);
+            partResp.put(tp, resp);
+        }
+
+        return new ProduceResponse(partResp, throttleTimeMs);
     }
 
     @SuppressWarnings("deprecation")
