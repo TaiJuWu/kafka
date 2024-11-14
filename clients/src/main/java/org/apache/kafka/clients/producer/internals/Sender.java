@@ -859,8 +859,26 @@ public class Sender implements Runnable {
      * Transfer the record batches into a list of produce requests on a per-node basis
      */
     private void sendProduceRequests(Map<Integer, List<ProducerBatch>> collated, long now) {
-        for (Map.Entry<Integer, List<ProducerBatch>> entry : collated.entrySet())
-            sendProduceRequest(now, entry.getKey(), acks, requestTimeoutMs, entry.getValue());
+        short prevAcks = 0;
+        TopicPartition prevTp = null;
+        Integer prevNode = null;
+        List<ProducerBatch> groupWithAcks = new ArrayList<>();
+        for (Map.Entry<Integer, List<ProducerBatch>> entry : collated.entrySet()) {
+            for (ProducerBatch batch : entry.getValue()) {
+//                if (batch.acks() != prevAcks || !batch.topicPartition.equals(prevTp)) {
+                if (batch.acks() != prevAcks) {
+                    sendProduceRequest(now, entry.getKey(), prevAcks, requestTimeoutMs, groupWithAcks);
+                    prevNode = entry.getKey();
+                    prevAcks = batch.acks();
+                    prevTp = batch.topicPartition;
+                    groupWithAcks = new ArrayList<>();
+                }
+                groupWithAcks.add(batch);
+            }
+        }
+        if (prevNode != null) {
+            sendProduceRequest(now, prevNode, prevAcks, requestTimeoutMs, groupWithAcks);
+        }
     }
 
     /**
@@ -920,7 +938,7 @@ public class Sender implements Runnable {
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0,
                 requestTimeoutMs, callback);
         client.send(clientRequest, now);
-        log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
+        log.debug("Sent produce request to {}: {}", nodeId, requestBuilder);
     }
 
     /**
