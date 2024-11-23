@@ -25,10 +25,12 @@ import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteTopicsOptions;
 import org.apache.kafka.clients.admin.DeleteTopicsResult;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
+import org.apache.kafka.clients.admin.ListOffsetsResult;
 import org.apache.kafka.clients.admin.ListPartitionReassignmentsResult;
 import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewPartitionReassignment;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.PartitionReassignment;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -1367,6 +1369,15 @@ public class TopicCommandTest {
         Future<RecordMetadata> c = producer.send(new ProducerRecord<>("test", "kkkk"));
         producer.close();
 
+        TopicPartition tp1 = new TopicPartition("test", 0);
+        TopicPartition tp2 = new TopicPartition("topic", 0);
+
+        try (Admin admin = clusterInstance.admin()) {
+            ListTopicsResult res = admin.listTopics();
+            System.err.println("ssss  " + res.listings().get());
+            ListOffsetsResult lis = admin.listOffsets(Map.of(tp1, OffsetSpec.latest(), tp2, OffsetSpec.latest()));
+            System.err.println("jjjjj " + lis.all().get());
+        }
 
         HashMap<String, Object> consumerProps = new HashMap<>();
         consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, clusterInstance.bootstrapServers());
@@ -1374,7 +1385,7 @@ public class TopicCommandTest {
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
 
         try (Consumer<String, String> consumer = clusterInstance.consumer(consumerProps)) {
-            consumer.subscribe(List.of("test", "topic"));
+            consumer.assign(List.of(tp1, tp2));
             TestUtils.waitForCondition(
                 () -> {
                     ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(5));
