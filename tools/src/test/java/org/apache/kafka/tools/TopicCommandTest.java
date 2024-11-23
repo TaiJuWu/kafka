@@ -59,6 +59,7 @@ import org.apache.kafka.common.requests.MetadataResponse;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.api.ClusterConfig;
+import org.apache.kafka.common.test.api.ClusterConfigProperty;
 import org.apache.kafka.common.test.api.ClusterInstance;
 import org.apache.kafka.common.test.api.ClusterTemplate;
 import org.apache.kafka.common.test.api.ClusterTest;
@@ -1352,9 +1353,12 @@ public class TopicCommandTest {
         adminClient.close();
     }
 
-    @ClusterTest
+    @ClusterTest(
+            serverProperties = {
+                @ClusterConfigProperty(key = "offsets.topic.replication.factor", value = "1")
+            }
+    )
     public void testDiffCompressionProdcueSend(ClusterInstance clusterInstance) throws InterruptedException, ExecutionException {
-        clusterInstance.waitForReadyBrokers();
         clusterInstance.createTopic("test", 1, (short) 1);
         clusterInstance.createTopic("topic", 1, (short) 1);
         Map<String, Object> producerProps = new HashMap<>();
