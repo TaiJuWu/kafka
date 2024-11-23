@@ -96,6 +96,17 @@ class PlaintextProducerSendTest extends BaseProducerSendTest {
 
   @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
   @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
+  def testSendDifferentCompressedMessageWithLogAppendTime(quorum: String, groupProtocol: String): Unit = {
+    val producer = createProducer(
+      compressionType = "gzip",
+      lingerMs = Int.MaxValue,
+      deliveryTimeoutMs = Int.MaxValue)
+    sendAndVerifyTimestamp(producer, TimestampType.LOG_APPEND_TIME)
+    sendAndVerifyTimestamp(producer, TimestampType.LOG_APPEND_TIME)
+  }
+
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedQuorumAndGroupProtocolNames)
+  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
   def testSendNonCompressedMessageWithLogAppendTime(quorum: String, groupProtocol: String): Unit = {
     val producer = createProducer(lingerMs = Int.MaxValue, deliveryTimeoutMs = Int.MaxValue)
     sendAndVerifyTimestamp(producer, TimestampType.LOG_APPEND_TIME)

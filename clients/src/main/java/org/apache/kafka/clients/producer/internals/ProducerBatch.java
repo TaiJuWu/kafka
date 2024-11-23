@@ -509,6 +509,10 @@ public final class ProducerBatch {
         recordsBuilder.abort();
     }
 
+    public String topic() {
+        return topicPartition.topic();
+    }
+
     public boolean isClosed() {
         return recordsBuilder.isClosed();
     }

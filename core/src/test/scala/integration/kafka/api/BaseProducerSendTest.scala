@@ -232,7 +232,7 @@ abstract class BaseProducerSendTest extends KafkaServerTestHarness {
     }
   }
 
-  protected def sendAndVerifyTimestamp(producer: KafkaProducer[Array[Byte], Array[Byte]], timestampType: TimestampType): Unit = {
+  protected def sendAndVerifyTimestamp(producer: KafkaProducer[Array[Byte], Array[Byte]], timestampType: TimestampType, topic: String = topic): Unit = {
     val partition = 0
 
     val baseTimestamp = 123456L

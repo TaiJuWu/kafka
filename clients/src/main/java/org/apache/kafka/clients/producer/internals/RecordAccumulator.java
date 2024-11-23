@@ -93,6 +93,8 @@ public class RecordAccumulator {
     private final TransactionManager transactionManager;
     private long nextBatchExpiryTimeMs = Long.MAX_VALUE; // the earliest time (absolute) a batch will expire.
 
+    Map<String, Compression> fakeCompression = Map.of("test", Compression.gzip().build(), "topic", Compression.lz4().build());
+
     /**
      * Create a new record accumulator
      *
@@ -296,6 +298,12 @@ public class RecordAccumulator {
                                      Cluster cluster) throws InterruptedException {
         TopicInfo topicInfo = topicInfoMap.computeIfAbsent(topic, k -> new TopicInfo(createBuiltInPartitioner(logContext, k, batchSize)));
 
+
+        Compression newCompression = compression;
+        if (fakeCompression.containsKey(topic)) {
+            newCompression = fakeCompression.get(topic);
+        }
+
         // We keep track of the number of appending thread to make sure we do not miss batches in
         // abortIncompleteBatches().
         appendsInProgress.incrementAndGet();
@@ -345,7 +353,7 @@ public class RecordAccumulator {
 
                 if (buffer == null) {
                     byte maxUsableMagic = apiVersions.maxUsableProduceMagic();
-                    int size = Math.max(this.batchSize, AbstractRecords.estimateSizeInBytesUpperBound(maxUsableMagic, compression.type(), key, value, headers));
+                    int size = Math.max(this.batchSize, AbstractRecords.estimateSizeInBytesUpperBound(maxUsableMagic, newCompression.type(), key, value, headers));
                     log.trace("Allocating a new {} byte message buffer for topic {} partition {} with remaining timeout {}ms", size, topic, effectivePartition, maxTimeToBlock);
                     // This call may block if we exhausted buffer space.
                     buffer = free.allocate(size, maxTimeToBlock);
@@ -408,7 +416,7 @@ public class RecordAccumulator {
             return appendResult;
         }
 
-        MemoryRecordsBuilder recordsBuilder = recordsBuilder(buffer, apiVersions.maxUsableProduceMagic());
+        MemoryRecordsBuilder recordsBuilder = recordsBuilder(topic, buffer, apiVersions.maxUsableProduceMagic());
         ProducerBatch batch = new ProducerBatch(new TopicPartition(topic, partition), recordsBuilder, nowMs);
         FutureRecordMetadata future = Objects.requireNonNull(batch.tryAppend(timestamp, key, value, headers,
                 callbacks, nowMs));
@@ -419,12 +427,17 @@ public class RecordAccumulator {
         return new RecordAppendResult(future, dq.size() > 1 || batch.isFull(), true, false, batch.estimatedSizeInBytes());
     }
 
-    private MemoryRecordsBuilder recordsBuilder(ByteBuffer buffer, byte maxUsableMagic) {
+    private MemoryRecordsBuilder recordsBuilder(String topic, ByteBuffer buffer, byte maxUsableMagic) {
         if (transactionManager != null && maxUsableMagic < RecordBatch.MAGIC_VALUE_V2) {
             throw new UnsupportedVersionException("Attempting to use idempotence with a broker which does not " +
                 "support the required message format (v2). The broker must be version 0.11 or later.");
         }
-        return MemoryRecords.builder(buffer, maxUsableMagic, compression, TimestampType.CREATE_TIME, 0L);
+        Compression newCompression = compression;
+        if (fakeCompression.containsKey(topic)) {
+            newCompression = fakeCompression.get(topic);
+        }
+
+        return MemoryRecords.builder(buffer, maxUsableMagic, newCompression, TimestampType.CREATE_TIME, 0L);
     }
 
     /**
@@ -534,7 +547,13 @@ public class RecordAccumulator {
         // Reset the estimated compression ratio to the initial value or the big batch compression ratio, whichever
         // is bigger. There are several different ways to do the reset. We chose the most conservative one to ensure
         // the split doesn't happen too often.
-        CompressionRatioEstimator.setEstimation(bigBatch.topicPartition.topic(), compression.type(),
+
+        Compression nweCompression = compression;
+        if (fakeCompression.containsKey(bigBatch.topicPartition.topic())) {
+            nweCompression = fakeCompression.get(bigBatch.topicPartition.topic());
+        }
+
+        CompressionRatioEstimator.setEstimation(bigBatch.topicPartition.topic(), nweCompression.type(),
                                                 Math.max(1.0f, (float) bigBatch.compressionRatio()));
         Deque<ProducerBatch> dq = bigBatch.split(this.batchSize);
         int numSplitBatches = dq.size();
