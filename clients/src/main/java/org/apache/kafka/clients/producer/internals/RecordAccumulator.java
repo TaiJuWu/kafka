@@ -644,10 +644,12 @@ public class RecordAccumulator {
     private long batchReady(boolean exhausted, TopicPartition part, Node leader,
                             long waitedTimeMs, boolean backingOff, int backoffAttempts,
                             boolean full, long nextReadyCheckDelayMs, Set<Node> readyNodes) {
+        log.debug("------" + readyNodes);
         if (!readyNodes.contains(leader) && !isMuted(part)) {
             long timeToWaitMs = backingOff ? retryBackoff.backoff(backoffAttempts > 0 ? backoffAttempts - 1 : 0) : lingerMs;
             boolean expired = waitedTimeMs >= timeToWaitMs;
             boolean transactionCompleting = transactionManager != null && transactionManager.isCompleting();
+            log.debug("------========" + full + expired + exhausted + closed + flushesInProgress + transactionCompleting);
             boolean sendable = full
                     || expired
                     || exhausted
@@ -664,6 +666,7 @@ public class RecordAccumulator {
                 nextReadyCheckDelayMs = Math.min(timeLeftMs, nextReadyCheckDelayMs);
             }
         }
+        log.debug("------" + readyNodes);
         return nextReadyCheckDelayMs;
     }
 
@@ -745,6 +748,10 @@ public class RecordAccumulator {
                 backoffAttempts = batch.attempts();
                 dequeSize = deque.size();
                 full = dequeSize > 1 || batch.isFull();
+                // Q: why is full?
+                boolean k = dequeSize > 1;
+                log.debug("dequeSize > 1" + k);
+                log.debug("batch.isFull()" + batch.isFull());
             }
 
             if (leader == null) {
@@ -767,9 +774,10 @@ public class RecordAccumulator {
                             --queueSizesIndex;
                     }
                 }
-
+                log.debug("zzzzz" + readyNodes.toString());
                 nextReadyCheckDelayMs = batchReady(exhausted, part, leader, waitedTimeMs, backingOff,
                     backoffAttempts, full, nextReadyCheckDelayMs, readyNodes);
+                log.debug("222zzzzz" + readyNodes.toString());
             }
         }
 
@@ -803,6 +811,7 @@ public class RecordAccumulator {
      */
     public ReadyCheckResult ready(MetadataSnapshot metadataSnapshot, long nowMs) {
         Set<Node> readyNodes = new HashSet<>();
+        log.debug("kkkkk " + readyNodes);
         long nextReadyCheckDelayMs = Long.MAX_VALUE;
         Set<String> unknownLeaderTopics = new HashSet<>();
         // Go topic by topic so that we can get queue sizes for partitions in a topic and calculate
@@ -811,6 +820,7 @@ public class RecordAccumulator {
             final String topic = topicInfoEntry.getKey();
             nextReadyCheckDelayMs = partitionReady(metadataSnapshot, nowMs, topic, topicInfoEntry.getValue(), nextReadyCheckDelayMs, readyNodes, unknownLeaderTopics);
         }
+        log.debug("2222kkkkk " + readyNodes);
         return new ReadyCheckResult(readyNodes, nextReadyCheckDelayMs, unknownLeaderTopics);
     }
 
