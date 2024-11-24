@@ -822,6 +822,8 @@ public class MemoryRecordsBuilder implements AutoCloseable {
             return batchHeaderSizeInBytes + uncompressedRecordsSizeInBytes;
         } else {
             // estimate the written bytes to the underlying byte buffer based on uncompressed written bytes
+            // Why estimatedCompressionRatio is not set automaticlly?
+            System.err.println("estimatedCompressionRatio " + estimatedCompressionRatio);
             return batchHeaderSizeInBytes + (int) (uncompressedRecordsSizeInBytes * estimatedCompressionRatio * COMPRESSION_RATE_ESTIMATION_FACTOR);
         }
     }
