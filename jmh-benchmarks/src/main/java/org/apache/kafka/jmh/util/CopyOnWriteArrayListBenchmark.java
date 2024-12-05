@@ -33,6 +33,7 @@ import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -51,7 +52,7 @@ import java.util.stream.IntStream;
 @Fork(value = 1)
 @Warmup(iterations = 3)
 @Measurement(iterations = 5)
-@BenchmarkMode(Mode.AverageTime)
+@BenchmarkMode(Mode.All)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @Threads(2)
 public class CopyOnWriteArrayListBenchmark {
@@ -60,6 +61,7 @@ public class CopyOnWriteArrayListBenchmark {
     @Param({"1000"})
     private int init_size;
     private CopyOnWriteArrayList<Integer> copyOnWriteArrayList;
+    private CopyOnWriteArrayList<Integer> DeleteSeq;
 
     @Setup(Level.Invocation)
     public void setup() {
@@ -67,13 +69,15 @@ public class CopyOnWriteArrayListBenchmark {
         List<Integer> arrayListTemplate =  IntStream.range(0, init_size).boxed()
                 .collect(Collectors.toList());
         copyOnWriteArrayList = new CopyOnWriteArrayList<>(arrayListTemplate);
+        DeleteSeq = new CopyOnWriteArrayList<>(arrayListTemplate);
+        Collections.shuffle(DeleteSeq);
     }
 
     @Benchmark
     @OperationsPerInvocation(TIMES)
     public void testCopyOnWriteArrayListRemove(Blackhole blackhole) {
-        for (int i = 0; i < copyOnWriteArrayList.size(); ++i) {
-            copyOnWriteArrayList.remove(0);
+        for (Integer obj: DeleteSeq) {
+            copyOnWriteArrayList.remove(obj);
         }
     }
 }
