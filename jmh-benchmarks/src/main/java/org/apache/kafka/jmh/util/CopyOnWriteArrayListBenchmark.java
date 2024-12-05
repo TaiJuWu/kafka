@@ -77,7 +77,7 @@ public class CopyOnWriteArrayListBenchmark {
     @OperationsPerInvocation(TIMES)
     public void testCopyOnWriteArrayListRemove(Blackhole blackhole) {
         for (Integer obj: DeleteSeq) {
-            copyOnWriteArrayList.remove(obj);
+            blackhole.consume(copyOnWriteArrayList.remove(obj));
         }
     }
 }
