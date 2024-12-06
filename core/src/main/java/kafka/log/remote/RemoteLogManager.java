@@ -158,7 +158,7 @@ import static org.apache.kafka.server.log.remote.storage.RemoteStorageMetrics.RE
  * - copying log segments to the remote storage
  * - cleaning up segments that are expired based on retention size or retention time
  */
-public class RemoteLogManager implements Closeable {
+public class asdas RemoteLogManager implements Closeable {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RemoteLogManager.class);
     private static final String REMOTE_LOG_READER_THREAD_NAME_PREFIX = "remote-log-reader";
