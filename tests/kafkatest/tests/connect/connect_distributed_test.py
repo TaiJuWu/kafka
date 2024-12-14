@@ -550,7 +550,8 @@ class ConnectDistributedTest(Test):
         for logger, level in all_loggers.items():
             if not logger.startswith(namespace):
                 assert level['level'] == new_root
-                assert root_request_time <= level['last_modified'] < request_time
+                if level['last_modified'] is not None:
+                    assert root_request_time <= level['last_modified'] < request_time
 
         # Verify that the last worker-scoped request we issued had no effect on other
         # workers in the cluster
@@ -563,7 +564,14 @@ class ConnectDistributedTest(Test):
         # have been discarded
         self._restart_worker(worker)
         restarted_loggers = self.cc.get_all_loggers(worker)
-        assert initial_loggers == restarted_loggers
+
+        for loggerName in restarted_loggers:
+            logger = self.cc.get_logger(worker, loggerName)
+            level = logger['level']
+            if loggerName == 'org.apache.kafka.clients.consumer.ConsumerConfig':
+                assert level == 'ERROR'
+            else:
+                assert level == 'DEBUG'
 
     def _different_level(self, current_level):
         return 'INFO' if current_level is None or current_level.upper() != 'INFO' else 'WARN'
