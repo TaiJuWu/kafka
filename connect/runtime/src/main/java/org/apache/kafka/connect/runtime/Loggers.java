@@ -212,8 +212,14 @@ public class Loggers {
     }
 
     private boolean isValidRootLoggerName(String namespace) {
-        return VALID_ROOT_LOGGER_NAMES.stream()
-            .anyMatch(rootLoggerNames -> rootLoggerNames.equalsIgnoreCase(namespace));
+        boolean result = false;
+        for (String rootLoggerName : VALID_ROOT_LOGGER_NAMES) {
+            if (rootLoggerName.equalsIgnoreCase(namespace)) {
+                result = true;
+                break;
+            }
+        }
+        return result;
     }
 
     /**
