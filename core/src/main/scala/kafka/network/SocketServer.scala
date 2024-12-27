@@ -107,8 +107,6 @@ class SocketServer(
   val dataPlaneRequestChannel = new RequestChannel(maxQueuedRequests, DataPlaneAcceptor.MetricPrefix, time, apiVersionManager.newRequestMetrics)
   // control-plane
   private[network] var controlPlaneAcceptorOpt: Option[ControlPlaneAcceptor] = None
-  val controlPlaneRequestChannelOpt: Option[RequestChannel] = config.controlPlaneListenerName.map(_ =>
-    new RequestChannel(20, ControlPlaneAcceptor.MetricPrefix, time, apiVersionManager.newRequestMetrics))
 
   private[this] val nextProcessorId: AtomicInteger = new AtomicInteger(0)
   val connectionQuotas = new ConnectionQuotas(config, time, metrics)
@@ -178,7 +176,6 @@ class SocketServer(
   if (apiVersionManager.listenerType.equals(ListenerType.CONTROLLER)) {
     config.controllerListeners.foreach(createDataPlaneAcceptorAndProcessors)
   } else {
-    config.controlPlaneListener.foreach(createControlPlaneAcceptorAndProcessor)
     config.dataPlaneListeners.foreach(createDataPlaneAcceptorAndProcessors)
   }
 
@@ -251,8 +248,7 @@ class SocketServer(
     }
     val parsedConfigs = config.valuesFromThisConfigWithPrefixOverride(endpoint.listenerName.configPrefix)
     connectionQuotas.addListener(config, endpoint.listenerName)
-    val isPrivilegedListener = controlPlaneRequestChannelOpt.isEmpty &&
-      config.interBrokerListenerName == endpoint.listenerName
+    val isPrivilegedListener = config.interBrokerListenerName == endpoint.listenerName
     val dataPlaneAcceptor = createDataPlaneAcceptor(endpoint, isPrivilegedListener, dataPlaneRequestChannel)
     config.addReconfigurable(dataPlaneAcceptor)
     dataPlaneAcceptor.configure(parsedConfigs)
@@ -260,25 +256,10 @@ class SocketServer(
     info(s"Created data-plane acceptor and processors for endpoint : ${endpoint.listenerName}")
   }
 
-  private def createControlPlaneAcceptorAndProcessor(endpoint: EndPoint): Unit = synchronized {
-    if (stopped) {
-      throw new RuntimeException("Can't create new control plane acceptor and processor: SocketServer is stopped.")
-    }
-    connectionQuotas.addListener(config, endpoint.listenerName)
-    val controlPlaneAcceptor = createControlPlaneAcceptor(endpoint, controlPlaneRequestChannelOpt.get)
-    controlPlaneAcceptor.addProcessors(1)
-    controlPlaneAcceptorOpt = Some(controlPlaneAcceptor)
-    info(s"Created control-plane acceptor and processor for endpoint : ${endpoint.listenerName}")
-  }
-
   private def endpoints = config.listeners.map(l => l.listenerName -> l).toMap
 
   protected def createDataPlaneAcceptor(endPoint: EndPoint, isPrivilegedListener: Boolean, requestChannel: RequestChannel): DataPlaneAcceptor = {
     new DataPlaneAcceptor(this, endPoint, config, nodeId, connectionQuotas, time, isPrivilegedListener, requestChannel, metrics, credentialProvider, logContext, memoryPool, apiVersionManager)
-  }
-
-  private def createControlPlaneAcceptor(endPoint: EndPoint, requestChannel: RequestChannel): ControlPlaneAcceptor = {
-    new ControlPlaneAcceptor(this, endPoint, config, nodeId, connectionQuotas, time, requestChannel, metrics, credentialProvider, logContext, memoryPool, apiVersionManager)
   }
 
   /**
@@ -293,7 +274,6 @@ class SocketServer(
       dataPlaneAcceptors.asScala.values.foreach(_.close())
       controlPlaneAcceptorOpt.foreach(_.close())
       dataPlaneRequestChannel.clear()
-      controlPlaneRequestChannelOpt.foreach(_.clear())
       info("Stopped socket server request processors")
     }
   }
@@ -309,7 +289,6 @@ class SocketServer(
     this.synchronized {
       stopProcessingRequests()
       dataPlaneRequestChannel.shutdown()
-      controlPlaneRequestChannelOpt.foreach(_.shutdown())
       connectionQuotas.close()
     }
     info("Shutdown completed")

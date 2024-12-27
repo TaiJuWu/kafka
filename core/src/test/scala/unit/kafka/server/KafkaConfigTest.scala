@@ -258,31 +258,6 @@ class KafkaConfigTest {
   }
 
   @Test
-  def testControlPlaneListenerName(): Unit = {
-    val props = TestUtils.createBrokerConfig(0, TestUtils.MockZkConnect)
-    props.setProperty("listeners", "PLAINTEXT://localhost:0,CONTROLLER://localhost:5000")
-    props.setProperty("listener.security.protocol.map", "PLAINTEXT:PLAINTEXT,CONTROLLER:SSL")
-    props.setProperty("control.plane.listener.name", "CONTROLLER")
-    KafkaConfig.fromProps(props)
-
-    val serverConfig = KafkaConfig.fromProps(props)
-    val controlEndpoint = serverConfig.controlPlaneListener.get
-    assertEquals("localhost", controlEndpoint.host)
-    assertEquals(5000, controlEndpoint.port)
-    assertEquals(SecurityProtocol.SSL, controlEndpoint.securityProtocol)
-
-    //advertised listener should contain control-plane listener
-    val advertisedEndpoints = serverConfig.effectiveAdvertisedBrokerListeners
-    assertTrue(advertisedEndpoints.exists { endpoint =>
-      endpoint.securityProtocol == controlEndpoint.securityProtocol && endpoint.listenerName.value().equals(controlEndpoint.listenerName.value())
-    })
-
-    // interBrokerListener name should be different from control-plane listener name
-    val interBrokerListenerName = serverConfig.interBrokerListenerName
-    assertFalse(interBrokerListenerName.value().equals(controlEndpoint.listenerName.value()))
-  }
-
-  @Test
   def testControllerListenerNames(): Unit = {
     val props = new Properties()
     props.setProperty(KRaftConfigs.PROCESS_ROLES_CONFIG, "broker,controller")
@@ -299,23 +274,6 @@ class KafkaConfigTest {
     assertEquals("localhost", controllerEndpoint.host)
     assertEquals(5000, controllerEndpoint.port)
     assertEquals(SecurityProtocol.SASL_SSL, controllerEndpoint.securityProtocol)
-  }
-
-  @Test
-  def testControlPlaneListenerNameNotAllowedWithKRaft(): Unit = {
-    val props = new Properties()
-    props.setProperty(KRaftConfigs.PROCESS_ROLES_CONFIG, "broker,controller")
-    props.setProperty(SocketServerConfigs.LISTENERS_CONFIG, "PLAINTEXT://localhost:9092,SSL://localhost:9093")
-    props.setProperty(KRaftConfigs.CONTROLLER_LISTENER_NAMES_CONFIG, "SSL")
-    props.setProperty(KRaftConfigs.NODE_ID_CONFIG, "2")
-    props.setProperty(QuorumConfig.QUORUM_VOTERS_CONFIG, "2@localhost:9093")
-    props.setProperty(SocketServerConfigs.CONTROL_PLANE_LISTENER_NAME_CONFIG, "SSL")
-
-    assertFalse(isValidKafkaConfig(props))
-    assertBadConfigContainingMessage(props, "control.plane.listener.name is not supported in KRaft mode.")
-
-    props.remove(SocketServerConfigs.CONTROL_PLANE_LISTENER_NAME_CONFIG)
-    KafkaConfig.fromProps(props)
   }
 
   @Test

@@ -25,7 +25,7 @@ import kafka.coordinator.transaction.{TransactionCoordinator, ZkProducerIdManage
 import kafka.log.LogManager
 import kafka.log.remote.RemoteLogManager
 import kafka.metrics.KafkaMetricsReporter
-import kafka.network.{ControlPlaneAcceptor, DataPlaneAcceptor, RequestChannel, SocketServer}
+import kafka.network.{DataPlaneAcceptor, RequestChannel, SocketServer}
 import kafka.server.metadata.{ZkConfigRepository, ZkMetadataCache}
 import kafka.utils._
 import kafka.zk.{AdminZkClient, BrokerInfo, KafkaZkClient}
@@ -125,12 +125,10 @@ class KafkaServer(
   var metrics: Metrics = _
 
   @volatile var dataPlaneRequestProcessor: KafkaApis = _
-  private var controlPlaneRequestProcessor: KafkaApis = _
 
   var authorizer: Option[Authorizer] = None
   @volatile var socketServer: SocketServer = _
   var dataPlaneRequestHandlerPool: KafkaRequestHandlerPool = _
-  private var controlPlaneRequestHandlerPool: KafkaRequestHandlerPool = _
 
   var logDirFailureChannel: LogDirFailureChannel = _
   @volatile private var _logManager: LogManager = _
@@ -507,12 +505,6 @@ class KafkaServer(
         dataPlaneRequestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.dataPlaneRequestChannel, dataPlaneRequestProcessor, time,
           config.numIoThreads, s"${DataPlaneAcceptor.MetricPrefix}RequestHandlerAvgIdlePercent", DataPlaneAcceptor.ThreadPrefix)
 
-        socketServer.controlPlaneRequestChannelOpt.foreach { controlPlaneRequestChannel =>
-          controlPlaneRequestProcessor = createKafkaApis(controlPlaneRequestChannel)
-          controlPlaneRequestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.controlPlaneRequestChannelOpt.get, controlPlaneRequestProcessor, time,
-            1, s"${ControlPlaneAcceptor.MetricPrefix}RequestHandlerAvgIdlePercent", ControlPlaneAcceptor.ThreadPrefix)
-        }
-
         Mx4jLoader.maybeLoad()
 
         /* Add all reconfigurables for config change notification before starting config handlers */
@@ -868,8 +860,6 @@ class KafkaServer(
           CoreUtils.swallow(socketServer.stopProcessingRequests(), this)
         if (dataPlaneRequestHandlerPool != null)
           CoreUtils.swallow(dataPlaneRequestHandlerPool.shutdown(), this)
-        if (controlPlaneRequestHandlerPool != null)
-          CoreUtils.swallow(controlPlaneRequestHandlerPool.shutdown(), this)
 
         /**
          * We must shutdown the scheduler early because otherwise, the scheduler could touch other
@@ -886,8 +876,6 @@ class KafkaServer(
 
         if (dataPlaneRequestProcessor != null)
           CoreUtils.swallow(dataPlaneRequestProcessor.close(), this)
-        if (controlPlaneRequestProcessor != null)
-          CoreUtils.swallow(controlPlaneRequestProcessor.close(), this)
         authorizer.foreach(Utils.closeQuietly(_, "authorizer"))
         if (adminManager != null)
           CoreUtils.swallow(adminManager.shutdown(), this)

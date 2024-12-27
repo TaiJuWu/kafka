@@ -104,7 +104,6 @@ class SocketServerTest {
     logLevelToRestore = kafkaLogger.getLevel
     Configurator.setLevel(kafkaLogger.getName, Level.TRACE)
 
-    assertTrue(server.controlPlaneRequestChannelOpt.isEmpty)
   }
 
   @AfterEach
@@ -312,65 +311,6 @@ class SocketServerTest {
       ClientInformation.UNKNOWN_NAME_OR_VERSION,
       ClientInformation.UNKNOWN_NAME_OR_VERSION
     )
-  }
-
-  @Test
-  def testStagedListenerStartup(): Unit = {
-    shutdownServerAndMetrics(server)
-    val testProps = new Properties
-    testProps ++= props
-    testProps.put("listeners", "EXTERNAL://localhost:0,INTERNAL://localhost:0,CONTROL_PLANE://localhost:0")
-    testProps.put("listener.security.protocol.map", "EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROL_PLANE:PLAINTEXT")
-    testProps.put("control.plane.listener.name", "CONTROL_PLANE")
-    testProps.put("inter.broker.listener.name", "INTERNAL")
-    val config = KafkaConfig.fromProps(testProps)
-    val testableServer = new TestableSocketServer(config)
-
-    val updatedEndPoints = config.effectiveAdvertisedBrokerListeners.map { endpoint =>
-      endpoint.copy(port = testableServer.boundPort(endpoint.listenerName))
-    }.map(_.toJava)
-
-    val externalReadyFuture = new CompletableFuture[Void]()
-
-    def controlPlaneListenerStarted() = {
-      try {
-        val socket = connect(testableServer, config.controlPlaneListenerName.get, localAddr = InetAddress.getLocalHost)
-        sendAndReceiveControllerRequest(socket, testableServer)
-        true
-      } catch {
-        case _: Throwable => false
-      }
-    }
-
-    def listenerStarted(listenerName: ListenerName) = {
-      try {
-        val socket = connect(testableServer, listenerName, localAddr = InetAddress.getLocalHost)
-        sendAndReceiveRequest(socket, testableServer)
-        true
-      } catch {
-        case _: Throwable => false
-      }
-    }
-
-    try {
-      val externalListener = new ListenerName("EXTERNAL")
-      val externalEndpoint = updatedEndPoints.find(e => e.listenerName.get == externalListener.value).get
-      val controlPlaneListener = new ListenerName("CONTROL_PLANE")
-      val controlPlaneEndpoint = updatedEndPoints.find(e => e.listenerName.get == controlPlaneListener.value).get
-      val futures = Map(
-        externalEndpoint -> externalReadyFuture,
-        controlPlaneEndpoint -> CompletableFuture.completedFuture[Void](null))
-      val requestProcessingFuture = testableServer.enableRequestProcessing(futures)
-      TestUtils.waitUntilTrue(() => controlPlaneListenerStarted(), "Control plane listener not started")
-      assertFalse(listenerStarted(config.interBrokerListenerName))
-      assertFalse(listenerStarted(externalListener))
-      externalReadyFuture.complete(null)
-      TestUtils.waitUntilTrue(() => listenerStarted(config.interBrokerListenerName), "Inter-broker listener not started")
-      TestUtils.waitUntilTrue(() => listenerStarted(externalListener), "External listener not started")
-      requestProcessingFuture.get(1, TimeUnit.MINUTES)
-    } finally {
-      shutdownServerAndMetrics(testableServer)
-    }
   }
 
   @Test
@@ -1598,8 +1538,6 @@ class SocketServerTest {
     val testableServer = new TestableSocketServer(time = time)
     testableServer.enableRequestProcessing(Map.empty).get(1, TimeUnit.MINUTES)
 
-    assertTrue(testableServer.controlPlaneRequestChannelOpt.isEmpty)
-
     val proxyServer = new ProxyServer(testableServer)
     try {
       val testableSelector = testableServer.testableSelector
@@ -1831,27 +1769,6 @@ class SocketServerTest {
     }
   }
 
-
-  @Test
-  def testControlPlaneAsPrivilegedListener(): Unit = {
-    val testProps = new Properties
-    testProps ++= props
-    testProps.put("listeners", "PLAINTEXT://localhost:0,CONTROLLER://localhost:0")
-    testProps.put("listener.security.protocol.map", "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT")
-    testProps.put("control.plane.listener.name", "CONTROLLER")
-    val config = KafkaConfig.fromProps(testProps)
-    withTestableServer(config, { testableServer =>
-      val controlPlaneSocket = connect(testableServer, config.controlPlaneListenerName.get,
-        localAddr = InetAddress.getLocalHost)
-      val sentRequest = sendAndReceiveControllerRequest(controlPlaneSocket, testableServer)
-      assertTrue(sentRequest.context.fromPrivilegedListener)
-
-      val plainSocket = connect(testableServer, localAddr = InetAddress.getLocalHost)
-      val plainRequest = sendAndReceiveRequest(plainSocket, testableServer)
-      assertFalse(plainRequest.context.fromPrivilegedListener)
-    })
-  }
-
   @Test
   def testInterBrokerListenerAsPrivilegedListener(): Unit = {
     val testProps = new Properties
@@ -1865,33 +1782,6 @@ class SocketServerTest {
         localAddr = InetAddress.getLocalHost)
       val sentRequest = sendAndReceiveRequest(interBrokerSocket, testableServer)
       assertTrue(sentRequest.context.fromPrivilegedListener)
-
-      val externalSocket = connect(testableServer, new ListenerName("EXTERNAL"),
-        localAddr = InetAddress.getLocalHost)
-      val externalRequest = sendAndReceiveRequest(externalSocket, testableServer)
-      assertFalse(externalRequest.context.fromPrivilegedListener)
-    })
-  }
-
-  @Test
-  def testControlPlaneTakePrecedenceOverInterBrokerListenerAsPrivilegedListener(): Unit = {
-    val testProps = new Properties
-    testProps ++= props
-    testProps.put("listeners", "EXTERNAL://localhost:0,INTERNAL://localhost:0,CONTROLLER://localhost:0")
-    testProps.put("listener.security.protocol.map", "EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT")
-    testProps.put("control.plane.listener.name", "CONTROLLER")
-    testProps.put("inter.broker.listener.name", "INTERNAL")
-    val config = KafkaConfig.fromProps(testProps)
-    withTestableServer(config, { testableServer =>
-      val controlPlaneSocket = connect(testableServer, config.controlPlaneListenerName.get,
-        localAddr = InetAddress.getLocalHost)
-      val controlPlaneRequest = sendAndReceiveControllerRequest(controlPlaneSocket, testableServer)
-      assertTrue(controlPlaneRequest.context.fromPrivilegedListener)
-
-      val interBrokerSocket = connect(testableServer, config.interBrokerListenerName,
-        localAddr = InetAddress.getLocalHost)
-      val interBrokerRequest = sendAndReceiveRequest(interBrokerSocket, testableServer)
-      assertFalse(interBrokerRequest.context.fromPrivilegedListener)
 
       val externalSocket = connect(testableServer, new ListenerName("EXTERNAL"),
         localAddr = InetAddress.getLocalHost)
@@ -2051,11 +1941,6 @@ class SocketServerTest {
       shutdownServerAndMetrics(testableServer)
       assertEquals(0, uncaughtExceptions.get)
     }
-  }
-
-  def sendAndReceiveControllerRequest(socket: Socket, server: SocketServer): RequestChannel.Request = {
-    sendRequest(socket, producerRequestBytes())
-    receiveRequest(server.controlPlaneRequestChannelOpt.get)
   }
 
   private def assertProcessorHealthy(testableServer: TestableSocketServer, healthySockets: Seq[Socket] = Seq.empty): Unit = {
