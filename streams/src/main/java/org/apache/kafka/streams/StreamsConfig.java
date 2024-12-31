@@ -49,6 +49,7 @@ import org.apache.kafka.streams.processor.FailOnInvalidTimestamp;
 import org.apache.kafka.streams.processor.TimestampExtractor;
 import org.apache.kafka.streams.processor.assignment.TaskAssignor;
 import org.apache.kafka.streams.processor.internals.DefaultKafkaClientSupplier;
+import org.apache.kafka.streams.processor.internals.NoOpProcessorWrapper;
 import org.apache.kafka.streams.processor.internals.StreamsPartitionAssignor;
 import org.apache.kafka.streams.processor.internals.assignment.RackAwareTaskAssignor;
 import org.apache.kafka.streams.state.BuiltInDslStoreSuppliers;
@@ -675,6 +676,11 @@ public class StreamsConfig extends AbstractConfig {
         "recommended setting for production; for development you can change this, by adjusting broker setting " +
         "<code>transaction.state.log.replication.factor</code> and <code>transaction.state.log.min.isr</code>.";
 
+    /** {@code processor.wrapper.class} */
+    public static final String PROCESSOR_WRAPPER_CLASS_CONFIG = "processor.wrapper.class";
+    public static final String PROCESSOR_WRAPPER_CLASS_DOC = "A processor wrapper class or class name that implements the <code>org.apache.kafka.streams.state.ProcessorWrapper</code> interface. "
+        + "Must be passed in to the StreamsBuilder or Topology constructor in order to take effect";
+
     /** {@code repartition.purge.interval.ms} */
     @SuppressWarnings("WeakerAccess")
     public static final String REPARTITION_PURGE_INTERVAL_MS_CONFIG = "repartition.purge.interval.ms";
@@ -968,28 +974,6 @@ public class StreamsConfig extends AbstractConfig {
                     DefaultProductionExceptionHandler.class.getName(),
                     Importance.MEDIUM,
                     PRODUCTION_EXCEPTION_HANDLER_CLASS_DOC)
-            .define(RACK_AWARE_ASSIGNMENT_NON_OVERLAP_COST_CONFIG,
-                    Type.INT,
-                    null,
-                    Importance.MEDIUM,
-                    RACK_AWARE_ASSIGNMENT_NON_OVERLAP_COST_DOC)
-            .define(RACK_AWARE_ASSIGNMENT_STRATEGY_CONFIG,
-                    Type.STRING,
-                    RACK_AWARE_ASSIGNMENT_STRATEGY_NONE,
-                    in(RACK_AWARE_ASSIGNMENT_STRATEGY_NONE, RACK_AWARE_ASSIGNMENT_STRATEGY_MIN_TRAFFIC, RACK_AWARE_ASSIGNMENT_STRATEGY_BALANCE_SUBTOPOLOGY),
-                    Importance.MEDIUM,
-                    RACK_AWARE_ASSIGNMENT_STRATEGY_DOC)
-            .define(RACK_AWARE_ASSIGNMENT_TAGS_CONFIG,
-                    Type.LIST,
-                    Collections.emptyList(),
-                    atMostOfSize(MAX_RACK_AWARE_ASSIGNMENT_TAG_LIST_SIZE),
-                    Importance.MEDIUM,
-                    RACK_AWARE_ASSIGNMENT_TAGS_DOC)
-            .define(RACK_AWARE_ASSIGNMENT_TRAFFIC_COST_CONFIG,
-                    Type.INT,
-                    null,
-                    Importance.MEDIUM,
-                    RACK_AWARE_ASSIGNMENT_TRAFFIC_COST_DOC)
             .define(TASK_ASSIGNOR_CLASS_CONFIG,
                     Type.STRING,
                     null,
@@ -1052,6 +1036,28 @@ public class StreamsConfig extends AbstractConfig {
                     true,
                     Importance.LOW,
                     ENABLE_METRICS_PUSH_DOC)
+            .define(RACK_AWARE_ASSIGNMENT_NON_OVERLAP_COST_CONFIG,
+                    Type.INT,
+                    null,
+                    Importance.LOW,
+                    RACK_AWARE_ASSIGNMENT_NON_OVERLAP_COST_DOC)
+            .define(RACK_AWARE_ASSIGNMENT_STRATEGY_CONFIG,
+                    Type.STRING,
+                    RACK_AWARE_ASSIGNMENT_STRATEGY_NONE,
+                    in(RACK_AWARE_ASSIGNMENT_STRATEGY_NONE, RACK_AWARE_ASSIGNMENT_STRATEGY_MIN_TRAFFIC, RACK_AWARE_ASSIGNMENT_STRATEGY_BALANCE_SUBTOPOLOGY),
+                    Importance.LOW,
+                    RACK_AWARE_ASSIGNMENT_STRATEGY_DOC)
+            .define(RACK_AWARE_ASSIGNMENT_TAGS_CONFIG,
+                    Type.LIST,
+                    Collections.emptyList(),
+                    atMostOfSize(MAX_RACK_AWARE_ASSIGNMENT_TAG_LIST_SIZE),
+                    Importance.LOW,
+                    RACK_AWARE_ASSIGNMENT_TAGS_DOC)
+            .define(RACK_AWARE_ASSIGNMENT_TRAFFIC_COST_CONFIG,
+                    Type.INT,
+                    null,
+                    Importance.LOW,
+                    RACK_AWARE_ASSIGNMENT_TRAFFIC_COST_DOC)
             .define(REPARTITION_PURGE_INTERVAL_MS_CONFIG,
                     Type.LONG,
                     DEFAULT_COMMIT_INTERVAL_MS,
@@ -1124,6 +1130,11 @@ public class StreamsConfig extends AbstractConfig {
                     atLeast(60 * 1000L),
                     Importance.LOW,
                     PROBING_REBALANCE_INTERVAL_MS_DOC)
+            .define(PROCESSOR_WRAPPER_CLASS_CONFIG,
+                    Type.CLASS,
+                    NoOpProcessorWrapper.class,
+                    Importance.LOW,
+                    PROCESSOR_WRAPPER_CLASS_DOC)
             .define(RECEIVE_BUFFER_CONFIG,
                     Type.INT,
                     32 * 1024,

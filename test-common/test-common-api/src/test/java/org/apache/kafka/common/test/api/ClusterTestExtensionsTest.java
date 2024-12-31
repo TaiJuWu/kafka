@@ -32,11 +32,13 @@ import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.test.TestUtils;
+import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 import org.apache.kafka.server.common.MetadataVersion;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -59,6 +61,7 @@ import static org.apache.kafka.clients.producer.ProducerConfig.KEY_SERIALIZER_CL
 import static org.apache.kafka.clients.producer.ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG;
 import static org.apache.kafka.coordinator.group.GroupCoordinatorConfig.GROUP_COORDINATOR_REBALANCE_PROTOCOLS_CONFIG;
 import static org.apache.kafka.coordinator.group.GroupCoordinatorConfig.NEW_GROUP_COORDINATOR_ENABLE_CONFIG;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
@@ -114,7 +117,7 @@ public class ClusterTestExtensionsTest {
             @ClusterConfigProperty(key = "spam", value = "eggs"),
             @ClusterConfigProperty(key = "default.key", value = "overwrite.value")
         }, tags = {
-                "default.display.key1", "default.display.key2"
+            "default.display.key1", "default.display.key2"
         }),
         @ClusterTest(types = {Type.CO_KRAFT}, serverProperties = {
             @ClusterConfigProperty(key = "foo", value = "baz"),
@@ -124,7 +127,7 @@ public class ClusterTestExtensionsTest {
             @ClusterConfigProperty(key = "spam", value = "eggs"),
             @ClusterConfigProperty(key = "default.key", value = "overwrite.value")
         }, tags = {
-                "default.display.key1", "default.display.key2"
+            "default.display.key1", "default.display.key2"
         })
     })
     public void testClusterTests() throws ExecutionException, InterruptedException {
@@ -290,6 +293,42 @@ public class ClusterTestExtensionsTest {
             }, "Failed to receive message");
             assertEquals(key, records.get(0).key());
             assertEquals(value, records.get(0).value());
+        }
+    }
+
+    @ClusterTest(types = {Type.CO_KRAFT, Type.KRAFT}, serverProperties = {
+        @ClusterConfigProperty(key = GroupCoordinatorConfig.OFFSETS_TOPIC_PARTITIONS_CONFIG, value = "1"),
+        @ClusterConfigProperty(key = GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, value = "1")
+    })
+    public void testCreateDefaultProducerAndConsumer(ClusterInstance cluster) throws InterruptedException {
+        String topic = "topic";
+        byte[] key = "key".getBytes(StandardCharsets.UTF_8);
+        byte[] value = "value".getBytes(StandardCharsets.UTF_8);
+        try (Admin adminClient = cluster.admin();
+             Producer<byte[], byte[]> producer = cluster.producer();
+             Consumer<byte[], byte[]> consumer = cluster.consumer()
+        ) {
+            adminClient.createTopics(singleton(new NewTopic(topic, 1, (short) 1)));
+            assertNotNull(producer);
+            assertNotNull(consumer);
+            producer.send(new ProducerRecord<>(topic, key, value));
+            producer.flush();
+            consumer.subscribe(singletonList(topic));
+            List<ConsumerRecord<byte[], byte[]>> records = new ArrayList<>();
+            TestUtils.waitForCondition(() -> {
+                consumer.poll(Duration.ofMillis(100)).forEach(records::add);
+                return records.size() == 1;
+            }, "Failed to receive message");
+            assertArrayEquals(key, records.get(0).key());
+            assertArrayEquals(value, records.get(0).value());
+        }
+    }
+
+    @ClusterTest(types = {Type.CO_KRAFT, Type.KRAFT}, controllerListener = "FOO")
+    public void testControllerListenerName(ClusterInstance cluster) throws ExecutionException, InterruptedException {
+        assertEquals("FOO", cluster.controllerListenerName().get().value());
+        try (Admin admin = cluster.admin(Map.of(), true)) {
+            assertEquals(1, admin.describeMetadataQuorum().quorumInfo().get().nodes().size());
         }
     }
 }
