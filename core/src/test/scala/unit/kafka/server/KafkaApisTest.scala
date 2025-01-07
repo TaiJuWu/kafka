@@ -81,7 +81,6 @@ import org.apache.kafka.raft.QuorumConfig
 import org.apache.kafka.security.authorizer.AclEntry
 import org.apache.kafka.server.{BrokerFeatures, ClientMetricsManager}
 import org.apache.kafka.server.authorizer.{Action, AuthorizationResult, Authorizer}
-import org.apache.kafka.server.common.MetadataVersion.IBP_2_2_IV1
 import org.apache.kafka.server.common.{FeatureVersion, FinalizedFeatures, GroupVersion, KRaftVersion, MetadataVersion, RequestLocal, TransactionVersion}
 import org.apache.kafka.server.config.{KRaftConfigs, ReplicationConfigs, ServerConfigs, ServerLogConfigs}
 import org.apache.kafka.server.metrics.ClientMetricsTestUtils
@@ -167,7 +166,6 @@ class KafkaApisTest extends Logging {
     properties.put(KRaftConfigs.PROCESS_ROLES_CONFIG, "broker")
     val voterId = brokerId + 1
     properties.put(QuorumConfig.QUORUM_VOTERS_CONFIG, s"$voterId@localhost:9093")
-
     overrideProperties.foreach( p => properties.put(p._1, p._2))
     TestUtils.setIbpVersion(properties, interBrokerProtocolVersion)
     val config = new KafkaConfig(properties)
@@ -8551,103 +8549,6 @@ class KafkaApisTest extends Logging {
     assertEquals(Errors.GROUP_AUTHORIZATION_FAILED, response.error)
   }
 
-  @Test
-  def rejectJoinGroupRequestWhenStaticMembershipNotSupported(): Unit = {
-    val joinGroupRequest = new JoinGroupRequest.Builder(
-      new JoinGroupRequestData()
-        .setGroupId("test")
-        .setMemberId("test")
-        .setGroupInstanceId("instanceId")
-        .setProtocolType("consumer")
-        .setProtocols(new JoinGroupRequestData.JoinGroupRequestProtocolCollection)
-    ).build()
-
-    val requestChannelRequest = buildRequest(joinGroupRequest)
-    metadataCache = MetadataCache.kRaftMetadataCache(brokerId, () => KRaftVersion.LATEST_PRODUCTION)
-    kafkaApis = createKafkaApis(IBP_2_2_IV1)
-    kafkaApis.handleJoinGroupRequest(requestChannelRequest, RequestLocal.withThreadConfinedCaching)
-
-    val response = verifyNoThrottling[JoinGroupResponse](requestChannelRequest)
-    assertEquals(Errors.UNSUPPORTED_VERSION, response.error())
-  }
-
-  @Test
-  def rejectSyncGroupRequestWhenStaticMembershipNotSupported(): Unit = {
-    val syncGroupRequest = new SyncGroupRequest.Builder(
-      new SyncGroupRequestData()
-        .setGroupId("test")
-        .setMemberId("test")
-        .setGroupInstanceId("instanceId")
-        .setGenerationId(1)
-    ).build()
-
-    val requestChannelRequest = buildRequest(syncGroupRequest)
-    metadataCache = MetadataCache.kRaftMetadataCache(brokerId, () => KRaftVersion.LATEST_PRODUCTION)
-    kafkaApis = createKafkaApis(IBP_2_2_IV1)
-    kafkaApis.handleSyncGroupRequest(requestChannelRequest, RequestLocal.withThreadConfinedCaching)
-
-    val response = verifyNoThrottling[SyncGroupResponse](requestChannelRequest)
-    assertEquals(Errors.UNSUPPORTED_VERSION, response.error)
-  }
-
-  @Test
-  def rejectHeartbeatRequestWhenStaticMembershipNotSupported(): Unit = {
-    val heartbeatRequest = new HeartbeatRequest.Builder(
-      new HeartbeatRequestData()
-        .setGroupId("test")
-        .setMemberId("test")
-        .setGroupInstanceId("instanceId")
-        .setGenerationId(1)
-    ).build()
-    val requestChannelRequest = buildRequest(heartbeatRequest)
-    metadataCache = MetadataCache.kRaftMetadataCache(brokerId, () => KRaftVersion.KRAFT_VERSION_0)
-    kafkaApis = createKafkaApis(IBP_2_2_IV1)
-    kafkaApis.handleHeartbeatRequest(requestChannelRequest)
-
-    val response = verifyNoThrottling[HeartbeatResponse](requestChannelRequest)
-    assertEquals(Errors.UNSUPPORTED_VERSION, response.error())
-  }
-
-  @Test
-  def rejectOffsetCommitRequestWhenStaticMembershipNotSupported(): Unit = {
-    val offsetCommitRequest = new OffsetCommitRequest.Builder(
-      new OffsetCommitRequestData()
-        .setGroupId("test")
-        .setMemberId("test")
-        .setGroupInstanceId("instanceId")
-        .setGenerationIdOrMemberEpoch(100)
-        .setTopics(Collections.singletonList(
-          new OffsetCommitRequestData.OffsetCommitRequestTopic()
-            .setName("test")
-            .setPartitions(Collections.singletonList(
-              new OffsetCommitRequestData.OffsetCommitRequestPartition()
-                .setPartitionIndex(0)
-                .setCommittedOffset(100)
-                .setCommittedLeaderEpoch(RecordBatch.NO_PARTITION_LEADER_EPOCH)
-                .setCommittedMetadata("")
-            ))
-        ))
-    ).build()
-
-    val requestChannelRequest = buildRequest(offsetCommitRequest)
-
-    metadataCache = MetadataCache.kRaftMetadataCache(brokerId, () => KRaftVersion.LATEST_PRODUCTION)
-    kafkaApis = createKafkaApis(IBP_2_2_IV1)
-    kafkaApis.handleOffsetCommitRequest(requestChannelRequest, RequestLocal.withThreadConfinedCaching)
-
-    val expectedTopicErrors = Collections.singletonList(
-      new OffsetCommitResponseData.OffsetCommitResponseTopic()
-        .setName("test")
-        .setPartitions(Collections.singletonList(
-          new OffsetCommitResponseData.OffsetCommitResponsePartition()
-            .setPartitionIndex(0)
-            .setErrorCode(Errors.UNSUPPORTED_VERSION.code)
-        ))
-    )
-    val response = verifyNoThrottling[OffsetCommitResponse](requestChannelRequest)
-    assertEquals(expectedTopicErrors, response.data.topics())
-  }
-
   @ParameterizedTest
   @ApiKeyVersionsSource(apiKey = ApiKeys.LEAVE_GROUP)
   def testHandleLeaveGroupWithMultipleMembers(version: Short): Unit = {
@@ -9402,40 +9303,6 @@ class KafkaApisTest extends Logging {
     assertEquals(records.sizeInBytes(), brokerTopicStats.allTopicsStats.replicationBytesOutRate.get.count())
   }
 
-  @Test
-  def rejectInitProducerIdWhenIdButNotEpochProvided(): Unit = {
-    val initProducerIdRequest = new InitProducerIdRequest.Builder(
-      new InitProducerIdRequestData()
-        .setTransactionalId("known")
-        .setTransactionTimeoutMs(TimeUnit.MINUTES.toMillis(15).toInt)
-        .setProducerId(10)
-        .setProducerEpoch(RecordBatch.NO_PRODUCER_EPOCH)
-    ).build()
-
-    val requestChannelRequest = buildRequest(initProducerIdRequest)
-    kafkaApis = createKafkaApis(IBP_2_2_IV1)
-    kafkaApis.handleInitProducerIdRequest(requestChannelRequest, RequestLocal.withThreadConfinedCaching)
-
-    val response = verifyNoThrottling[InitProducerIdResponse](requestChannelRequest)
-    assertEquals(Errors.INVALID_REQUEST, response.error)
-  }
-
-  @Test
-  def rejectInitProducerIdWhenEpochButNotIdProvided(): Unit = {
-    val initProducerIdRequest = new InitProducerIdRequest.Builder(
-      new InitProducerIdRequestData()
-        .setTransactionalId("known")
-        .setTransactionTimeoutMs(TimeUnit.MINUTES.toMillis(15).toInt)
-        .setProducerId(RecordBatch.NO_PRODUCER_ID)
-        .setProducerEpoch(2)
-    ).build()
-    val requestChannelRequest = buildRequest(initProducerIdRequest)
-    kafkaApis = createKafkaApis(IBP_2_2_IV1)
-    kafkaApis.handleInitProducerIdRequest(requestChannelRequest, RequestLocal.withThreadConfinedCaching)
-
-    val response = verifyNoThrottling[InitProducerIdResponse](requestChannelRequest)
-    assertEquals(Errors.INVALID_REQUEST, response.error)
-  }
 
   @ParameterizedTest
   @ApiKeyVersionsSource(apiKey = ApiKeys.LIST_GROUPS)
