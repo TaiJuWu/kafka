@@ -17,8 +17,8 @@
 
 package kafka.server
 
-import kafka.cluster.{Broker, Partition}
-import kafka.controller.{ControllerContext, KafkaController}
+import kafka.cluster.Partition
+import kafka.controller.ControllerContext
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
 import kafka.log.UnifiedLog
 import kafka.network.RequestChannel
@@ -26,7 +26,6 @@ import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.metadata.{ConfigRepository, KRaftMetadataCache, MockConfigRepository}
 import kafka.server.share.SharePartitionManager
 import kafka.utils.{CoreUtils, Log4jController, Logging, TestUtils}
-import kafka.zk.KafkaZkClient
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType
 import org.apache.kafka.clients.admin.{AlterConfigOp, ConfigEntry}
 import org.apache.kafka.common._
@@ -84,7 +83,7 @@ import org.apache.kafka.server.{BrokerFeatures, ClientMetricsManager}
 import org.apache.kafka.server.authorizer.{Action, AuthorizationResult, Authorizer}
 import org.apache.kafka.server.common.MetadataVersion.IBP_2_2_IV1
 import org.apache.kafka.server.common.{FeatureVersion, FinalizedFeatures, GroupVersion, KRaftVersion, MetadataVersion, RequestLocal, TransactionVersion}
-import org.apache.kafka.server.config.{ConfigType, KRaftConfigs, ReplicationConfigs, ServerConfigs, ServerLogConfigs}
+import org.apache.kafka.server.config.{KRaftConfigs, ReplicationConfigs, ServerConfigs, ServerLogConfigs}
 import org.apache.kafka.server.metrics.ClientMetricsTestUtils
 import org.apache.kafka.server.share.{CachedSharePartition, ErroneousAndValidPartitionData}
 import org.apache.kafka.server.quota.ThrottleCallback
@@ -122,7 +121,6 @@ class KafkaApisTest extends Logging {
   private val groupCoordinator: GroupCoordinator = mock(classOf[GroupCoordinator])
   private val shareCoordinator: ShareCoordinator = mock(classOf[ShareCoordinator])
   private val txnCoordinator: TransactionCoordinator = mock(classOf[TransactionCoordinator])
-  private val controller: KafkaController = mock(classOf[KafkaController])
   private val forwardingManager: ForwardingManager = mock(classOf[ForwardingManager])
   private val autoTopicCreationManager: AutoTopicCreationManager = mock(classOf[AutoTopicCreationManager])
 
@@ -130,7 +128,6 @@ class KafkaApisTest extends Logging {
     override def serialize(principal: KafkaPrincipal): Array[Byte] = Utils.utf8(principal.toString)
     override def deserialize(bytes: Array[Byte]): KafkaPrincipal = SecurityUtils.parseKafkaPrincipal(Utils.utf8(bytes))
   }
-  private val zkClient: KafkaZkClient = mock(classOf[KafkaZkClient])
   private val metrics = new Metrics()
   private val brokerId = 1
   private var metadataCache: MetadataCache = MetadataCache.kRaftMetadataCache(brokerId, () => KRaftVersion.LATEST_PRODUCTION)
@@ -330,7 +327,7 @@ class KafkaApisTest extends Logging {
     val requestHeader = new RequestHeader(ApiKeys.ALTER_CONFIGS, ApiKeys.ALTER_CONFIGS.latestVersion,
       clientId, 0)
 
-    when(controller.isActive).thenReturn(true)
+//    when(controller.isActive).thenReturn(true)
 
     authorizeResource(authorizer, operation, ResourceType.TOPIC, resourceName, AuthorizationResult.ALLOWED)
 
@@ -370,7 +367,7 @@ class KafkaApisTest extends Logging {
 
     assertEquals(Map(resourceName -> expectedError), responseMap)
 
-    verify(controller).isActive
+//    verify(controller).isActive
 //    verify(adminManager).alterConfigs(any(), ArgumentMatchers.eq(false))
   }
 
@@ -381,7 +378,7 @@ class KafkaApisTest extends Logging {
     val leaveGroupRequest = new LeaveGroupRequest.Builder("group",
       Collections.singletonList(new MemberIdentity())).build(requestHeader.apiVersion)
 
-    when(controller.isActive).thenReturn(true)
+//    when(controller.isActive).thenReturn(true)
 
     val request = TestUtils.buildEnvelopeRequest(
       leaveGroupRequest, kafkaPrincipalSerde, requestChannelMetrics, time.nanoseconds())
@@ -427,7 +424,7 @@ class KafkaApisTest extends Logging {
     val requestHeader = new RequestHeader(ApiKeys.ALTER_CONFIGS, ApiKeys.ALTER_CONFIGS.latestVersion,
       clientId, 0)
 
-    when(controller.isActive).thenReturn(isActiveController)
+//    when(controller.isActive).thenReturn(isActiveController)
 
     val configResource = new ConfigResource(ConfigResource.Type.TOPIC, resourceName)
 
@@ -485,7 +482,7 @@ class KafkaApisTest extends Logging {
       .build(topicHeader.apiVersion)
     val request = buildRequest(alterConfigsRequest)
 
-    when(controller.isActive).thenReturn(false)
+//    when(controller.isActive).thenReturn(false)
     when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
       any[Long])).thenReturn(0)
 //    when(adminManager.alterConfigs(any(), ArgumentMatchers.eq(false)))
@@ -524,7 +521,7 @@ class KafkaApisTest extends Logging {
     val request = buildRequest(incrementalAlterConfigsRequest,
       fromPrivilegedListener = true, requestHeader = Option(requestHeader))
 
-    when(controller.isActive).thenReturn(true)
+//    when(controller.isActive).thenReturn(true)
     when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
       any[Long])).thenReturn(0)
 //    when(adminManager.incrementalAlterConfigs(any(), ArgumentMatchers.eq(false)))
@@ -610,7 +607,7 @@ class KafkaApisTest extends Logging {
     val request = buildRequest(
       new AlterConfigsRequest.Builder(configs.asJava, false).build(requestHeader.apiVersion))
 
-    when(controller.isActive).thenReturn(false)
+//    when(controller.isActive).thenReturn(false)
     when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
       any[Long])).thenReturn(0)
 //    when(adminManager.alterConfigs(any(), ArgumentMatchers.eq(false)))
@@ -641,7 +638,7 @@ class KafkaApisTest extends Logging {
     val request = buildRequest(incrementalAlterConfigsRequest,
       fromPrivilegedListener = true, requestHeader = Option(requestHeader))
 
-    when(controller.isActive).thenReturn(true)
+//    when(controller.isActive).thenReturn(true)
     when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
       any[Long])).thenReturn(0)
 //    when(adminManager.incrementalAlterConfigs(any(), ArgumentMatchers.eq(false)))
@@ -832,7 +829,7 @@ class KafkaApisTest extends Logging {
     val request = buildRequest(incrementalAlterConfigsRequest,
       fromPrivilegedListener = true, requestHeader = Option(requestHeader))
 
-    when(controller.isActive).thenReturn(true)
+//    when(controller.isActive).thenReturn(true)
     when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
       any[Long])).thenReturn(0)
 //    when(adminManager.incrementalAlterConfigs(any(), ArgumentMatchers.eq(false)))
@@ -970,8 +967,8 @@ class KafkaApisTest extends Logging {
 
     val request = buildRequest(new CreatePartitionsRequest.Builder(requestData).build())
 
-    when(controller.isActive).thenReturn(true)
-    when(controller.isTopicQueuedForDeletion("foo")).thenReturn(false)
+//    when(controller.isActive).thenReturn(true)
+//    when(controller.isTopicQueuedForDeletion("foo")).thenReturn(false)
     when(clientControllerQuotaManager.newQuotaFor(
       ArgumentMatchers.eq(request), ArgumentMatchers.anyShort())
     ).thenReturn(UnboundedControllerMutationQuota)
@@ -4030,22 +4027,22 @@ class KafkaApisTest extends Logging {
     ))
 
 
-    var createTopicIsCalled: Boolean = false
+    val createTopicIsCalled: Boolean = false
     // Specific mock on zkClient for this use case
     // Expect it's never called to do auto topic creation
-    when(zkClient.setOrCreateEntityConfigs(
-      ArgumentMatchers.eq(ConfigType.TOPIC),
-      anyString,
-      any[Properties]
-    )).thenAnswer(_ => {
-      createTopicIsCalled = true
-    })
+//    when(zkClient.setOrCreateEntityConfigs(
+//      ArgumentMatchers.eq(ConfigType.TOPIC),
+//      anyString,
+//      any[Properties]
+//    )).thenAnswer(_ => {
+//      createTopicIsCalled = true
+//    })
     // No need to use
-    when(zkClient.getAllBrokersInCluster)
-      .thenReturn(Seq(new Broker(
-        brokerId, "localhost", 9902,
-        ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT), SecurityProtocol.PLAINTEXT
-      )))
+//    when(zkClient.getAllBrokersInCluster)
+//      .thenReturn(Seq(new Broker(
+//        brokerId, "localhost", 9902,
+//        ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT), SecurityProtocol.PLAINTEXT
+//      )))
 
 
     val (requestListener, _) = updateMetadataCacheWithInconsistentListeners()
@@ -10299,8 +10296,8 @@ class KafkaApisTest extends Logging {
       any[RequestChannel.Request],
       anyShort
     )).thenReturn(UnboundedControllerMutationQuota)
-    when(controller.isActive).thenReturn(true)
-    when(controller.controllerContext).thenReturn(controllerContext)
+//    when(controller.isActive).thenReturn(true)
+//    when(controller.controllerContext).thenReturn(controllerContext)
 
     val topicResults = Map(
       AclOperation.DESCRIBE -> Map(
@@ -10378,7 +10375,7 @@ class KafkaApisTest extends Logging {
       any[RequestChannel.Request],
       anyShort
     )).thenReturn(UnboundedControllerMutationQuota)
-    when(controller.isActive).thenReturn(true)
+//    when(controller.isActive).thenReturn(true)
 
     // Try to delete three topics:
     // 1. One without describe permission
