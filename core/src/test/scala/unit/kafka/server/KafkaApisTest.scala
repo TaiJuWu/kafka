@@ -34,7 +34,7 @@ import org.apache.kafka.common.compress.Compression
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, BROKER_LOGGER}
 import org.apache.kafka.common.errors.{ClusterAuthorizationException, UnsupportedVersionException}
-import org.apache.kafka.common.internals.Topic
+import org.apache.kafka.common.internals.{KafkaFutureImpl, Topic}
 import org.apache.kafka.common.memory.MemoryPool
 import org.apache.kafka.common.message.AddPartitionsToTxnRequestData.{AddPartitionsToTxnTopic, AddPartitionsToTxnTopicCollection, AddPartitionsToTxnTransaction, AddPartitionsToTxnTransactionCollection}
 import org.apache.kafka.common.message.AddPartitionsToTxnResponseData.AddPartitionsToTxnResult
@@ -61,6 +61,7 @@ import org.apache.kafka.common.message._
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network.{ClientInformation, ListenerName}
 import org.apache.kafka.common.protocol.{ApiKeys, Errors, MessageUtil}
+import org.apache.kafka.common.quota.{ClientQuotaAlteration, ClientQuotaEntity}
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.requests.FindCoordinatorRequest.CoordinatorType
 import org.apache.kafka.common.requests.MetadataResponse.TopicMetadata
@@ -292,79 +293,6 @@ class KafkaApisTest extends Logging {
     val describeConfigsResponseData = configs.head
     assertEquals(propName, describeConfigsResponseData.name)
     assertEquals(propValue, describeConfigsResponseData.value)
-  }
-
-  @Test
-  def testEnvelopeRequestHandlingAsController(): Unit = {
-    testEnvelopeRequestWithAlterConfig(
-      alterConfigHandler = () => ApiError.NONE,
-      expectedError = Errors.NONE
-    )
-  }
-
-  @Test
-  def testEnvelopeRequestWithAlterConfigUnhandledError(): Unit = {
-    testEnvelopeRequestWithAlterConfig(
-      alterConfigHandler = () => throw new IllegalStateException(),
-      expectedError = Errors.UNKNOWN_SERVER_ERROR
-    )
-  }
-
-  private def testEnvelopeRequestWithAlterConfig(
-    alterConfigHandler: () => ApiError,
-    expectedError: Errors
-  ): Unit = {
-    val authorizer: Authorizer = mock(classOf[Authorizer])
-
-    authorizeResource(authorizer, AclOperation.CLUSTER_ACTION, ResourceType.CLUSTER, Resource.CLUSTER_NAME, AuthorizationResult.ALLOWED)
-
-    val operation = AclOperation.ALTER_CONFIGS
-    val resourceName = "topic-1"
-    val requestHeader = new RequestHeader(ApiKeys.ALTER_CONFIGS, ApiKeys.ALTER_CONFIGS.latestVersion,
-      clientId, 0)
-
-//    when(controller.isActive).thenReturn(true)
-
-    authorizeResource(authorizer, operation, ResourceType.TOPIC, resourceName, AuthorizationResult.ALLOWED)
-
-    val configResource = new ConfigResource(ConfigResource.Type.TOPIC, resourceName)
-//    when(adminManager.alterConfigs(any(), ArgumentMatchers.eq(false)))
-//      .thenAnswer(_ => {
-//        Map(configResource -> alterConfigHandler.apply())
-//      })
-
-    val configs = Map(
-      configResource -> new AlterConfigsRequest.Config(
-        Seq(new AlterConfigsRequest.ConfigEntry("foo", "bar")).asJava))
-    val alterConfigsRequest = new AlterConfigsRequest.Builder(configs.asJava, false).build(requestHeader.apiVersion)
-
-    val startTimeNanos = time.nanoseconds()
-    val queueDurationNanos = 5 * 1000 * 1000
-    val request = TestUtils.buildEnvelopeRequest(
-      alterConfigsRequest, kafkaPrincipalSerde, requestChannelMetrics, startTimeNanos, startTimeNanos + queueDurationNanos)
-
-    val capturedResponse: ArgumentCaptor[AlterConfigsResponse] = ArgumentCaptor.forClass(classOf[AlterConfigsResponse])
-    val capturedRequest: ArgumentCaptor[RequestChannel.Request] = ArgumentCaptor.forClass(classOf[RequestChannel.Request])
-    kafkaApis = createKafkaApis(authorizer = Some(authorizer), enableForwarding = true)
-    kafkaApis.handle(request, RequestLocal.withThreadConfinedCaching)
-
-    verify(requestChannel).sendResponse(
-      capturedRequest.capture(),
-      capturedResponse.capture(),
-      any()
-    )
-    assertEquals(Some(request), capturedRequest.getValue.envelope)
-    // the dequeue time of forwarded request should equals to envelop request
-    assertEquals(request.requestDequeueTimeNanos, capturedRequest.getValue.requestDequeueTimeNanos)
-    val innerResponse = capturedResponse.getValue
-    val responseMap = innerResponse.data.responses().asScala.map { resourceResponse =>
-      resourceResponse.resourceName -> Errors.forCode(resourceResponse.errorCode)
-    }.toMap
-
-    assertEquals(Map(resourceName -> expectedError), responseMap)
-
-//    verify(controller).isActive
-//    verify(adminManager).alterConfigs(any(), ArgumentMatchers.eq(false))
   }
 
   @Test
@@ -759,9 +687,122 @@ class KafkaApisTest extends Logging {
   }
 
   @Test
+  def testAlterClientQuotasWithAuthorizer(): Unit = {
+    val authorizer: Authorizer = mock(classOf[Authorizer])
+
+    authorizeResource(authorizer, AclOperation.ALTER_CONFIGS, ResourceType.CLUSTER,
+      Resource.CLUSTER_NAME, AuthorizationResult.DENIED)
+
+    val quotaEntity = new ClientQuotaEntity(Collections.singletonMap(ClientQuotaEntity.USER, "user"))
+    val quotas = Seq(new ClientQuotaAlteration(quotaEntity, Seq.empty.asJavaCollection))
+
+    val requestHeader = new RequestHeader(ApiKeys.ALTER_CLIENT_QUOTAS, ApiKeys.ALTER_CLIENT_QUOTAS.latestVersion, clientId, 0)
+
+    val alterClientQuotasRequest = new AlterClientQuotasRequest.Builder(quotas.asJavaCollection, false)
+      .build(requestHeader.apiVersion)
+    val request = buildRequest(alterClientQuotasRequest,
+      fromPrivilegedListener = true, requestHeader = Option(requestHeader))
+
+//    when(controller.isActive).thenReturn(true)
+    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
+      anyLong)).thenReturn(0)
+    kafkaApis = createKafkaApis(authorizer = Some(authorizer))
+//    kafkaApis.handleAlterClientQuotasRequest(request)
+
+    val capturedResponse = verifyNoThrottling[AlterClientQuotasResponse](request)
+    verifyAlterClientQuotaResult(capturedResponse, Map(quotaEntity -> Errors.CLUSTER_AUTHORIZATION_FAILED))
+
+    verify(authorizer).authorize(any(), any())
+    verify(clientRequestQuotaManager).maybeRecordAndGetThrottleTimeMs(any(), anyLong)
+  }
+
+  @Test
   def testAlterClientQuotasWithForwarding(): Unit = {
     val requestBuilder = new AlterClientQuotasRequest.Builder(List.empty.asJava, false)
     testForwardableApi(ApiKeys.ALTER_CLIENT_QUOTAS, requestBuilder)
+  }
+
+  private def verifyAlterClientQuotaResult(response: AlterClientQuotasResponse,
+                                           expected: Map[ClientQuotaEntity, Errors]): Unit = {
+    val futures = expected.keys.map(quotaEntity => quotaEntity -> new KafkaFutureImpl[Void]()).toMap
+    response.complete(futures.asJava)
+    futures.foreach {
+      case (entity, future) =>
+        future.whenComplete((_, thrown) =>
+          assertEquals(thrown, expected(entity).exception())
+        ).isDone
+    }
+  }
+
+  @Test
+  def testCreateTopicsWithAuthorizer(): Unit = {
+    val authorizer: Authorizer = mock(classOf[Authorizer])
+
+    val authorizedTopic = "authorized-topic"
+    val unauthorizedTopic = "unauthorized-topic"
+
+    authorizeResource(authorizer, AclOperation.CREATE, ResourceType.CLUSTER,
+      Resource.CLUSTER_NAME, AuthorizationResult.DENIED, logIfDenied = false)
+
+    createCombinedTopicAuthorization(authorizer, AclOperation.CREATE,
+      authorizedTopic, unauthorizedTopic)
+
+    createCombinedTopicAuthorization(authorizer, AclOperation.DESCRIBE_CONFIGS,
+      authorizedTopic, unauthorizedTopic, logIfDenied = false)
+
+    val requestHeader = new RequestHeader(ApiKeys.CREATE_TOPICS, ApiKeys.CREATE_TOPICS.latestVersion, clientId, 0)
+
+//    when(controller.isActive).thenReturn(true)
+
+    val topics = new CreateTopicsRequestData.CreatableTopicCollection(3)
+    val topicToCreate = new CreateTopicsRequestData.CreatableTopic()
+      .setName(authorizedTopic)
+    topics.add(topicToCreate)
+
+    val topicToFilter = new CreateTopicsRequestData.CreatableTopic()
+      .setName(unauthorizedTopic)
+    topics.add(topicToFilter)
+
+    val topicToProhibited = new CreateTopicsRequestData.CreatableTopic()
+      .setName(Topic.CLUSTER_METADATA_TOPIC_NAME)
+    topics.add(topicToProhibited)
+
+    val timeout = 10
+    val createTopicsRequest = new CreateTopicsRequest.Builder(
+      new CreateTopicsRequestData()
+        .setTimeoutMs(timeout)
+        .setValidateOnly(false)
+        .setTopics(topics))
+      .build(requestHeader.apiVersion)
+    val request = buildRequest(createTopicsRequest,
+      fromPrivilegedListener = true, requestHeader = Option(requestHeader))
+
+    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
+      any[Long])).thenReturn(0)
+    when(clientControllerQuotaManager.newQuotaFor(
+      ArgumentMatchers.eq(request), ArgumentMatchers.eq(6))).thenReturn(UnboundedControllerMutationQuota)
+    kafkaApis = createKafkaApis(authorizer = Some(authorizer))
+//    kafkaApis.handleCreateTopicsRequest(request)
+
+    val capturedCallback: ArgumentCaptor[Map[String, ApiError] => Unit] = ArgumentCaptor.forClass(classOf[Map[String, ApiError] => Unit])
+
+//    verify(adminManager).createTopics(
+//      ArgumentMatchers.eq(timeout),
+//      ArgumentMatchers.eq(false),
+//      ArgumentMatchers.eq(Map(authorizedTopic -> topicToCreate)),
+//      any(),
+//      ArgumentMatchers.eq(UnboundedControllerMutationQuota),
+//      capturedCallback.capture())
+    capturedCallback.getValue.apply(Map(authorizedTopic -> ApiError.NONE))
+
+    val capturedResponse = verifyNoThrottling[CreateTopicsResponse](request)
+    verifyCreateTopicsResult(capturedResponse,
+      Map(authorizedTopic -> Errors.NONE,
+        unauthorizedTopic -> Errors.TOPIC_AUTHORIZATION_FAILED,
+        Topic.CLUSTER_METADATA_TOPIC_NAME -> Errors.INVALID_REQUEST),
+      Map(authorizedTopic -> Errors.NONE,
+        unauthorizedTopic -> Errors.TOPIC_AUTHORIZATION_FAILED,
+        Topic.CLUSTER_METADATA_TOPIC_NAME -> Errors.NONE))
   }
 
   @Test
@@ -894,6 +935,49 @@ class KafkaApisTest extends Logging {
       authorizedTopic, AuthorizationResult.ALLOWED, logIfAllowed, logIfDenied)
     authorizeResource(authorizer, operation, ResourceType.TOPIC,
       unauthorizedTopic, AuthorizationResult.DENIED, logIfAllowed, logIfDenied)
+  }
+
+  private def createCombinedTopicAuthorization(authorizer: Authorizer,
+                                               operation: AclOperation,
+                                               authorizedTopic: String,
+                                               unauthorizedTopic: String,
+                                               logIfAllowed: Boolean = true,
+                                               logIfDenied: Boolean = true): Unit = {
+    val expectedAuthorizedActions = Seq(
+      new Action(operation,
+        new ResourcePattern(ResourceType.TOPIC, authorizedTopic, PatternType.LITERAL),
+        1, logIfAllowed, logIfDenied),
+      new Action(operation,
+        new ResourcePattern(ResourceType.TOPIC, unauthorizedTopic, PatternType.LITERAL),
+        1, logIfAllowed, logIfDenied))
+
+    when(authorizer.authorize(
+      any[RequestContext], argThat((t: java.util.List[Action]) => t != null && t.containsAll(expectedAuthorizedActions.asJava))
+    )).thenAnswer { invocation =>
+      val actions = invocation.getArgument(1).asInstanceOf[util.List[Action]]
+      actions.asScala.map { action =>
+        if (action.resourcePattern().name().equals(authorizedTopic))
+          AuthorizationResult.ALLOWED
+        else
+          AuthorizationResult.DENIED
+      }.asJava
+    }
+  }
+
+  private def verifyCreateTopicsResult(response: CreateTopicsResponse,
+                                       expectedErrorCodes: Map[String, Errors],
+                                       expectedTopicConfigErrorCodes: Map[String, Errors]): Unit = {
+    val actualErrorCodes = response.data.topics().asScala.map { topicResponse =>
+      topicResponse.name() -> Errors.forCode(topicResponse.errorCode)
+    }.toMap
+
+    assertEquals(expectedErrorCodes, actualErrorCodes)
+
+    val actualTopicConfigErrorCodes = response.data.topics().asScala.map { topicResponse =>
+      topicResponse.name() -> Errors.forCode(topicResponse.topicConfigErrorCode())
+    }.toMap
+
+    assertEquals(expectedTopicConfigErrorCodes, actualTopicConfigErrorCodes)
   }
 
   @Test
