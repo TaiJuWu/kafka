@@ -368,94 +368,6 @@ class KafkaApisTest extends Logging {
   }
 
   @Test
-  def testInvalidEnvelopeRequestWithNonForwardableAPI(): Unit = {
-    val requestHeader = new RequestHeader(ApiKeys.LEAVE_GROUP, ApiKeys.LEAVE_GROUP.latestVersion,
-      clientId, 0)
-    val leaveGroupRequest = new LeaveGroupRequest.Builder("group",
-      Collections.singletonList(new MemberIdentity())).build(requestHeader.apiVersion)
-
-//    when(controller.isActive).thenReturn(true)
-
-    val request = TestUtils.buildEnvelopeRequest(
-      leaveGroupRequest, kafkaPrincipalSerde, requestChannelMetrics, time.nanoseconds())
-    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
-      any[Long])).thenReturn(0)
-    kafkaApis = createKafkaApis(enableForwarding = true)
-    kafkaApis.handle(request, RequestLocal.withThreadConfinedCaching)
-
-    val response = verifyNoThrottling[EnvelopeResponse](request)
-    assertEquals(Errors.INVALID_REQUEST, response.error())
-  }
-
-  @Test
-  def testEnvelopeRequestWithNotFromPrivilegedListener(): Unit = {
-    testInvalidEnvelopeRequest(Errors.NONE, fromPrivilegedListener = false,
-      shouldCloseConnection = true)
-  }
-
-  @Test
-  def testEnvelopeRequestNotAuthorized(): Unit = {
-    testInvalidEnvelopeRequest(Errors.CLUSTER_AUTHORIZATION_FAILED,
-      performAuthorize = true, authorizeResult = AuthorizationResult.DENIED)
-  }
-
-  @Test
-  def testEnvelopeRequestNotControllerHandling(): Unit = {
-    testInvalidEnvelopeRequest(Errors.NOT_CONTROLLER, performAuthorize = true, isActiveController = false)
-  }
-
-  private def testInvalidEnvelopeRequest(expectedError: Errors,
-                                         fromPrivilegedListener: Boolean = true,
-                                         shouldCloseConnection: Boolean = false,
-                                         performAuthorize: Boolean = false,
-                                         authorizeResult: AuthorizationResult = AuthorizationResult.ALLOWED,
-                                         isActiveController: Boolean = true): Unit = {
-    val authorizer: Authorizer = mock(classOf[Authorizer])
-
-    if (performAuthorize) {
-      authorizeResource(authorizer, AclOperation.CLUSTER_ACTION, ResourceType.CLUSTER, Resource.CLUSTER_NAME, authorizeResult)
-    }
-
-    val resourceName = "topic-1"
-    val requestHeader = new RequestHeader(ApiKeys.ALTER_CONFIGS, ApiKeys.ALTER_CONFIGS.latestVersion,
-      clientId, 0)
-
-//    when(controller.isActive).thenReturn(isActiveController)
-
-    val configResource = new ConfigResource(ConfigResource.Type.TOPIC, resourceName)
-
-    val configs = Map(
-      configResource -> new AlterConfigsRequest.Config(
-        Seq(new AlterConfigsRequest.ConfigEntry("foo", "bar")).asJava))
-    val alterConfigsRequest = new AlterConfigsRequest.Builder(configs.asJava, false)
-      .build(requestHeader.apiVersion)
-
-    val request = TestUtils.buildEnvelopeRequest(
-      alterConfigsRequest, kafkaPrincipalSerde, requestChannelMetrics, time.nanoseconds(), fromPrivilegedListener = fromPrivilegedListener)
-
-    val capturedResponse: ArgumentCaptor[AbstractResponse] = ArgumentCaptor.forClass(classOf[AbstractResponse])
-    kafkaApis = createKafkaApis(authorizer = Some(authorizer), enableForwarding = true)
-    kafkaApis.handle(request, RequestLocal.withThreadConfinedCaching)
-
-    if (shouldCloseConnection) {
-      verify(requestChannel).closeConnection(
-        ArgumentMatchers.eq(request),
-        ArgumentMatchers.eq(java.util.Collections.emptyMap())
-      )
-    } else {
-      verify(requestChannel).sendResponse(
-        ArgumentMatchers.eq(request),
-        capturedResponse.capture(),
-        ArgumentMatchers.eq(None))
-      val response = capturedResponse.getValue.asInstanceOf[EnvelopeResponse]
-      assertEquals(expectedError, response.error)
-    }
-    if (performAuthorize) {
-      verify(authorizer).authorize(any(), any())
-    }
-  }
-
-  @Test
   def testAlterConfigsWithAuthorizer(): Unit = {
     val authorizer: Authorizer = mock(classOf[Authorizer])
 
@@ -588,10 +500,6 @@ class KafkaApisTest extends Logging {
     val subscriptionName = "client_metric_subscription_1"
     val authorizedResource = new ConfigResource(ConfigResource.Type.CLIENT_METRICS, subscriptionName)
 
-    val authorizer: Authorizer = mock(classOf[Authorizer])
-    authorizeResource(authorizer, AclOperation.ALTER_CONFIGS, ResourceType.CLUSTER,
-      Resource.CLUSTER_NAME, AuthorizationResult.ALLOWED)
-
     val props = ClientMetricsTestUtils.defaultProperties
     val configEntries = new util.ArrayList[AlterConfigsRequest.ConfigEntry]()
     props.forEach((x, y) =>
@@ -600,51 +508,40 @@ class KafkaApisTest extends Logging {
     val configs = Map(authorizedResource -> new AlterConfigsRequest.Config(configEntries))
 
     val requestHeader = new RequestHeader(ApiKeys.ALTER_CONFIGS, ApiKeys.ALTER_CONFIGS.latestVersion, clientId, 0)
-    val request = buildRequest(
-      new AlterConfigsRequest.Builder(configs.asJava, false).build(requestHeader.apiVersion))
+    val apiRequest = new AlterConfigsRequest.Builder(configs.asJava, false).build(requestHeader.apiVersion)
+    val request = buildRequest(apiRequest)
 
-//    when(controller.isActive).thenReturn(false)
-    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
-      any[Long])).thenReturn(0)
-//    when(adminManager.alterConfigs(any(), ArgumentMatchers.eq(false)))
-//      .thenReturn(Map(authorizedResource -> ApiError.NONE))
-    kafkaApis = createKafkaApis(authorizer = Some(authorizer))
+    kafkaApis = createKafkaApis()
     kafkaApis.handleAlterConfigsRequest(request)
-    val response = verifyNoThrottling[AlterConfigsResponse](request)
-    verifyAlterConfigResult(response, Map(subscriptionName -> Errors.NONE))
-    verify(authorizer, times(1)).authorize(any(), any())
-//    verify(adminManager).alterConfigs(any(), anyBoolean())
+    verify(forwardingManager).forwardRequest(
+      ArgumentMatchers.eq(request),
+      any(),
+      any()
+    )
+    assertNotNull(request.buffer, "The buffer was unexpectedly deallocated after `handleAlterConfigsRequest`")
+
   }
 
   @Test
   def testIncrementalClientMetricAlterConfigs(): Unit = {
-    val authorizer: Authorizer = mock(classOf[Authorizer])
-
     val subscriptionName = "client_metric_subscription_1"
     val resource = new ConfigResource(ConfigResource.Type.CLIENT_METRICS, subscriptionName)
-
-    authorizeResource(authorizer, AclOperation.ALTER_CONFIGS, ResourceType.CLUSTER,
-      Resource.CLUSTER_NAME, AuthorizationResult.ALLOWED)
 
     val requestHeader = new RequestHeader(ApiKeys.INCREMENTAL_ALTER_CONFIGS,
       ApiKeys.INCREMENTAL_ALTER_CONFIGS.latestVersion, clientId, 0)
 
     val incrementalAlterConfigsRequest = getIncrementalAlterConfigRequestBuilder(
       Seq(resource), "metrics", "foo.bar").build(requestHeader.apiVersion)
-    val request = buildRequest(incrementalAlterConfigsRequest,
-      fromPrivilegedListener = true, requestHeader = Option(requestHeader))
+    val request = buildRequest(incrementalAlterConfigsRequest, requestHeader = Option(requestHeader))
 
-//    when(controller.isActive).thenReturn(true)
-    when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
-      any[Long])).thenReturn(0)
-//    when(adminManager.incrementalAlterConfigs(any(), ArgumentMatchers.eq(false)))
-//      .thenReturn(Map(resource -> ApiError.NONE))
-    kafkaApis = createKafkaApis(authorizer = Some(authorizer))
+    kafkaApis = createKafkaApis()
     kafkaApis.handleIncrementalAlterConfigsRequest(request)
-    val response = verifyNoThrottling[IncrementalAlterConfigsResponse](request)
-    verifyIncrementalAlterConfigResult(response, Map(subscriptionName -> Errors.NONE ))
-    verify(authorizer, times(1)).authorize(any(), any())
-//    verify(adminManager).incrementalAlterConfigs(any(), anyBoolean())
+    verify(forwardingManager).forwardRequest(
+      ArgumentMatchers.eq(request),
+      any(),
+      any()
+    )
+    assertNotNull(request.buffer, "The buffer was unexpectedly deallocated after `handleIncrementalAlterConfigsRequest`")
   }
 
   private def getIncrementalAlterConfigRequestBuilder(configResources: Seq[ConfigResource],
