@@ -161,7 +161,7 @@ class KafkaApisTest extends Logging {
                       configRepository: ConfigRepository = new MockConfigRepository(),
                       overrideProperties: Map[String, String] = Map.empty,
                       featureVersions: Seq[FeatureVersion] = Seq.empty): KafkaApis = {
-    val properties = TestUtils.createBrokerConfig(brokerId, null)
+    val properties = TestUtils.createBrokerConfig(brokerId)
     properties.put(KRaftConfigs.NODE_ID_CONFIG, brokerId.toString)
     properties.put(KRaftConfigs.PROCESS_ROLES_CONFIG, "broker")
     val voterId = brokerId + 1
@@ -171,10 +171,8 @@ class KafkaApisTest extends Logging {
     val config = new KafkaConfig(properties)
 
     val metadataSupport = metadataCache match {
-      case cache: KRaftMetadataCache =>
-        RaftSupport(forwardingManager, cache)
-      case _ =>
-        throw new IllegalStateException("Test must set an instance of KRaftMetadataCache")
+      case cache: KRaftMetadataCache => RaftSupport(forwardingManager, cache)
+      case _ => throw new IllegalStateException("Test must set an instance of KRaftMetadataCache")
     }
 
     val listenerType = ListenerType.BROKER
