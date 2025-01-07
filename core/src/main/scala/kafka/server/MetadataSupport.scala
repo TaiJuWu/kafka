@@ -17,10 +17,9 @@
 
 package kafka.server
 
-import kafka.controller.KafkaController
 import kafka.network.RequestChannel
-import kafka.server.metadata.{KRaftMetadataCache, ZkMetadataCache}
-import kafka.zk.KafkaZkClient
+import kafka.server.metadata.KRaftMetadataCache
+import org.apache.kafka.common.errors.UnsupportedVersionException
 import org.apache.kafka.common.requests.AbstractResponse
 
 sealed trait MetadataSupport {
@@ -29,15 +28,6 @@ sealed trait MetadataSupport {
    * despite being optional when using ZooKeeper and required when using Raft
    */
   val forwardingManager: Option[ForwardingManager]
-
-  /**
-   * Return this instance downcast for use with ZooKeeper
-   *
-   * @param createException function to create an exception to throw
-   * @return this instance downcast for use with ZooKeeper
-   * @throws Exception if this instance is not for ZooKeeper
-   */
-  def requireZkOrThrow(createException: => Exception): ZkSupport
 
   /**
    * Return this instance downcast for use with Raft
@@ -66,31 +56,10 @@ sealed trait MetadataSupport {
     if (!request.isForwarded && canForward()) {
       forwardingManager.get.forwardRequest(request, responseCallback)
     } else {
+      if (handler == null)
+        throw new UnsupportedVersionException(s"Should never receive when using a Raft-based metadata quorum: ${request.header.apiKey()}")
       handler(request)
     }
-  }
-}
-
-case class ZkSupport(adminManager: ZkAdminManager,
-                     controller: KafkaController,
-                     zkClient: KafkaZkClient,
-                     forwardingManager: Option[ForwardingManager],
-                     metadataCache: ZkMetadataCache,
-                     brokerEpochManager: ZkBrokerEpochManager) extends MetadataSupport {
-  override def requireZkOrThrow(createException: => Exception): ZkSupport = this
-
-  override def requireRaftOrThrow(createException: => Exception): RaftSupport = throw createException
-
-  override def ensureConsistentWith(config: KafkaConfig): Unit = {
-    if (!config.requiresZookeeper) {
-      throw new IllegalStateException("Config specifies Raft but metadata support instance is for ZooKeeper")
-    }
-  }
-
-  override def canForward(): Boolean = forwardingManager.isDefined && (!controller.isActive)
-
-  def isBrokerEpochStale(brokerEpochInRequest: Long, isKRaftControllerRequest: Boolean): Boolean = {
-    brokerEpochManager.isBrokerEpochStale(brokerEpochInRequest, isKRaftControllerRequest)
   }
 }
 
@@ -98,7 +67,6 @@ case class RaftSupport(fwdMgr: ForwardingManager,
                        metadataCache: KRaftMetadataCache)
     extends MetadataSupport {
   override val forwardingManager: Option[ForwardingManager] = Some(fwdMgr)
-  override def requireZkOrThrow(createException: => Exception): ZkSupport = throw createException
   override def requireRaftOrThrow(createException: => Exception): RaftSupport = this
 
   override def ensureConsistentWith(config: KafkaConfig): Unit = {
