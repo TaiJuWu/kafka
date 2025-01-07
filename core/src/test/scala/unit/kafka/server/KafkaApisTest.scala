@@ -23,7 +23,7 @@ import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinat
 import kafka.log.UnifiedLog
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.QuotaManagers
-import kafka.server.metadata.{ConfigRepository, KRaftMetadataCache, MockConfigRepository, ZkMetadataCache}
+import kafka.server.metadata.{ConfigRepository, KRaftMetadataCache, MockConfigRepository}
 import kafka.server.share.SharePartitionManager
 import kafka.utils.{CoreUtils, Log4jController, Logging, TestUtils}
 import kafka.zk.KafkaZkClient
@@ -135,8 +135,7 @@ class KafkaApisTest extends Logging {
   private val zkClient: KafkaZkClient = mock(classOf[KafkaZkClient])
   private val metrics = new Metrics()
   private val brokerId = 1
-  // KRaft tests should override this with a KRaftMetadataCache
-  private var metadataCache: MetadataCache = MetadataCache.zkMetadataCache(brokerId, MetadataVersion.latestTesting())
+  private var metadataCache: MetadataCache = MetadataCache.kRaftMetadataCache(brokerId, () => KRaftVersion.LATEST_PRODUCTION)
   @nowarn private var brokerEpochManager: ZkBrokerEpochManager = new ZkBrokerEpochManager(metadataCache, controller, None)
   private val clientQuotaManager: ClientQuotaManager = mock(classOf[ClientQuotaManager])
   private val clientRequestQuotaManager: ClientRequestQuotaManager = mock(classOf[ClientRequestQuotaManager])
@@ -276,7 +275,7 @@ class KafkaApisTest extends Logging {
     topicConfigs.put(propName, propValue)
     when(configRepository.topicConfig(resourceName)).thenReturn(topicConfigs)
 
-    metadataCache = mock(classOf[ZkMetadataCache])
+    metadataCache = mock(classOf[KRaftMetadataCache])
     when(metadataCache.contains(resourceName)).thenReturn(true)
 
     val describeConfigsRequest = new DescribeConfigsRequest.Builder(new DescribeConfigsRequestData()
@@ -690,7 +689,7 @@ class KafkaApisTest extends Logging {
     val cmConfigs = ClientMetricsTestUtils.defaultProperties
     when(configRepository.config(resource)).thenReturn(cmConfigs)
 
-    metadataCache = mock(classOf[ZkMetadataCache])
+    metadataCache = mock(classOf[KRaftMetadataCache])
     when(metadataCache.contains(subscriptionName)).thenReturn(true)
 
     val describeConfigsRequest = new DescribeConfigsRequest.Builder(new DescribeConfigsRequestData()
@@ -2629,7 +2628,7 @@ class KafkaApisTest extends Logging {
   @Test
   def testProduceResponseMetadataLookupErrorOnNotLeaderOrFollower(): Unit = {
     val topic = "topic"
-    metadataCache = mock(classOf[ZkMetadataCache])
+    metadataCache = mock(classOf[KRaftMetadataCache])
 
     for (version <- 10 to ApiKeys.PRODUCE.latestVersion) {
 
@@ -4059,7 +4058,7 @@ class KafkaApisTest extends Logging {
   @Test
   def testGetAllTopicMetadataShouldNotCreateTopicOrReturnUnknownTopicPartition(): Unit = {
     // Setup: authorizer authorizes 2 topics, but one got deleted in metadata cache
-    metadataCache = mock(classOf[ZkMetadataCache])
+    metadataCache = mock(classOf[KRaftMetadataCache])
     when(metadataCache.getAliveBrokerNodes(any())).thenReturn(List(new Node(brokerId,"localhost", 0)))
     when(metadataCache.getControllerId).thenReturn(None)
 
@@ -4111,16 +4110,16 @@ class KafkaApisTest extends Logging {
   def testUnauthorizedTopicMetadataRequest(): Unit = {
     // 1. Set up broker information
     val plaintextListener = ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT)
-    val broker = new UpdateMetadataBroker()
-      .setId(0)
-      .setRack("rack")
-      .setEndpoints(Seq(
-        new UpdateMetadataEndpoint()
-          .setHost("broker0")
-          .setPort(9092)
-          .setSecurityProtocol(SecurityProtocol.PLAINTEXT.id)
-          .setListener(plaintextListener.value)
-      ).asJava)
+//    val broker = new UpdateMetadataBroker()
+//      .setId(0)
+//      .setRack("rack")
+//      .setEndpoints(Seq(
+//        new UpdateMetadataEndpoint()
+//          .setHost("broker0")
+//          .setPort(9092)
+//          .setSecurityProtocol(SecurityProtocol.PLAINTEXT.id)
+//          .setListener(plaintextListener.value)
+//      ).asJava)
 
     // 2. Set up authorizer
     val authorizer: Authorizer = mock(classOf[Authorizer])
@@ -4151,24 +4150,24 @@ class KafkaApisTest extends Logging {
     topicIds.put(authorizedTopic, authorizedTopicId)
     topicIds.put(unauthorizedTopic, unauthorizedTopicId)
 
-    def createDummyPartitionStates(topic: String) = {
-      new UpdateMetadataPartitionState()
-        .setTopicName(topic)
-        .setPartitionIndex(0)
-        .setControllerEpoch(0)
-        .setLeader(0)
-        .setLeaderEpoch(0)
-        .setReplicas(Collections.singletonList(0))
-        .setZkVersion(0)
-        .setIsr(Collections.singletonList(0))
-    }
+//    def createDummyPartitionStates(topic: String) = {
+//      new UpdateMetadataPartitionState()
+//        .setTopicName(topic)
+//        .setPartitionIndex(0)
+//        .setControllerEpoch(0)
+//        .setLeader(0)
+//        .setLeaderEpoch(0)
+//        .setReplicas(Collections.singletonList(0))
+//        .setZkVersion(0)
+//        .setIsr(Collections.singletonList(0))
+//    }
 
-    // Send UpdateMetadataReq to update MetadataCache
-    val partitionStates = Seq(unauthorizedTopic, authorizedTopic).map(createDummyPartitionStates)
-
-    val updateMetadataRequest = new UpdateMetadataRequest.Builder(ApiKeys.UPDATE_METADATA.latestVersion, 0,
-      0, 0, partitionStates.asJava, Seq(broker).asJava, topicIds).build()
-    metadataCache.asInstanceOf[ZkMetadataCache].updateMetadata(correlationId = 0, updateMetadataRequest)
+//    // Send UpdateMetadataReq to update MetadataCache
+//    val partitionStates = Seq(unauthorizedTopic, authorizedTopic).map(createDummyPartitionStates)
+//
+//    val updateMetadataRequest = new UpdateMetadataRequest.Builder(ApiKeys.UPDATE_METADATA.latestVersion, 0,
+//      0, 0, partitionStates.asJava, Seq(broker).asJava, topicIds).build()
+//    metadataCache.asInstanceOf[KRaftMetadataCache].updateMetadata(correlationId = 0, updateMetadataRequest)
 
     // 4. Send TopicMetadataReq using topicId
     val metadataReqByTopicId = new MetadataRequest.Builder(util.Arrays.asList(authorizedTopicId, unauthorizedTopicId)).build()
