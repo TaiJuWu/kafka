@@ -371,6 +371,7 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   def minInSyncReplicas = getInt(ServerLogConfigs.MIN_IN_SYNC_REPLICAS_CONFIG)
   def logPreAllocateEnable: java.lang.Boolean = getBoolean(ServerLogConfigs.LOG_PRE_ALLOCATE_CONFIG)
   def logInitialTaskDelayMs: java.lang.Long = Option(getLong(ServerLogConfigs.LOG_INITIAL_TASK_DELAY_MS_CONFIG)).getOrElse(ServerLogConfigs.LOG_INITIAL_TASK_DELAY_MS_DEFAULT)
+  def logInternalSegmentByte: java.lang.Integer = Option(getInt(ServerLogConfigs.LOG_INTERNAL_SEGMENT_BYTES_CONFIG)).getOrElse(ServerLogConfigs.LOG_INTERNAL_SEGMENT_BYTES_DEFAULT)
 
   def logMessageTimestampType = TimestampType.forName(getString(ServerLogConfigs.LOG_MESSAGE_TIMESTAMP_TYPE_CONFIG))
 

@@ -40,6 +40,9 @@ public class ServerLogConfigs {
 
     public static final String LOG_SEGMENT_BYTES_CONFIG = ServerTopicConfigSynonyms.serverSynonym(TopicConfig.SEGMENT_BYTES_CONFIG);
     public static final String LOG_SEGMENT_BYTES_DOC = "The maximum size of a single log file";
+    public static final String LOG_INTERNAL_SEGMENT_BYTES_CONFIG = LOG_PREFIX + "internal." + LOG_SEGMENT_BYTES_CONFIG;
+    public static final int LOG_INTERNAL_SEGMENT_BYTES_DEFAULT = 0;
+    public static final String LOG_INTERNAL_SEGMENT_BYTES_CONFIG_DOC = "Replace " + LOG_SEGMENT_BYTES_CONFIG + " with this and should be used for testing only.";
 
     public static final String LOG_ROLL_TIME_MILLIS_CONFIG = ServerTopicConfigSynonyms.serverSynonym(TopicConfig.SEGMENT_MS_CONFIG);
     public static final String LOG_ROLL_TIME_HOURS_CONFIG = LOG_PREFIX + "roll.hours";
