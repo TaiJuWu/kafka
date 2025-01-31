@@ -170,6 +170,9 @@ public class RaftEventSimulationTest {
         // Restart the node and verify it catches up
         cluster.start(leaderId);
         scheduler.runUntil(() -> cluster.allReachedHighWatermark(highWatermark + 10));
+
+        // Make sure cluster can elect a consistent leader
+        scheduler.runUntil(cluster::hasConsistentLeader);
     }
 
     @Property(tries = 100, afterFailure = AfterFailureMode.SAMPLE_ONLY)
@@ -235,6 +238,9 @@ public class RaftEventSimulationTest {
         nonPartitionedNodes.remove(leaderId);
 
         scheduler.runUntil(() -> cluster.allReachedHighWatermark(20, nonPartitionedNodes));
+
+        // Make sure cluster can elect a consistent leader
+        scheduler.runUntil(cluster::hasConsistentLeader);
     }
 
     @Property(tries = 100, afterFailure = AfterFailureMode.SAMPLE_ONLY)
@@ -348,7 +354,8 @@ public class RaftEventSimulationTest {
             }
             default -> throw new IllegalStateException("Unexpected leader: " + leaderId);
         }
-        scheduler.runUntil(() -> cluster.allReachedHighWatermark(20, majority));
+        long maxHighWaterMark = cluster.maxHighWatermarkReached();
+        scheduler.runUntil(() -> cluster.allReachedHighWatermark(20 + maxHighWaterMark, majority));
     }
 
     @Property(tries = 100, afterFailure = AfterFailureMode.SAMPLE_ONLY)
@@ -399,7 +406,8 @@ public class RaftEventSimulationTest {
         router.filter(nodeE, new DropOutboundRequestsTo(cluster.endpointsFromIds(Set.of(nodeA, nodeB))));
 
         // Check that leadership remains stable
-        scheduler.runUntil(() -> cluster.allReachedHighWatermark(20, Set.of(nodeA, leaderId, nodeD, nodeE)));
+        long maxHighWaterMark = cluster.maxHighWatermarkReached();
+        scheduler.runUntil(() -> cluster.allReachedHighWatermark(20 + maxHighWaterMark, Set.of(nodeA, leaderId, nodeD, nodeE)));
     }
 
     @Property(tries = 100, afterFailure = AfterFailureMode.SAMPLE_ONLY)
@@ -472,6 +480,53 @@ public class RaftEventSimulationTest {
         // Now restart the failed node and ensure that it recovers.
         long highWatermarkBeforeRestart = cluster.maxHighWatermarkReached();
         cluster.start(node.nodeId);
+        scheduler.runUntil(() -> cluster.allReachedHighWatermark(highWatermarkBeforeRestart + 10));
+    }
+
+    @Property(tries = 100, afterFailure = AfterFailureMode.SAMPLE_ONLY)
+    void canRecoverFromMultipleNodeCommittedDataLoss(
+            @ForAll int seed,
+            @ForAll @IntRange(min = 3, max = 5) int numVoters,
+            @ForAll @IntRange(min = 0, max = 2) int numObservers
+    ) {
+        // We run this test without the `MonotonicEpoch` and `MajorityReachedHighWatermark`
+        // invariants since the loss of committed data on one node can violate them.
+        // Set to voter -2 avoid no majority
+        int killed = numVoters / 2 - 1;
+        ArrayList<RaftNode> killedNodes = new ArrayList<>();
+        Random random = new Random(seed);
+        Cluster cluster = new Cluster(numVoters, numObservers, random);
+        EventScheduler scheduler = new EventScheduler(cluster.random, cluster.time);
+        scheduler.addInvariant(new MonotonicHighWatermark(cluster));
+        scheduler.addInvariant(new SingleLeader(cluster));
+        scheduler.addValidation(new ConsistentCommittedData(cluster));
+
+        MessageRouter router = new MessageRouter(cluster);
+
+        cluster.startAll();
+        schedulePolling(scheduler, cluster, 3, 5);
+        scheduler.schedule(router::deliverAll, 0, 2, 5);
+        scheduler.schedule(new SequentialAppendAction(cluster), 0, 2, 3);
+        scheduler.runUntil(() -> cluster.anyReachedHighWatermark(10));
+
+        // Kill random nodes and drop all of its persistent state. The Raft
+        // protocol guarantees should still ensure we lose no committed data
+        // as long as a new leader is elected before the failed node is restarted.
+        for (int i = 0; i < killed; ++i) {
+            RaftNode node = cluster.randomRunning().orElseThrow(() ->
+                    new AssertionError("Failed to find running node")
+            );
+            killedNodes.add(node);
+            cluster.killAndDeletePersistentState(node.nodeId);
+        }
+
+        scheduler.runUntil(() -> !cluster.hasLeader(killedNodes) && cluster.hasConsistentLeader());
+
+        for (RaftNode killedNode : killedNodes) {
+            cluster.start(killedNode.nodeId);
+        }
+        // Now restart the failed node and ensure that it recovers.
+        long highWatermarkBeforeRestart = cluster.maxHighWatermarkReached();
         scheduler.runUntil(() -> cluster.allReachedHighWatermark(highWatermarkBeforeRestart + 10));
     }
 
@@ -735,6 +790,15 @@ public class RaftEventSimulationTest {
         boolean hasLeader(int nodeId) {
             OptionalInt latestLeader = latestLeader();
             return latestLeader.isPresent() && latestLeader.getAsInt() == nodeId;
+        }
+
+        boolean hasLeader(List<RaftNode> nodes) {
+            for (RaftNode node: nodes) {
+                if (hasLeader(node.nodeId))
+                    return true;
+            }
+
+            return false;
         }
 
         OptionalInt latestLeader() {
