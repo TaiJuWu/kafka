@@ -15,7 +15,7 @@
 
 
 from bs4 import BeautifulSoup
-import glob
+from glob import glob
 
 def is_valid_HTML_tag(html_string_to_check: str) -> bool:
     soup = BeautifulSoup(html_string_to_check, 'html.parser')
