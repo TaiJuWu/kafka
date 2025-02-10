@@ -147,7 +147,7 @@ jobs:
         if: always()
         run: |
           echo "execute Check html content"
-          if [ python .github/scripts/check_html.py -ne 0]; then
+          if [ "$(python .github/scripts/check_html.py)" -ne 0 ]; then
             exit 1
           fi
 
