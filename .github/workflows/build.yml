@@ -143,6 +143,11 @@ jobs:
             find ./site-docs/generated -type f -exec grep -L "." {} \; >&2
             exit 1
           fi
+      - name: Check html content
+        run: |
+          if [ python .github/scripts/check_html.py -ne 0]; then
+            exit 1
+          fi
 
   test:
     needs: [validate, load-catalog]

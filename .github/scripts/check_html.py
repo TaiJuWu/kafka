@@ -22,7 +22,7 @@ def is_valid_HTML_tag(html_string_to_check: str) -> bool:
     return html_string_to_check == str(soup)
 
 if __name__ == "__main__":
-    htmls = glob.glob(r'*.html')
+    htmls = glob(pathname="**/*.html", recursive=True)
     for html in htmls:
         with open(html, "r") as fp:
             content = fp.read()
