@@ -144,7 +144,9 @@ jobs:
             exit 1
           fi
       - name: Check html content
+        if: always()
         run: |
+          echo "execute Check html content"
           if [ python .github/scripts/check_html.py -ne 0]; then
             exit 1
           fi

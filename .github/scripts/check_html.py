@@ -23,8 +23,10 @@ def is_valid_HTML_tag(html_string_to_check: str) -> bool:
 
 if __name__ == "__main__":
     htmls = glob(pathname="**/*.html", recursive=True)
+    print("kkkk html", htmls)
     for html in htmls:
         with open(html, "r") as fp:
             content = fp.read()
+            print("kkk check content")
             if not is_valid_HTML_tag(content):
                 exit(1)
