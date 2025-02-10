@@ -27,6 +27,6 @@ if __name__ == "__main__":
     for html in htmls:
         with open(html, "r") as fp:
             content = fp.read()
-            print("kkk check content")
+            print("kkk check content", str(content))
             if not is_valid_HTML_tag(content):
                 exit(1)
