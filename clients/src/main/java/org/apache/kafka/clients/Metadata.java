@@ -343,7 +343,7 @@ public class Metadata implements Closeable {
         this.lastRefreshMs = nowMs;
         this.attempts = 0;
         this.updateVersion += 1;
-        if (!isPartialUpdate) {
+        if (isPartialUpdate) {
             this.needFullUpdate = false;
             this.lastSuccessfulRefreshMs = nowMs;
         }
