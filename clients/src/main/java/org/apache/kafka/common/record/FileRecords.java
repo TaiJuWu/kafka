@@ -299,12 +299,17 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * @return the batch's base offset, its physical position, and its size (including log overhead)
      */
     public LogOffsetPosition searchForOffsetWithSize(long targetOffset, int startingPosition) {
-        FileChannelRecordBatch previousBatch = null;
         Iterator<FileChannelRecordBatch> batchIter = batchesFrom(startingPosition).iterator();
+        FileChannelRecordBatch previousBatch = null;
+        FileChannelRecordBatch currBatch = batchIter.hasNext()? batchIter.next(): null;
+
+        if (currBatch == null)
+            return null;
 
         while (batchIter.hasNext()) {
-            previousBatch = batchIter.next();
-            if (targetOffset > previousBatch.baseOffset()) {
+            if (targetOffset > currBatch.baseOffset()) {
+                previousBatch = currBatch;
+                currBatch = batchIter.next();
                 continue;
             }
             break;
@@ -315,10 +320,9 @@ public class FileRecords extends AbstractRecords implements Closeable {
                 return new LogOffsetPosition(previousBatch.baseOffset(), previousBatch.position(), previousBatch.sizeInBytes());
         }
 
-        if (batchIter.hasNext()) {
-            FileChannelRecordBatch nextBatch = batchIter.next();
-            if (targetOffset <= nextBatch.lastOffset())
-                return new LogOffsetPosition(nextBatch.baseOffset(), nextBatch.position(), nextBatch.sizeInBytes());
+        if (currBatch != null) {
+            if (targetOffset <= currBatch.lastOffset())
+                return new LogOffsetPosition(currBatch.baseOffset(), currBatch.position(), currBatch.sizeInBytes());
         }
 
         return null;
