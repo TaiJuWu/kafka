@@ -30,6 +30,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
+import java.util.Iterator;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -299,22 +300,24 @@ public class FileRecords extends AbstractRecords implements Closeable {
      */
     public LogOffsetPosition searchForOffsetWithSize(long targetOffset, int startingPosition) {
         FileChannelRecordBatch previousBatch = null;
-        for (FileChannelRecordBatch batch : batchesFrom(startingPosition)) {
-            if (targetOffset >= batch.baseOffset()) {
-                previousBatch = batch;
+        Iterator<FileChannelRecordBatch> batchIter = batchesFrom(startingPosition).iterator();
+
+        while (batchIter.hasNext()) {
+            previousBatch = batchIter.next();
+            if (targetOffset >= previousBatch.baseOffset()) {
                 continue;
             }
             break;
         }
 
-        if (previousBatch == null)
-            return null;
-
-        for (FileChannelRecordBatch batch : batchesFrom(previousBatch.position)) {
-            long offset = batch.lastOffset();
-            if (offset >= targetOffset)
-                return new LogOffsetPosition(batch.baseOffset(), batch.position(), batch.sizeInBytes());
+        if (batchIter.hasNext()) {
+            FileChannelRecordBatch nextBatch = batchIter.next();
+            if (nextBatch.baseOffset() <= targetOffset && targetOffset <= nextBatch.lastOffset())
+                return new LogOffsetPosition(nextBatch.baseOffset(), nextBatch.position(), nextBatch.sizeInBytes());
         }
+
+        if (previousBatch != null && targetOffset <= previousBatch.lastOffset())
+            return new LogOffsetPosition(previousBatch.baseOffset(), previousBatch.position(), previousBatch.sizeInBytes());
 
         return null;
     }
