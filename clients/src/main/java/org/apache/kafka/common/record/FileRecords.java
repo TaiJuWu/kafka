@@ -306,12 +306,16 @@ public class FileRecords extends AbstractRecords implements Closeable {
             }
             break;
         }
-//        System.err.println("count " + count);
-        System.err.println("ZZZ previousBatch " + previousBatch + " targetOffset " + targetOffset);
 
-        if (previousBatch != null && previousBatch.lastOffset() >= targetOffset) {
-            return new LogOffsetPosition(previousBatch.baseOffset(), previousBatch.position(), previousBatch.sizeInBytes());
+        if (previousBatch == null)
+            return null;
+
+        for (FileChannelRecordBatch batch : batchesFrom(previousBatch.position)) {
+            long offset = batch.lastOffset();
+            if (offset >= targetOffset)
+                return new LogOffsetPosition(batch.baseOffset(), batch.position(), batch.sizeInBytes());
         }
+
         return null;
     }
 
