@@ -28,6 +28,7 @@ import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.ShareConsumer;
+import org.apache.kafka.clients.consumer.ShareConsumerConfig;
 import org.apache.kafka.clients.consumer.internals.events.ApplicationEvent;
 import org.apache.kafka.clients.consumer.internals.events.ApplicationEventHandler;
 import org.apache.kafka.clients.consumer.internals.events.ApplicationEventProcessor;
@@ -213,7 +214,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
     private final AtomicLong currentThread = new AtomicLong(NO_CURRENT_THREAD);
     private final AtomicInteger refCount = new AtomicInteger(0);
 
-    ShareConsumerImpl(final ConsumerConfig config,
+    ShareConsumerImpl(final ShareConsumerConfig config,
                       final Deserializer<K> keyDeserializer,
                       final Deserializer<V> valueDeserializer) {
         this(
@@ -229,7 +230,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
     }
 
     // Visible for testing
-    ShareConsumerImpl(final ConsumerConfig config,
+    ShareConsumerImpl(final ShareConsumerConfig config,
                       final Deserializer<K> keyDeserializer,
                       final Deserializer<V> valueDeserializer,
                       final Time time,
@@ -1072,7 +1073,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
         if (config == null) {
             return AcknowledgementMode.UNKNOWN;
         }
-        String acknowledgementModeStr = config.getString(ConsumerConfig.INTERNAL_SHARE_ACKNOWLEDGEMENT_MODE_CONFIG);
+        String acknowledgementModeStr = config.getString(ShareConsumerConfig.INTERNAL_SHARE_ACKNOWLEDGEMENT_MODE_CONFIG);
         if ((acknowledgementModeStr == null) || acknowledgementModeStr.isEmpty()) {
             return AcknowledgementMode.UNKNOWN;
         } else if (acknowledgementModeStr.equalsIgnoreCase("implicit")) {
@@ -1080,7 +1081,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
         } else if (acknowledgementModeStr.equalsIgnoreCase("explicit")) {
             return AcknowledgementMode.EXPLICIT;
         }
-        log.warn("Invalid value for config {}: \"{}\"", ConsumerConfig.INTERNAL_SHARE_ACKNOWLEDGEMENT_MODE_CONFIG, acknowledgementModeStr);
+        log.warn("Invalid value for config {}: \"{}\"", ShareConsumerConfig.INTERNAL_SHARE_ACKNOWLEDGEMENT_MODE_CONFIG, acknowledgementModeStr);
         return AcknowledgementMode.UNKNOWN;
     }
 
