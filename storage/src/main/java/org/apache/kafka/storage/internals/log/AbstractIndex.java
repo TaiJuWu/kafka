@@ -263,7 +263,9 @@ public abstract class AbstractIndex implements Closeable {
     public void trimToValidSize() throws IOException {
         lock.lock();
         try {
-            resize(entrySize() * entries);
+            if (mmap != null) {
+                resize(entrySize() * entries);
+            }
         } finally {
             lock.unlock();
         }
@@ -399,8 +401,8 @@ public abstract class AbstractIndex implements Closeable {
     /**
      * Forcefully free the buffer's mmap.
      */
-    // Visible for testing, we can make this protected once OffsetIndexTest is in the same package as this class
-    public void forceUnmap() throws IOException {
+    // Visible for testing
+    protected void forceUnmap() throws IOException {
         try {
             ByteBufferUnmapper.unmap(file.getAbsolutePath(), mmap);
         } finally {
