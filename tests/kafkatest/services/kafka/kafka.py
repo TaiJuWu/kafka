@@ -1129,7 +1129,7 @@ class KafkaService(KafkaPathResolverMixin, JmxMixin, Service):
         security_config = self.security_config
         # we only need to create broker credentials when the broker mechanism is SASL/SCRAM
         if security_config.is_sasl(self.interbroker_security_protocol) and security_config.is_sasl_scram(self.interbroker_sasl_mechanism):
-            force_use_zk_connection = True # we are bootstrapping these credentials before Kafka is started
+            force_use_zk_connection = not self.all_nodes_configs_command_uses_bootstrap_server_scram() # we are bootstrapping these credentials before Kafka is started
             cmd = fix_opts_for_new_jvm(node)
             cmd += "%(kafka_configs_cmd)s --entity-name %(user)s --entity-type users --alter --add-config %(mechanism)s=[password=%(password)s]" % {
                 'kafka_configs_cmd': self.kafka_configs_cmd_with_optional_security_settings(node, force_use_zk_connection),
