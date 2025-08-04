@@ -195,7 +195,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
     private final RaftMessageQueue messageQueue;
     private final QuorumConfig quorumConfig;
     private final RaftMetadataLogCleanerManager snapshotCleaner;
-    private final Map<ReplicaKey, Long> voterLastFetchOrSendBeginQuorum;
+    private final Map<Node, Long> voterLastFetchOrSendBeginQuorum;
 
     private final Map<Listener<T>, ListenerContext> listenerContexts = new IdentityHashMap<>();
     private final ConcurrentLinkedQueue<Registration<T>> pendingRegistrations = new ConcurrentLinkedQueue<>();
@@ -1155,9 +1155,19 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
             );
         }
 
-        voterKey.ifPresent(key -> voterLastFetchOrSendBeginQuorum.put(key, currentTimeMs));
-
-//        voterLastFetchOrSendBeginQuorum.put(voterKey.get(), currentTimeMs);
+        voterKey.ifPresent(replicaKey -> {
+            VoterSet voters = partitionState.lastVoterSet();
+            Node node = voters.voterNode(replicaKey.id(), channel.listenerName()).orElseThrow(
+                () -> new IllegalStateException(
+                    String.format(
+                        "Unknown endpoint for voter id %d for listener name %s",
+                        replicaKey.id(),
+                        channel.listenerName()
+                    )
+                )
+            );
+            voterLastFetchOrSendBeginQuorum.put(node, currentTimeMs);
+        });
 
         return buildBeginQuorumEpochResponse(
             requestMetadata.listenerName(),
@@ -1547,7 +1557,15 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
         }
 
         if (quorum().isLeader()) {
-            voterLastFetchOrSendBeginQuorum.put(replicaKey, currentTimeMs);
+            VoterSet voters = partitionState.lastVoterSet();
+            voterLastFetchOrSendBeginQuorum.put(voters.voterNode(replicaKey.id(), channel.listenerName()).orElseThrow(
+                    () -> new IllegalStateException(
+                        String.format(
+                            "Unknown endpoint for voter id %d for listener name %s",
+                            replicaKey.id(),
+                            channel.listenerName()
+                        )
+            )), currentTimeMs);
         }
 
         CompletableFuture<Long> future = fetchPurgatory.await(
@@ -2886,20 +2904,6 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
         return minBackoffMs;
     }
 
-    private long maybeSendRequest(
-            long currentTimeMs,
-            ReplicaKey remoteVoter,
-            Function<Integer, Node> destinationSupplier,
-            Function<ReplicaKey, ApiMessage> requestSupplier
-    ) {
-
-        return maybeSendRequest(
-                currentTimeMs,
-                destinationSupplier.apply(remoteVoter.id()),
-                () -> requestSupplier.apply(remoteVoter)
-        ).timeToWaitMs();
-    }
-
     private BeginQuorumEpochRequestData buildBeginQuorumEpochRequest(ReplicaKey remoteVoter) {
         return RaftUtil.singletonBeginQuorumEpochRequest(
             log.topicPartition(),
@@ -3069,36 +3073,31 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
                         )
                     );
 
-            Set<ReplicaKey> replicaKeys = voters
+            timeUntilNextBeginQuorumSend = maybeSendRequest(
+                currentTimeMs,
+                voters
                     .voterKeys()
                     .stream()
                     .filter(key -> key.id() != quorum.localIdOrThrow())
-                    .collect(Collectors.toSet());
-
-            for (ReplicaKey voter : replicaKeys) {
-                long timeUntilNextBeginQuorumSendToNode = timeUntilNextBeginQuorumSend;
-                if (voterLastFetchOrSendBeginQuorum.containsKey(voter)) {
-                    long lastSendRequestMs = voterLastFetchOrSendBeginQuorum.get(voter);
-                    if (currentTimeMs - lastSendRequestMs > quorum.fetchTimeoutMs() * 0.75) {
-                        timeUntilNextBeginQuorumSendToNode = maybeSendRequest(
-                                currentTimeMs,
-                                voter,
-                                nodeSupplier,
-                                this::buildBeginQuorumEpochRequest
-                        );
-                    }
-                } else {
-                    timeUntilNextBeginQuorumSendToNode = maybeSendRequest(
-                            currentTimeMs,
-                            voter,
-                            nodeSupplier,
-                            this::buildBeginQuorumEpochRequest
-                    );
-                }
-                timeUntilNextBeginQuorumSend = Math.min(timeUntilNextBeginQuorumSendToNode, timeUntilNextBeginQuorumSend);
-            }
-
-            state.resetBeginQuorumEpochTimer(currentTimeMs, timeUntilNextBeginQuorumSend);
+                    .filter(key -> {
+                        Node node = voters.voterNode(key.id(), channel.listenerName()).orElseThrow(
+                            () -> new IllegalStateException(
+                                String.format(
+                                    "Unknown endpoint for voter id %d for listener name %s",
+                                    key.id(),
+                                    channel.listenerName()
+                            )
+                        ));
+                        if (voterLastFetchOrSendBeginQuorum.containsKey(node)) {
+                            return currentTimeMs - voterLastFetchOrSendBeginQuorum.get(node) > quorum.fetchTimeoutMs() * 0.75;
+                        }
+                        return true;
+                    })
+                    .collect(Collectors.toSet()),
+                nodeSupplier,
+                this::buildBeginQuorumEpochRequest
+            );
+            state.resetBeginQuorumEpochTimer(currentTimeMs);
         }
         return timeUntilNextBeginQuorumSend;
     }
