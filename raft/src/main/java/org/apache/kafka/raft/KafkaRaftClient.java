@@ -3078,7 +3078,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
             for (ReplicaKey voter : replicaKeys) {
                 long timeUntilNextBeginQuorumSendToNode = timeUntilNextBeginQuorumSend;
                 if (voterLastFetchOrSendBeginQuorum.containsKey(voter)) {
-                    long lastSendRequestMs = voterLastFetchOrSendBeginQuorum.getOrDefault(voter, currentTimeMs);
+                    long lastSendRequestMs = voterLastFetchOrSendBeginQuorum.get(voter);
                     if (currentTimeMs - lastSendRequestMs > quorum.fetchTimeoutMs() * 0.75) {
                         timeUntilNextBeginQuorumSendToNode = maybeSendRequest(
                                 currentTimeMs,
