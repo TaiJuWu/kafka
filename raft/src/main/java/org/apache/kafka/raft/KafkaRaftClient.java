@@ -100,6 +100,7 @@ import org.slf4j.Logger;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
@@ -194,6 +195,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
     private final RaftMessageQueue messageQueue;
     private final QuorumConfig quorumConfig;
     private final RaftMetadataLogCleanerManager snapshotCleaner;
+    private final Map<ReplicaKey, Long> voterLastFetchOrSendBeginQuorum;
 
     private final Map<Listener<T>, ListenerContext> listenerContexts = new IdentityHashMap<>();
     private final ConcurrentLinkedQueue<Registration<T>> pendingRegistrations = new ConcurrentLinkedQueue<>();
@@ -313,6 +315,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
         this.random = random;
         this.quorumConfig = quorumConfig;
         this.snapshotCleaner = new RaftMetadataLogCleanerManager(logger, time, 60000, log::maybeClean);
+        this.voterLastFetchOrSendBeginQuorum = new HashMap<>();
 
         if (!bootstrapServers.isEmpty()) {
             // generate Node objects from network addresses by using decreasing negative ids
@@ -1152,6 +1155,10 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
             );
         }
 
+        voterKey.ifPresent(key -> voterLastFetchOrSendBeginQuorum.put(key, currentTimeMs));
+
+//        voterLastFetchOrSendBeginQuorum.put(voterKey.get(), currentTimeMs);
+
         return buildBeginQuorumEpochResponse(
             requestMetadata.listenerName(),
             requestMetadata.apiVersion(),
@@ -1476,6 +1483,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
      * - {@link Errors#INVALID_REQUEST} if the request epoch is larger than the leader's current epoch
      *     or if either the fetch offset or the last fetched epoch is invalid
      */
+    @SuppressWarnings("CyclomaticComplexity")
     private CompletableFuture<FetchResponseData> handleFetchRequest(
         RaftRequest.Inbound requestMetadata,
         long currentTimeMs
@@ -1536,6 +1544,10 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
             // 5. The fetching replica needs to fetch a snapshot
             // 6. The fetching replica should update its high-watermark
             return completedFuture(response);
+        }
+
+        if (quorum().isLeader()) {
+            voterLastFetchOrSendBeginQuorum.put(replicaKey, currentTimeMs);
         }
 
         CompletableFuture<Long> future = fetchPurgatory.await(
@@ -2874,6 +2886,20 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
         return minBackoffMs;
     }
 
+    private long maybeSendRequest(
+            long currentTimeMs,
+            ReplicaKey remoteVoter,
+            Function<Integer, Node> destinationSupplier,
+            Function<ReplicaKey, ApiMessage> requestSupplier
+    ) {
+
+        return maybeSendRequest(
+                currentTimeMs,
+                destinationSupplier.apply(remoteVoter.id()),
+                () -> requestSupplier.apply(remoteVoter)
+        ).timeToWaitMs();
+    }
+
     private BeginQuorumEpochRequestData buildBeginQuorumEpochRequest(ReplicaKey remoteVoter) {
         return RaftUtil.singletonBeginQuorumEpochRequest(
             log.topicPartition(),
@@ -3043,17 +3069,36 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
                         )
                     );
 
-            timeUntilNextBeginQuorumSend = maybeSendRequest(
-                currentTimeMs,
-                voters
+            Set<ReplicaKey> replicaKeys = voters
                     .voterKeys()
                     .stream()
                     .filter(key -> key.id() != quorum.localIdOrThrow())
-                    .collect(Collectors.toSet()),
-                nodeSupplier,
-                this::buildBeginQuorumEpochRequest
-            );
-            state.resetBeginQuorumEpochTimer(currentTimeMs);
+                    .collect(Collectors.toSet());
+
+            for (ReplicaKey voter : replicaKeys) {
+                long timeUntilNextBeginQuorumSendToNode = timeUntilNextBeginQuorumSend;
+                if (voterLastFetchOrSendBeginQuorum.containsKey(voter)) {
+                    long lastSendRequestMs = voterLastFetchOrSendBeginQuorum.getOrDefault(voter, currentTimeMs);
+                    if (currentTimeMs - lastSendRequestMs > quorum.fetchTimeoutMs() * 0.75) {
+                        timeUntilNextBeginQuorumSendToNode = maybeSendRequest(
+                                currentTimeMs,
+                                voter,
+                                nodeSupplier,
+                                this::buildBeginQuorumEpochRequest
+                        );
+                    }
+                } else {
+                    timeUntilNextBeginQuorumSendToNode = maybeSendRequest(
+                            currentTimeMs,
+                            voter,
+                            nodeSupplier,
+                            this::buildBeginQuorumEpochRequest
+                    );
+                }
+                timeUntilNextBeginQuorumSend = Math.min(timeUntilNextBeginQuorumSendToNode, timeUntilNextBeginQuorumSend);
+            }
+
+            state.resetBeginQuorumEpochTimer(currentTimeMs, timeUntilNextBeginQuorumSend);
         }
         return timeUntilNextBeginQuorumSend;
     }

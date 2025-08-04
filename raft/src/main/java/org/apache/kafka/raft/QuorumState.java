@@ -842,6 +842,10 @@ public class QuorumState {
         return new LeaderAndEpoch(election.optionalLeaderId(), election.epoch());
     }
 
+    public int fetchTimeoutMs() {
+        return fetchTimeoutMs;
+    }
+
     public boolean isFollower() {
         return state instanceof FollowerState;
     }

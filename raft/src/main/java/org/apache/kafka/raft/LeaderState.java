@@ -183,9 +183,9 @@ public class LeaderState<T> implements EpochState {
         return beginQuorumEpochTimer.remainingMs();
     }
 
-    public void resetBeginQuorumEpochTimer(long currentTimeMs) {
+    public void resetBeginQuorumEpochTimer(long currentTimeMs, long nextBeginQuorumEpochTimeoutMs) {
         beginQuorumEpochTimer.update(currentTimeMs);
-        beginQuorumEpochTimer.reset(beginQuorumEpochTimeoutMs);
+        beginQuorumEpochTimer.reset(Math.min(beginQuorumEpochTimeoutMs, nextBeginQuorumEpochTimeoutMs));
     }
 
     /**
