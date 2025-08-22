@@ -267,7 +267,7 @@ class KafkaRaftManager[T](
     val clientId = s"raft-client-${config.nodeId}"
     val maxInflightRequestsPerConnection = 1
     val reconnectBackoffMs = 50
-    val reconnectBackoffMsMs = 500
+    val reconnectBackoffMsMax = 500
     val discoverBrokerVersions = true
 
     val networkClient = new NetworkClient(
@@ -276,7 +276,7 @@ class KafkaRaftManager[T](
       clientId,
       maxInflightRequestsPerConnection,
       reconnectBackoffMs,
-      reconnectBackoffMsMs,
+      reconnectBackoffMsMax,
       Selectable.USE_DEFAULT_BUFFER_SIZE,
       config.socketReceiveBufferBytes,
       config.quorumConfig.requestTimeoutMs,
