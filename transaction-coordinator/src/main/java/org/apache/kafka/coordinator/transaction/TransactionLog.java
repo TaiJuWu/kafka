@@ -53,7 +53,7 @@ public class TransactionLog {
      *
      * @return key bytes
      */
-    static byte[] keyToBytes(String transactionalId) {
+    public static byte[] keyToBytes(String transactionalId) {
         return MessageUtil.toCoordinatorTypePrefixedBytes(
                 new TransactionLogKey().setTransactionalId(transactionalId)
         );
@@ -64,7 +64,7 @@ public class TransactionLog {
      *
      * @return value payload bytes
      */
-    static byte[] valueToBytes(TxnTransitMetadata txnMetadata,
+    public static byte[] valueToBytes(TxnTransitMetadata txnMetadata,
                                TransactionVersion transactionVersionLevel) {
         if (txnMetadata.txnState() == TransactionState.EMPTY && !txnMetadata.topicPartitions().isEmpty()) {
             throw new IllegalStateException("Transaction is not expected to have any partitions since its state is "
@@ -109,12 +109,12 @@ public class TransactionLog {
      *
      * @return Either: left with the version if the key is not a transaction log key, right with the transactional id otherwise
      */
-    static Object readTxnRecordKey(ByteBuffer buffer) {
+    public static Object readTxnRecordKey(ByteBuffer buffer) {
         short version = buffer.getShort();
         if (version == CoordinatorRecordType.TRANSACTION_LOG.id()) {
             return new TransactionLogKey(new ByteBufferAccessor(buffer), (short) 0).transactionalId();
         } else {
-            return version; // like Scala Left(version)
+            return version;
         }
     }
 
@@ -123,9 +123,9 @@ public class TransactionLog {
      *
      * @return a transaction metadata object from the message, or null if tombstone
      */
-    static TransactionMetadata readTxnRecordValue(String transactionalId, ByteBuffer buffer) {
+    public static Optional<TransactionMetadata> readTxnRecordValue(String transactionalId, ByteBuffer buffer) {
         if (buffer == null) {
-            return null; // tombstone
+            return Optional.empty(); // tombstone
         } else {
             short version = buffer.getShort();
             if (version >= TransactionLogValue.LOWEST_SUPPORTED_VERSION
@@ -143,7 +143,7 @@ public class TransactionLog {
                     }
                 }
 
-                return new TransactionMetadata(
+                return Optional.of(new TransactionMetadata(
                         transactionalId,
                         value.producerId(),
                         value.previousProducerId(),
@@ -156,6 +156,7 @@ public class TransactionLog {
                         value.transactionStartTimestampMs(),
                         value.transactionLastUpdateTimestampMs(),
                         TransactionVersion.fromFeatureLevel(value.clientTransactionVersion())
+                        )
                 );
             } else {
                 throw new IllegalStateException("Unknown version " + version + " from the transaction log message value");

@@ -22,7 +22,7 @@ import org.apache.kafka.common.protocol.{ByteBufferAccessor, MessageUtil}
 import org.apache.kafka.common.protocol.types.Field.TaggedFieldsSection
 import org.apache.kafka.common.protocol.types.{CompactArrayOf, Field, Schema, Struct, Type}
 import org.apache.kafka.common.record.{MemoryRecords, RecordBatch, SimpleRecord}
-import org.apache.kafka.coordinator.transaction.{TransactionMetadata, TransactionState, TxnTransitMetadata}
+import org.apache.kafka.coordinator.transaction.{TransactionMetadata, TransactionState, TxnTransitMetadata, TransactionLog}
 import org.apache.kafka.coordinator.transaction.generated.{TransactionLogKey, TransactionLogValue}
 import org.apache.kafka.server.common.TransactionVersion.{TV_0, TV_2}
 import org.junit.jupiter.api.Assertions.{assertEquals, assertThrows, assertTrue, fail}
@@ -91,8 +91,8 @@ class TransactionLogTest {
     var count = 0
     for (record <- records.records.asScala) {
       TransactionLog.readTxnRecordKey(record.key) match {
-        case Left(version) => fail(s"Unexpected record version: $version")
-        case Right(transactionalId) =>
+        case version : java.lang.Short => fail(s"Unexpected record version: $version")
+        case transactionalId : String =>
           val txnMetadata = TransactionLog.readTxnRecordValue(transactionalId, record.value).get
 
           assertEquals(pidMappings(transactionalId), txnMetadata.producerId)
@@ -106,6 +106,9 @@ class TransactionLogTest {
             assertEquals(topicPartitions, txnMetadata.topicPartitions)
 
           count = count + 1
+        case other =>
+          throw new IllegalArgumentException("Unsupported transaction record key type:" + other.getClass.getName +
+            " . Only Short and String are supported.")
       }
     }
 
@@ -239,8 +242,8 @@ class TransactionLogTest {
     val record = new TransactionLogKey()
     val unknownRecord = MessageUtil.toVersionPrefixedBytes(Short.MaxValue, record)
     TransactionLog.readTxnRecordKey(ByteBuffer.wrap(unknownRecord)) match {
-      case Left(version) => assertEquals(Short.MaxValue, version)
-      case Right(_) => fail("Expected to read unknown message")
+      case version : java.lang.Short => assertEquals(Short.MaxValue, version)
+      case _ => fail("Expected to read unknown message")
     }
   }
 }
