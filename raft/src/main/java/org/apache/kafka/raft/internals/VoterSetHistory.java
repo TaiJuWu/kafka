@@ -38,6 +38,7 @@ public final class VoterSetHistory {
 
     VoterSetHistory(VoterSet staticVoterSet, LogContext logContext) {
         this.staticVoterSet = staticVoterSet;
+        votersHistory.addAt(0, staticVoterSet);
         this.logger = logContext.logger(getClass());
     }
 
