@@ -29,11 +29,13 @@ import org.apache.kafka.clients.consumer.internals.ConsumerNetworkClient;
 import org.apache.kafka.clients.consumer.internals.RequestFuture;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.internals.ClusterResourceListeners;
 import org.apache.kafka.common.internals.KafkaFutureImpl;
+import org.apache.kafka.common.message.DescribeQuorumResponseData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.network.Selector;
 import org.apache.kafka.common.protocol.Errors;
@@ -41,6 +43,8 @@ import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.AbstractResponse;
 import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
+import org.apache.kafka.common.requests.DescribeQuorumRequest;
+import org.apache.kafka.common.requests.DescribeQuorumResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
@@ -55,6 +59,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -63,6 +68,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import joptsimple.OptionSpec;
+
+import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_NAME;
+import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_PARTITION;
 
 public class BrokerApiVersionsCommand {
     public static void main(String... args) {
@@ -84,8 +92,13 @@ public class BrokerApiVersionsCommand {
         BrokerVersionCommandOptions opts = new BrokerVersionCommandOptions(args);
         try (AdminClient adminClient = createAdminClient(opts)) {
             adminClient.awaitBrokers();
+            adminClient.awaitVoters();
             Map<Node, KafkaFuture<NodeApiVersions>> brokerMap = adminClient.listAllBrokerVersionInfo();
-            brokerMap.forEach((broker, future) -> {
+            Map<Node, KafkaFuture<NodeApiVersions>> voterMap = adminClient.listAllVoterVersionInfo();
+            Map<Node, KafkaFuture<NodeApiVersions>> resultMap = new HashMap<>(brokerMap);
+            resultMap.putAll(voterMap);
+
+            resultMap.forEach((broker, future) -> {
                 try {
                     NodeApiVersions apiVersions = future.get();
                     System.out.print(broker + " -> " + apiVersions.toString(true) + "\n");
@@ -268,6 +281,16 @@ public class BrokerApiVersionsCommand {
             } while (nodes.isEmpty());
         }
 
+        public void awaitVoters() throws InterruptedException {
+            List<Node> nodes;
+            do {
+                nodes = findAllVoters();
+                if (nodes.isEmpty()) {
+                    TimeUnit.MILLISECONDS.sleep(50);
+                }
+            } while (nodes.isEmpty());
+        }
+
         private List<Node> findAllBrokers() {
             MetadataResponse response = (MetadataResponse) sendAnyNode(MetadataRequest.Builder.allTopics());
             if (!response.errors().isEmpty()) {
@@ -276,10 +299,40 @@ public class BrokerApiVersionsCommand {
             return response.buildCluster().nodes();
         }
 
+        private List<Node> findAllVoters() {
+            DescribeQuorumResponse response = (DescribeQuorumResponse) sendAnyNode(new DescribeQuorumRequest.Builder(DescribeQuorumRequest.singletonRequest(
+                    new TopicPartition(CLUSTER_METADATA_TOPIC_NAME, CLUSTER_METADATA_TOPIC_PARTITION.partition())
+            )));
+
+            if (!response.errorCounts().isEmpty()) {
+                LOGGER.debug("DescribeQuorum request contained errors: {}", response.errorCounts());
+            }
+
+            DescribeQuorumResponseData.NodeCollection nodeCollection = response.data().nodes();
+
+            return convertCollectionToNodes(nodeCollection);
+
+        }
+
+        private List<Node> convertCollectionToNodes(DescribeQuorumResponseData.NodeCollection nodeCollection) {
+
+            return nodeCollection.stream().flatMap(n -> n.listeners().stream().map(l ->
+                new Node(n.nodeId(), l.host(), l.port())
+            )).toList();
+        }
+
         public Map<Node, KafkaFuture<NodeApiVersions>> listAllBrokerVersionInfo() {
             return findAllBrokers().stream()
                     .collect(Collectors.toMap(
                             broker -> broker,
+                            this::getNodeApiVersions
+                    ));
+        }
+
+        public Map<Node, KafkaFuture<NodeApiVersions>> listAllVoterVersionInfo() {
+            return findAllVoters().stream()
+                    .collect(Collectors.toMap(
+                            voter -> voter,
                             this::getNodeApiVersions
                     ));
         }
