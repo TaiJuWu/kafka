@@ -59,7 +59,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -95,18 +94,20 @@ public class BrokerApiVersionsCommand {
             adminClient.awaitVoters();
             Map<Node, KafkaFuture<NodeApiVersions>> brokerMap = adminClient.listAllBrokerVersionInfo();
             Map<Node, KafkaFuture<NodeApiVersions>> voterMap = adminClient.listAllVoterVersionInfo();
-            Map<Node, KafkaFuture<NodeApiVersions>> resultMap = new HashMap<>(brokerMap);
-            resultMap.putAll(voterMap);
-
-            resultMap.forEach((broker, future) -> {
-                try {
-                    NodeApiVersions apiVersions = future.get();
-                    System.out.print(broker + " -> " + apiVersions.toString(true) + "\n");
-                } catch (Exception e) {
-                    System.out.print(broker + " -> ERROR: " + e.getMessage() + "\n");
-                }
-            });
+            printSupportedVersion("BROKER", brokerMap);
+            printSupportedVersion("CONTROLLER", voterMap);
         }
+    }
+
+    private static void printSupportedVersion(String type, Map<Node, KafkaFuture<NodeApiVersions>> nodeMap) {
+        nodeMap.forEach((node, future) -> {
+            try {
+                NodeApiVersions apiVersions = future.get();
+                System.out.print("Node type: " + type + " " + node + " -> " + apiVersions.toString(true) + "\n");
+            } catch (Exception e) {
+                System.out.print("Node type: " + type + " " + node + " -> ERROR: " + e.getMessage() + "\n");
+            }
+        });
     }
 
     private static AdminClient createAdminClient(BrokerVersionCommandOptions opts) throws IOException {

@@ -49,25 +49,37 @@ public class BrokerApiVersionsCommandTest {
         String output = ToolsTestUtils.grabConsoleOutput(() ->
                 BrokerApiVersionsCommand.mainNoExit("--bootstrap-server", clusterInstance.bootstrapServers()));
 
+        System.err.println("output::");
+        System.err.println(output);
+
         Iterator<String> lineIter = Arrays.stream(output.split("\n")).iterator();
         validateApiVersionCommand(ApiMessageType.ListenerType.BROKER, lineIter);
+        validateApiVersionCommand(ApiMessageType.ListenerType.CONTROLLER, lineIter);
         assertFalse(lineIter.hasNext());
     }
 
-    @ClusterTest(brokers = 3)
+    @ClusterTest(brokers = 3, controllers = 3)
     public void testMultiBrokerApiVersionsCommandOutput(ClusterInstance clusterInstance) {
         String output = ToolsTestUtils.grabConsoleOutput(() ->
                 BrokerApiVersionsCommand.mainNoExit("--bootstrap-server", clusterInstance.bootstrapServers()));
+
+
+        System.err.println("output::");
+        System.err.println(output);
+
         Iterator<String> lineIter = Arrays.stream(output.split("\n")).iterator();
         assertTrue(lineIter.hasNext());
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < clusterInstance.brokers().size(); i++) {
             validateApiVersionCommand(ApiMessageType.ListenerType.BROKER, lineIter);
+        }
+        for (int i = 0; i < clusterInstance.controllers().size(); i++) {
+            validateApiVersionCommand(ApiMessageType.ListenerType.CONTROLLER, lineIter);
         }
         assertFalse(lineIter.hasNext());
     }
 
     private static void validateApiVersionCommand(ApiMessageType.ListenerType listenerType, Iterator<String> lineIter) {
-        String expectedOutput = "localhost:\\d+ \\(id: \\d+ rack: null isFenced: false\\) -> \\(";
+        String expectedOutput = "Node type: (BROKER|CONTROLLER) localhost:\\d+ \\(id: \\d+ rack: null isFenced: false\\) -> \\(";
         assertTrue(lineIter.next().matches(expectedOutput));
 
         NodeApiVersions nodeApiVersions = new NodeApiVersions(
@@ -99,7 +111,6 @@ public class BrokerApiVersionsCommandTest {
         }
         assertTrue(lineIter.hasNext());
         assertEquals(")", lineIter.next());
-
     }
 
     @ClusterTest
