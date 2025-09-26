@@ -28,9 +28,11 @@ import org.apache.kafka.common.test.ClusterInstance;
 import org.apache.kafka.common.test.api.ClusterConfigProperty;
 import org.apache.kafka.common.test.api.ClusterTest;
 import org.apache.kafka.common.test.api.ClusterTestDefaults;
+import org.apache.kafka.common.test.api.Type;
 import org.apache.kafka.server.config.ServerConfigs;
 
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
@@ -40,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@ClusterTestDefaults(serverProperties = {
+@ClusterTestDefaults(types = {Type.KRAFT}, serverProperties = {
     @ClusterConfigProperty(key = ServerConfigs.UNSTABLE_API_VERSIONS_ENABLE_CONFIG, value = "true"),
 })
 public class BrokerApiVersionsCommandTest {
@@ -85,7 +87,14 @@ public class BrokerApiVersionsCommandTest {
         NodeApiVersions nodeApiVersions = new NodeApiVersions(
                 ApiVersionsResponse.filterApis(listenerType, true, true),
                 List.of());
-        Iterator<ApiKeys> apiKeysIter = ApiKeys.clientApis().iterator();
+        EnumSet<ApiKeys> apiKeys = ApiKeys.clientApis();
+
+        // Controller will return all api
+        if (listenerType == ApiMessageType.ListenerType.CONTROLLER) {
+            apiKeys.addAll(ApiKeys.controllerApis());
+        }
+
+        Iterator<ApiKeys> apiKeysIter = apiKeys.iterator();
         while (apiKeysIter.hasNext()) {
             ApiKeys apiKey = apiKeysIter.next();
             String terminator = apiKeysIter.hasNext() ? "," : "";
