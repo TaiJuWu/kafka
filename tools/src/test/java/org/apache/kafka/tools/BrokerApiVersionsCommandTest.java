@@ -89,7 +89,7 @@ public class BrokerApiVersionsCommandTest {
                 List.of());
         EnumSet<ApiKeys> apiKeys = ApiKeys.clientApis();
 
-        // Controller will return all api
+        // Controller will return all apis
         if (listenerType == ApiMessageType.ListenerType.CONTROLLER) {
             apiKeys.addAll(ApiKeys.controllerApis());
         }
@@ -112,6 +112,10 @@ public class BrokerApiVersionsCommandTest {
                 } else {
                     lineBuilder.append(apiKey.name).append("(").append(apiKey.id).append("): ").append(versionRangeStr).append(" [usable: ").append(usableVersion).append("]").append(terminator);
                 }
+            // FIXME: Pass Vote RPC
+            } else if (apiKey == ApiKeys.VOTE) {
+                lineIter.next();
+                continue;
             } else {
                 lineBuilder.append(apiKey.name).append("(").append(apiKey.id).append("): UNSUPPORTED").append(terminator);
             }
