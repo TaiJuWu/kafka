@@ -70,7 +70,8 @@ public class ClusterToolTest {
     @ClusterTest(brokers = 1, types = {Type.KRAFT, Type.CO_KRAFT})
     public void testListEndpointsWithBootstrapServer(ClusterInstance clusterInstance) {
         String output = ToolsTestUtils.captureStandardOut(() ->
-                assertDoesNotThrow(() -> ClusterTool.execute("list-endpoints", "--bootstrap-server", clusterInstance.bootstrapServers())));
+                assertDoesNotThrow(() -> ClusterTool.execute("list-endpoints", "--bootstrap-server", clusterInstance.bootstrapServers(),
+                        "--bootstrap-controller", clusterInstance.bootstrapControllers())));
         String port = clusterInstance.bootstrapServers().split(":")[1];
         int id = clusterInstance.brokerIds().iterator().next();
         String format = "%-10s %-9s %-10s %-10s %-10s %-15s%n%-10s %-9s %-10s %-10s %-10s %-6s";

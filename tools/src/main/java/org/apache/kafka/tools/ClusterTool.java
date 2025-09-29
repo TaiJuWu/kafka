@@ -16,8 +16,11 @@
  */
 package org.apache.kafka.tools;
 
+import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.DescribeClusterOptions;
+import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.utils.Exit;
@@ -27,13 +30,13 @@ import org.apache.kafka.server.util.CommandLineUtils;
 import net.sourceforge.argparse4j.ArgumentParsers;
 import net.sourceforge.argparse4j.inf.ArgumentParser;
 import net.sourceforge.argparse4j.inf.ArgumentParserException;
-import net.sourceforge.argparse4j.inf.MutuallyExclusiveGroup;
 import net.sourceforge.argparse4j.inf.Namespace;
 import net.sourceforge.argparse4j.inf.Subparser;
 import net.sourceforge.argparse4j.inf.Subparsers;
 
 import java.io.PrintStream;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
@@ -76,11 +79,10 @@ public class ClusterTool {
         Subparser listEndpoints = subparsers.addParser("list-endpoints")
                 .help("List endpoints");
         for (Subparser subpparser : List.of(clusterIdParser, unregisterParser, listEndpoints)) {
-            MutuallyExclusiveGroup connectionOptions = subpparser.addMutuallyExclusiveGroup().required(true);
-            connectionOptions.addArgument("--bootstrap-server", "-b")
+            subpparser.addArgument("--bootstrap-server", "-b")
                     .action(store())
                     .help("A list of host/port pairs to use for establishing the connection to the Kafka cluster.");
-            connectionOptions.addArgument("--bootstrap-controller", "-C")
+            subpparser.addArgument("--bootstrap-controller", "-C")
                     .action(store())
                     .help("A list of host/port pairs to use for establishing the connection to the KRaft controllers.");
             subpparser.addArgument("--config")
@@ -111,11 +113,20 @@ public class ClusterTool {
             System.out.println("Option --config has been deprecated and will be removed in a future version. Use --command-config instead.");
             commandConfigFile = configFile;
         }
+
         Properties properties = (commandConfigFile != null) ? Utils.loadProps(commandConfigFile) : new Properties();
 
-        CommandLineUtils.initializeBootstrapProperties(properties,
+        Properties controllerProperties = null;
+        Properties brokerProperties = null;
+
+        if (!command.equals("list-endpoints")) {
+            CommandLineUtils.initializeBootstrapProperties(properties,
                 Optional.ofNullable(namespace.getString("bootstrap_server")),
                 Optional.ofNullable(namespace.getString("bootstrap_controller")));
+        } else {
+            brokerProperties = newProperties(properties, CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, namespace.getString("bootstrap_server"));
+            controllerProperties = newProperties(properties, AdminClientConfig.BOOTSTRAP_CONTROLLERS_CONFIG, namespace.getString("bootstrap_controller"));
+        }
 
         switch (command) {
             case "cluster-id": {
@@ -131,14 +142,11 @@ public class ClusterTool {
                 break;
             }
             case "list-endpoints": {
-                try (Admin adminClient = Admin.create(properties)) {
-                    boolean includeFencedBrokers = Optional.of(namespace.getBoolean("include_fenced_brokers")).orElse(false);
-                    boolean listControllerEndpoints = namespace.getString("bootstrap_controller") != null;
-                    if (includeFencedBrokers && listControllerEndpoints) {
-                        throw new IllegalArgumentException("The option --include-fenced-brokers is only supported with --bootstrap-server option");
-                    }
-                    listEndpoints(System.out, adminClient, listControllerEndpoints, includeFencedBrokers);
+                boolean includeFencedBrokers = Optional.of(namespace.getBoolean("include_fenced_brokers")).orElse(false);
+                if (includeFencedBrokers && brokerProperties == null) {
+                    throw new IllegalArgumentException("The option --include-fenced-brokers is only supported with --bootstrap-server option");
                 }
+                listEndpoints(System.out, controllerProperties, brokerProperties, includeFencedBrokers);
                 break;
             }
             default:
@@ -169,15 +177,78 @@ public class ClusterTool {
         }
     }
 
-    static void listEndpoints(PrintStream stream, Admin adminClient, boolean listControllerEndpoints, boolean includeFencedBrokers) throws Exception {
+    private static Properties newProperties(Properties oldProp, String key, String value) {
+        if (value == null) {
+            return null;
+        }
+        Properties prop = new Properties();
+        prop.putAll(oldProp);
+        prop.setProperty(key, value);
+
+        return prop;
+    }
+
+    static void listEndpoints(
+            PrintStream stream,
+            Properties controllerProperties,
+            Properties brokerProperties,
+            boolean includeFencedBrokers) throws Exception {
         try {
+            try (ClusterNodeReporter controllerReporter = new ClusterNodeReporter(controllerProperties, stream, true, includeFencedBrokers);
+                 ClusterNodeReporter brokerReporter = new ClusterNodeReporter(brokerProperties, stream, false, includeFencedBrokers)) {
+                KafkaFuture<Collection<Node>> controllerFuture = controllerReporter.getNodeFuture();
+                KafkaFuture<Collection<Node>> brokerFuture = brokerReporter.getNodeFuture();
+
+                controllerReporter.printNodesInfo(controllerFuture.get());
+                brokerReporter.printNodesInfo(brokerFuture.get());
+            }
+
+        } catch (ExecutionException ee) {
+            Throwable cause = ee.getCause();
+            if (cause instanceof UnsupportedVersionException) {
+                stream.println(ee.getCause().getMessage());
+            } else {
+                throw ee;
+            }
+        }
+    }
+
+    private static class ClusterNodeReporter implements AutoCloseable {
+        Admin admin = null;
+        final Properties properties;
+        final PrintStream stream;
+        final boolean isController;
+        final boolean includeFencedBrokers;
+
+        ClusterNodeReporter(Properties properties, PrintStream stream, boolean isController, boolean includeFencedBrokers) {
+            if (properties != null) {
+                admin = Admin.create(properties);
+            }
+
+            this.properties = properties;
+            this.stream = stream;
+            this.isController = isController;
+            this.includeFencedBrokers = includeFencedBrokers;
+        }
+
+        public KafkaFuture<Collection<Node>> getNodeFuture() {
+            if (admin == null) {
+                return KafkaFuture.completedFuture(Collections.emptyList());
+            }
+
             DescribeClusterOptions option = new DescribeClusterOptions().includeFencedBrokers(includeFencedBrokers);
-            Collection<Node> nodes = adminClient.describeCluster(option).nodes().get();
+            return admin.describeCluster(option).nodes();
+        }
+
+        public void printNodesInfo(Collection<Node> nodes) {
+            if (nodes.isEmpty() || admin == null) {
+                return;
+            }
 
             String maxHostLength = String.valueOf(nodes.stream().map(node -> node.host().length()).max(Integer::compareTo).orElse(100));
             String maxRackLength = String.valueOf(nodes.stream().filter(Node::hasRack).map(node -> node.rack().length()).max(Integer::compareTo).orElse(10));
 
-            if (listControllerEndpoints) {
+            if (isController) {
                 String format = "%-10s %-" + maxHostLength + "s %-10s %-" + maxRackLength + "s %-15s%n";
                 stream.printf(format, "ID", "HOST", "PORT", "RACK", "ENDPOINT_TYPE");
                 nodes.forEach(node -> stream.printf(format,
@@ -199,13 +270,12 @@ public class ClusterTool {
                         "broker"
                 ));
             }
-        } catch (ExecutionException ee) {
-            Throwable cause = ee.getCause();
-            if (cause instanceof UnsupportedVersionException) {
-                stream.println(ee.getCause().getMessage());
-            } else {
-                throw ee;
-            }
+
+        }
+
+        public void close() {
+            if (admin != null) admin.close();
+            admin = null;
         }
     }
 }
