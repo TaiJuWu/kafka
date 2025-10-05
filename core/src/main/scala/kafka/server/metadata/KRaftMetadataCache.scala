@@ -80,6 +80,40 @@ class KRaftMetadataCache(
     }
   }
 
+  private def maybeFilterAliveIsrAndReplicas(image: MetadataImage,
+                                             isr: Array[Int],
+                                             replica: Array[Int],
+                                             listenerName: ListenerName,
+                                             filterUnavailableEndpoints: Boolean): (java.util.List[Integer], java.util.List[Integer]) = {
+    if (!filterUnavailableEndpoints) {
+      (Replicas.toList(isr), Replicas.toList(replica))
+    } else {
+      val isrRes = new util.ArrayList[Integer](isr.length)
+      val replicaRes = new util.ArrayList[Integer](replica.length)
+
+      val diffList = replica.filter(r => !isr.contains(r))
+
+      for (brokerId <- isr) {
+        Option(image.cluster().broker(brokerId)).foreach { b =>
+          if (!b.fenced() && b.listeners().containsKey(listenerName.value())) {
+            isrRes.add(brokerId)
+            replicaRes.add(brokerId)
+          }
+        }
+      }
+
+      for (brokerId <- diffList) {
+        Option(image.cluster().broker(brokerId)).foreach { b =>
+          if (!b.fenced() && b.listeners().containsKey(listenerName.value())) {
+            replicaRes.add(brokerId)
+          }
+        }
+      }
+      (isrRes, replicaRes)
+    }
+  }
+
+
   def currentImage(): MetadataImage = _currentImage
 
   // errorUnavailableEndpoints exists to support v0 MetadataResponses
@@ -171,9 +205,8 @@ class KRaftMetadataCache(
         for (partitionId <- startIndex until upperIndex) {
           topic.partitions().get(partitionId) match {
             case partition : PartitionRegistration => {
-              val filteredReplicas = maybeFilterAliveReplicas(image, partition.replicas,
+              val (filteredIsr, filteredReplicas) = maybeFilterAliveIsrAndReplicas(image, partition.isr, partition.replicas,
                 listenerName, filterUnavailableEndpoints = false)
-              val filteredIsr = maybeFilterAliveReplicas(image, partition.isr, listenerName, filterUnavailableEndpoints = false)
               val offlineReplicas = getOfflineReplicas(image, partition, listenerName)
               val maybeLeader = getAliveEndpoint(image, partition.leader, listenerName)
               maybeLeader match {
