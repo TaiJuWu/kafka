@@ -22,6 +22,7 @@ import org.apache.kafka.common._
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors.InvalidTopicException
 import org.apache.kafka.common.internals.Topic
+import org.apache.kafka.memory.MemorySlab
 import org.apache.kafka.common.message.DescribeTopicPartitionsResponseData.{Cursor, DescribeTopicPartitionsResponsePartition, DescribeTopicPartitionsResponseTopic}
 import org.apache.kafka.common.message.MetadataResponseData.{MetadataResponsePartition, MetadataResponseTopic}
 import org.apache.kafka.common.message._
@@ -56,6 +57,7 @@ class KRaftMetadataCache(
   // image values.
   @volatile private var _currentImage: MetadataImage = MetadataImage.EMPTY
 
+  private val respSlab = new MemorySlab[DescribeTopicPartitionsResponsePartition](() => new DescribeTopicPartitionsResponsePartition(), 2000)
   // This method is the main hotspot when it comes to the performance of metadata requests,
   // we should be careful about adding additional logic here.
   // filterUnavailableEndpoints exists to support v0 MetadataResponses
@@ -176,7 +178,7 @@ class KRaftMetadataCache(
               val maybeLeader = getAliveEndpoint(image, partition.leader, listenerName)
               maybeLeader match {
                 case None =>
-                  result.append(new DescribeTopicPartitionsResponsePartition()
+                  result.append(respSlab.allocate()
                     .setPartitionIndex(partitionId)
                     .setLeaderId(MetadataResponse.NO_LEADER_ID)
                     .setLeaderEpoch(partition.leaderEpoch)
@@ -186,7 +188,7 @@ class KRaftMetadataCache(
                     .setEligibleLeaderReplicas(Replicas.toList(partition.elr))
                     .setLastKnownElr(Replicas.toList(partition.lastKnownElr)))
                 case Some(leader) =>
-                  result.append(new DescribeTopicPartitionsResponsePartition()
+                  result.append(respSlab.allocate()
                     .setPartitionIndex(partitionId)
                     .setLeaderId(leader.id())
                     .setLeaderEpoch(partition.leaderEpoch)
