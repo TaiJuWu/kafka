@@ -61,12 +61,15 @@ public class DescribeTopicPartitionsRequestHandler {
         boolean fetchAllTopics = request.topics().isEmpty();
         DescribeTopicPartitionsRequestData.Cursor cursor = request.cursor();
         String cursorTopicName = cursor != null ? cursor.topicName() : "";
+        long now = System.currentTimeMillis();
         if (fetchAllTopics) {
+            // O(n), change to O(logN)
             metadataCache.getAllTopics().forEach(topicName -> {
                 if (topicName.compareTo(cursorTopicName) >= 0) {
                     topics.add(topicName);
                 }
             });
+            System.err.println("1. ZZZ seek all topics " + (System.currentTimeMillis() - now));
         } else {
             request.topics().forEach(topic -> {
                 String topicName = topic.name();
@@ -74,6 +77,7 @@ public class DescribeTopicPartitionsRequestHandler {
                     topics.add(topicName);
                 }
             });
+            System.err.println("2. ZZZ seek partial topics " + (System.currentTimeMillis() - now));
 
             if (cursor != null && !topics.contains(cursor.topicName())) {
                 // The topic in cursor must be included in the topic list if provided.
@@ -89,6 +93,7 @@ public class DescribeTopicPartitionsRequestHandler {
         // Do not disclose the existence of topics unauthorized for Describe, so we've not even checked if they exist or not
         Set<DescribeTopicPartitionsResponseTopic> unauthorizedForDescribeTopicMetadata = new HashSet<>();
 
+        now = System.currentTimeMillis();
         Stream<String> authorizedTopicsStream = topics.stream().filter(topicName -> {
             boolean isAuthorized = authHelper.authorize(
                 abstractRequest.context(), DESCRIBE, TOPIC, topicName, true, true, 1);
@@ -100,7 +105,8 @@ public class DescribeTopicPartitionsRequestHandler {
             }
             return isAuthorized;
         }).sorted();
-
+        System.err.println("3. ZZZ sort and filter from metadaata " + (System.currentTimeMillis() - now));
+        now = System.currentTimeMillis();
         DescribeTopicPartitionsResponseData response = metadataCache.describeTopicResponse(
             authorizedTopicsStream.iterator(),
             abstractRequest.context().listenerName,
@@ -108,6 +114,7 @@ public class DescribeTopicPartitionsRequestHandler {
             Math.max(Math.min(config.maxRequestPartitionSizeLimit(), request.responsePartitionLimit()), 1),
             fetchAllTopics
         );
+        System.err.println("4. ZZZ seek get data from metadaata " + (System.currentTimeMillis() - now));
 
         // get topic authorized operations
         response.topics().forEach(topicData ->

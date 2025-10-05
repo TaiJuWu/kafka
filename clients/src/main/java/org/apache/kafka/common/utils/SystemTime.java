@@ -24,7 +24,7 @@ import java.util.function.Supplier;
  * A time implementation that uses the system clock and sleep call. Use `Time.SYSTEM` instead of creating an instance
  * of this class.
  */
-class SystemTime implements Time {
+public class SystemTime implements Time {
     private static final SystemTime SYSTEM_TIME = new SystemTime();
 
     public static SystemTime getSystemTime() {

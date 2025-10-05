@@ -266,13 +266,19 @@ class KRaftMetadataCache(
     val image = _currentImage
     var remaining = maximumNumberOfPartitions
     val result = new DescribeTopicPartitionsResponseData()
+    var timeAcc: Long = 0
+    var allocMemTime: Long = 0
     breakable {
       topics.forEachRemaining { topicName =>
         if (remaining > 0) {
-          val (partitionResponse, nextPartition) =
+          var now = System.currentTimeMillis()
+          val (partitionResponse, nextPartition) = {
             getPartitionMetadataForDescribeTopicResponse(
               image, topicName, listenerName, topicPartitionStartIndex(topicName), remaining
             )
+          }
+          timeAcc = timeAcc + (System.currentTimeMillis() - now)
+          now = System.currentTimeMillis()
           partitionResponse.map(partitions => {
             val response = new DescribeTopicPartitionsResponseTopic()
               .setErrorCode(Errors.NONE.code)
@@ -291,6 +297,7 @@ class KRaftMetadataCache(
             }
             remaining -= partitions.size
           })
+          allocMemTime = allocMemTime + (System.currentTimeMillis - now)
 
           if (!ignoreTopicsWithExceptions && partitionResponse.isEmpty) {
             val error = try {
@@ -317,6 +324,8 @@ class KRaftMetadataCache(
         }
       }
     }
+    System.err.println("i. ZZZ calculate getPartitionMetadataForDescribeTopicResponse " + timeAcc)
+    System.err.println("ii. ZZZ seek allocMemTime " + allocMemTime)
     result
   }
 
