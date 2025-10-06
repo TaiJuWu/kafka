@@ -57,8 +57,7 @@ class KRaftMetadataCache(
   // image values.
   @volatile private var _currentImage: MetadataImage = MetadataImage.EMPTY
 
-  private val topicRespSlab = new MemorySlab[DescribeTopicPartitionsResponseTopic](() => new DescribeTopicPartitionsResponseTopic(), 2000)
-  private val partitionRespSlab = new MemorySlab[DescribeTopicPartitionsResponsePartition](() => new DescribeTopicPartitionsResponsePartition(), 6000)
+  private val respSlab = new MemorySlab[DescribeTopicPartitionsResponsePartition](() => new DescribeTopicPartitionsResponsePartition(), 2000)
   // This method is the main hotspot when it comes to the performance of metadata requests,
   // we should be careful about adding additional logic here.
   // filterUnavailableEndpoints exists to support v0 MetadataResponses
@@ -212,7 +211,7 @@ class KRaftMetadataCache(
               val maybeLeader = getAliveEndpoint(image, partition.leader, listenerName)
               maybeLeader match {
                 case None =>
-                  result.append(partitionRespSlab.allocate()
+                  result.append(respSlab.allocate()
                     .setPartitionIndex(partitionId)
                     .setLeaderId(MetadataResponse.NO_LEADER_ID)
                     .setLeaderEpoch(partition.leaderEpoch)
@@ -222,7 +221,7 @@ class KRaftMetadataCache(
                     .setEligibleLeaderReplicas(Replicas.toList(partition.elr))
                     .setLastKnownElr(Replicas.toList(partition.lastKnownElr)))
                 case Some(leader) =>
-                  result.append(partitionRespSlab.allocate()
+                  result.append(respSlab.allocate()
                     .setPartitionIndex(partitionId)
                     .setLeaderId(leader.id())
                     .setLeaderEpoch(partition.leaderEpoch)
@@ -316,7 +315,7 @@ class KRaftMetadataCache(
           timeAcc = timeAcc + (System.currentTimeMillis() - now)
           now = System.currentTimeMillis()
           partitionResponse.map(partitions => {
-            val response = topicRespSlab.allocate()
+            val response = new DescribeTopicPartitionsResponseTopic()
               .setErrorCode(Errors.NONE.code)
               .setName(topicName)
               .setTopicId(Option(image.topics().getTopic(topicName).id()).getOrElse(Uuid.ZERO_UUID))
@@ -343,7 +342,7 @@ class KRaftMetadataCache(
               case _: InvalidTopicException =>
                 Errors.INVALID_TOPIC_EXCEPTION
             }
-            result.topics().add(topicRespSlab.allocate()
+            result.topics().add(new DescribeTopicPartitionsResponseTopic()
               .setErrorCode(error.code())
               .setName(topicName)
               .setTopicId(getTopicId(topicName))
