@@ -34,9 +34,7 @@ import org.apache.kafka.metadata.MetadataCache;
 
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.apache.kafka.common.acl.AclOperation.DESCRIBE;
@@ -96,49 +94,19 @@ public class DescribeTopicPartitionsRequestHandler {
         Set<DescribeTopicPartitionsResponseTopic> unauthorizedForDescribeTopicMetadata = new HashSet<>();
 
         now = System.currentTimeMillis();
-//        Stream<String> authorizedTopicsStream = topics.stream().filter(topicName -> {
-//            boolean isAuthorized = authHelper.authorize(
-//                abstractRequest.context(), DESCRIBE, TOPIC, topicName, true, true, 1);
-//            if (!fetchAllTopics && !isAuthorized) {
-//                // We should not return topicId when on unauthorized error, so we return zero uuid.
-//                unauthorizedForDescribeTopicMetadata.add(describeTopicPartitionsResponseTopic(
-//                    Errors.TOPIC_AUTHORIZATION_FAILED, topicName, Uuid.ZERO_UUID, false, List.of())
-//                );
-//            }
-//            return isAuthorized;
-//        }).sorted();
-
-        // 步驟 1: 使用 parallelStream() 啟用並行處理，並用 partitioningBy 分割結果
-        Map<Boolean, List<String>> partitionedTopics = topics.parallelStream().collect(
-                Collectors.partitioningBy(topicName -> authHelper.authorize(
-                        abstractRequest.context(), DESCRIBE, TOPIC, topicName, true, true, 1)
-                )
-        );
-
-        // 步驟 2: (這部分依然是循序的，但只處理少量的未授權 topic)
-        if (!fetchAllTopics) {
-            // get(false) 取得所有未授權的 topic 列表
-            List<String> unauthorizedTopics = partitionedTopics.get(false);
-            if (unauthorizedTopics != null) {
-                unauthorizedTopics.forEach(topicName ->
-                        unauthorizedForDescribeTopicMetadata.add(describeTopicPartitionsResponseTopic(
-                                Errors.TOPIC_AUTHORIZATION_FAILED, topicName, Uuid.ZERO_UUID, false, List.of())
-                        )
+        Stream<String> authorizedTopicsStream = topics.stream().filter(topicName -> {
+            boolean isAuthorized = authHelper.authorize(
+                abstractRequest.context(), DESCRIBE, TOPIC, topicName, true, true, 1);
+            if (!fetchAllTopics && !isAuthorized) {
+                // We should not return topicId when on unauthorized error, so we return zero uuid.
+                unauthorizedForDescribeTopicMetadata.add(describeTopicPartitionsResponseTopic(
+                    Errors.TOPIC_AUTHORIZATION_FAILED, topicName, Uuid.ZERO_UUID, false, List.of())
                 );
             }
-        }
-
-        // 步驟 3: 從已授權的列表中建立最終的、排序好的 Stream
-        // get(true) 取得所有已授權的 topic 列表
-        List<String> authorizedTopics = partitionedTopics.get(true);
-        Stream<String> authorizedTopicsStream = (authorizedTopics != null)
-                ? authorizedTopics.stream().sorted()
-                : Stream.empty();
-
+            return isAuthorized;
+        }).sorted();
         System.err.println("3. ZZZ sort and filter from metadaata " + (System.currentTimeMillis() - now));
-
         now = System.currentTimeMillis();
-
         DescribeTopicPartitionsResponseData response = metadataCache.describeTopicResponse(
             authorizedTopicsStream.iterator(),
             abstractRequest.context().listenerName,
