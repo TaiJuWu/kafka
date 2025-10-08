@@ -123,12 +123,15 @@ class AuthHelper(authorizer: Option[Plugin[Authorizer]]) {
     request: RequestChannel.Request,
     expectedEndpointType: EndpointType,
     clusterId: String,
-    getNodes: () => DescribeClusterBrokerCollection,
+    getControllers: () => DescribeClusterBrokerCollection,
+    getBrokers: () => DescribeClusterBrokerCollection,
     getControllerId: () => Int
   ): DescribeClusterResponseData = {
     val describeClusterRequest = request.body[DescribeClusterRequest]
     val requestEndpointType = EndpointType.fromId(describeClusterRequest.data().endpointType())
+    System.err.println("server receive request and requestEndpointType: " + requestEndpointType)
     if (requestEndpointType.equals(EndpointType.UNKNOWN)) {
+      System.err.println("zZZZZ")
       return new DescribeClusterResponseData().
         setErrorCode(if (request.header.data().requestApiVersion() == 0) {
           Errors.INVALID_REQUEST.code()
@@ -136,7 +139,7 @@ class AuthHelper(authorizer: Option[Plugin[Authorizer]]) {
           Errors.UNSUPPORTED_ENDPOINT_TYPE.code()
         }).
         setErrorMessage("Unsupported endpoint type " + describeClusterRequest.data().endpointType().toInt)
-    } else if (!expectedEndpointType.equals(requestEndpointType)) {
+    } else if (!expectedEndpointType.equals(requestEndpointType) && !EndpointType.ALL.equals(requestEndpointType)) {
       return new DescribeClusterResponseData().
         setErrorCode(if (request.header.data().requestApiVersion() == 0) {
           Errors.INVALID_REQUEST.code()
@@ -155,8 +158,18 @@ class AuthHelper(authorizer: Option[Plugin[Authorizer]]) {
         clusterAuthorizedOperations = 0
     }
     // Get the node list and the controller ID.
-    val nodes = getNodes()
+    val controllers = getControllers()
+    System.err.println("getControllers" + controllers)
+    var nodes = controllers
+    if (requestEndpointType == EndpointType.ALL) {
+      val brokers = getBrokers()
+      nodes = mergeDescribeClusterBrokerCollection(controllers, brokers)
+      System.err.println("getBrokers " + brokers)
+    }
+
     val controllerId = getControllerId()
+
+    System.err.println("nodes: " + nodes)
     // If the provided controller ID is not in the node list, return -1 instead
     // to avoid confusing the client. This could happen in a case where we know
     // the controller ID, but we don't yet have KIP-919 information about that
@@ -172,5 +185,29 @@ class AuthHelper(authorizer: Option[Plugin[Authorizer]]) {
       setClusterAuthorizedOperations(clusterAuthorizedOperations).
       setBrokers(nodes).
       setEndpointType(expectedEndpointType.id())
+  }
+
+  private def mergeDescribeClusterBrokerCollection(
+                controllers: DescribeClusterBrokerCollection,
+                brokers : DescribeClusterBrokerCollection ): DescribeClusterBrokerCollection = {
+
+    val newDescribeClusterBrokerCollection = new DescribeClusterBrokerCollection(controllers.size() + brokers.size())
+    System.err.println("merge function for broker " + brokers)
+    val brokersIter = brokers.iterator()
+    val controllerIter = controllers.iterator()
+
+    while(controllerIter.hasNext) {
+      val controller = controllerIter.next()
+      newDescribeClusterBrokerCollection.add(controller.duplicate())
+    }
+
+    while(brokersIter.hasNext) {
+      val broker = brokersIter.next()
+      newDescribeClusterBrokerCollection.add(broker.duplicate())
+    }
+
+    System.err.println("newDescribeClusterBrokerCollection " + newDescribeClusterBrokerCollection)
+
+    newDescribeClusterBrokerCollection
   }
 }

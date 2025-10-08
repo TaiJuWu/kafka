@@ -2442,13 +2442,18 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleDescribeCluster(request: RequestChannel.Request): Unit = {
+    System.err.print("receive DescribeCluster")
     val response = authHelper.computeDescribeClusterResponse(
       request,
       EndpointType.BROKER,
       clusterId,
       () => {
+        new DescribeClusterResponseData.DescribeClusterBrokerCollection()
+      },
+      () => {
         val brokers = new DescribeClusterResponseData.DescribeClusterBrokerCollection()
         val describeClusterRequest = request.body[DescribeClusterRequest]
+        System.err.println("request.context.listenerName " + request.context.listenerName)
         metadataCache.getBrokerNodes(request.context.listenerName).forEach { node =>
           if (!node.isFenced || describeClusterRequest.data().includeFencedBrokers()) {
           brokers.add(new DescribeClusterResponseData.DescribeClusterBroker().

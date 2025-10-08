@@ -2475,7 +2475,7 @@ public class KafkaAdminClient extends AdminClient {
                     return new DescribeClusterRequest.Builder(new DescribeClusterRequestData()
                         .setIncludeClusterAuthorizedOperations(options.includeAuthorizedOperations())
                         .setEndpointType(metadataManager.usingBootstrapControllers() ?
-                            EndpointType.CONTROLLER.id() : EndpointType.BROKER.id())
+                            EndpointType.ALL.id() : EndpointType.BROKER.id())
                         .setIncludeFencedBrokers(options.includeFencedBrokers()));
                 } else {
                     // Since this only requests node information, it's safe to pass true for allowAutoTopicCreation (and it

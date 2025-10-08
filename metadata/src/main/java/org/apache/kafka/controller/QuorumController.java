@@ -19,6 +19,7 @@ package org.apache.kafka.controller;
 
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.clients.admin.FeatureUpdate;
+import org.apache.kafka.common.Endpoint;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.acl.AclBinding;
 import org.apache.kafka.common.acl.AclBindingFilter;
@@ -47,6 +48,7 @@ import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartiti
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
+import org.apache.kafka.common.message.DescribeClusterResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
@@ -83,6 +85,7 @@ import org.apache.kafka.common.metadata.TopicRecord;
 import org.apache.kafka.common.metadata.UnfenceBrokerRecord;
 import org.apache.kafka.common.metadata.UnregisterBrokerRecord;
 import org.apache.kafka.common.metadata.UserScramCredentialRecord;
+import org.apache.kafka.common.network.ListenerName;
 import org.apache.kafka.common.protocol.ApiMessage;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
@@ -97,6 +100,7 @@ import org.apache.kafka.controller.metrics.QuorumControllerMetrics;
 import org.apache.kafka.deferred.DeferredEvent;
 import org.apache.kafka.deferred.DeferredEventQueue;
 import org.apache.kafka.metadata.BrokerHeartbeatReply;
+import org.apache.kafka.metadata.BrokerRegistration;
 import org.apache.kafka.metadata.BrokerRegistrationReply;
 import org.apache.kafka.metadata.FinalizedControllerFeatures;
 import org.apache.kafka.metadata.KafkaConfigSchema;
@@ -1986,12 +1990,32 @@ public final class QuorumController implements Controller {
                 Map<String, Short> controllerFeatures = new HashMap<>(featureControl.finalizedFeatures(Long.MAX_VALUE).featureMap());
                 // Populate finalized features map with latest known kraft version for validation.
                 controllerFeatures.put(KRaftVersion.FEATURE_NAME, raftClient.kraftVersion().featureLevel());
+                this.log.error("kkkk register broker");
                 return clusterControl.
                     registerBroker(request, offsetControl.nextWriteOffset(),
                         new FinalizedControllerFeatures(controllerFeatures, Long.MAX_VALUE),
                         context.requestHeader().requestApiVersion() >= 3);
             },
             EnumSet.noneOf(ControllerOperationFlag.class));
+    }
+
+    @Override
+    public DescribeClusterResponseData.DescribeClusterBrokerCollection brokerNodes(ListenerName listerName) {
+        DescribeClusterResponseData.DescribeClusterBrokerCollection results =
+                new DescribeClusterResponseData.DescribeClusterBrokerCollection();
+        Map<Integer, BrokerRegistration> brokerRegistrations = clusterControl.brokerRegistrations();
+        for (BrokerRegistration broker : brokerRegistrations.values()) {
+            Endpoint endpoint = broker.listeners().get(listerName.value());
+            if (endpoint != null) {
+                results.add(new DescribeClusterResponseData.DescribeClusterBroker()
+                                .setBrokerId(broker.id())
+                                .setHost(endpoint.host())
+                                .setRack(broker.rack().isPresent() ? broker.rack().get() : null)
+                                .setIsFenced(broker.fenced()));
+            }
+        }
+
+        return results;
     }
 
     @Override

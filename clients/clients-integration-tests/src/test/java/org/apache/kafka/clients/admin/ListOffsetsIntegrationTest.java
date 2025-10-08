@@ -74,7 +74,7 @@ public class ListOffsetsIntegrationTest {
     public void setup() throws InterruptedException {
         clusterInstance.waitForReadyBrokers();
         clusterInstance.createTopic(TOPIC, PARTITION, REPLICAS);
-        adminClient = clusterInstance.admin();
+        adminClient = clusterInstance.admin(Map.of(), true);
     }
 
     @AfterEach
@@ -287,5 +287,11 @@ public class ListOffsetsIntegrationTest {
 
     private void createTopicWithConfig(String topic, Map<String, String> props) throws InterruptedException {
         clusterInstance.createTopic(topic, PARTITION, REPLICAS, props);
+    }
+
+    @ClusterTest
+    public void testDescribeCluster(ClusterInstance clusterInstance) throws ExecutionException, InterruptedException {
+        System.out.println(adminClient.describeCluster().nodes().get());
+
     }
 }

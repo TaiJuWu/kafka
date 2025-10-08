@@ -161,6 +161,7 @@ class AuthHelperTest {
       EndpointType.BROKER,
       "ltCWoi9wRhmHSQCIgAznEg",
       () => new DescribeClusterBrokerCollection(),
+      () => new DescribeClusterBrokerCollection(),
       () => 1)
     assertEquals(new DescribeClusterResponseData().
       setErrorCode(Errors.UNSUPPORTED_ENDPOINT_TYPE.code()).
@@ -177,6 +178,7 @@ class AuthHelperTest {
     val responseData = authHelper.computeDescribeClusterResponse(request,
       EndpointType.BROKER,
       "ltCWoi9wRhmHSQCIgAznEg",
+      () => new DescribeClusterBrokerCollection(),
       () => new DescribeClusterBrokerCollection(),
       () => 1)
     assertEquals(new DescribeClusterResponseData().
@@ -195,6 +197,7 @@ class AuthHelperTest {
       EndpointType.CONTROLLER,
       "ltCWoi9wRhmHSQCIgAznEg",
       () => new DescribeClusterBrokerCollection(),
+      () => new DescribeClusterBrokerCollection(),
       () => 1)
     assertEquals(new DescribeClusterResponseData().
       setErrorCode(Errors.MISMATCHED_ENDPOINT_TYPE.code()).
@@ -212,6 +215,7 @@ class AuthHelperTest {
       EndpointType.CONTROLLER,
       "ltCWoi9wRhmHSQCIgAznEg",
       () => new DescribeClusterBrokerCollection(),
+      () => new DescribeClusterBrokerCollection(),
       () => 1)
     assertEquals(new DescribeClusterResponseData().
       setErrorCode(Errors.INVALID_REQUEST.code()).
@@ -228,6 +232,7 @@ class AuthHelperTest {
     val responseData = authHelper.computeDescribeClusterResponse(request,
       EndpointType.CONTROLLER,
       "ltCWoi9wRhmHSQCIgAznEg",
+      () => new DescribeClusterBrokerCollection(),
       () => new DescribeClusterBrokerCollection(),
       () => 1)
     assertEquals(new DescribeClusterResponseData().
@@ -250,6 +255,7 @@ class AuthHelperTest {
     val responseData = authHelper.computeDescribeClusterResponse(request,
       EndpointType.CONTROLLER,
       "ltCWoi9wRhmHSQCIgAznEg",
+      () => nodes,
       () => nodes,
       () => 1)
     assertEquals(new DescribeClusterResponseData().

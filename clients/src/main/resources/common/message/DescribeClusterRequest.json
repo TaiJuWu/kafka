@@ -21,6 +21,7 @@
   //
   // Version 1 adds EndpointType for KIP-919 support.
   // Version 2 adds IncludeFencedBrokers for KIP-1073 support.
+  // Version 3 support return brokers and controllers
   //
   "validVersions": "0-2",
   "flexibleVersions": "0+",
@@ -28,7 +29,7 @@
     { "name": "IncludeClusterAuthorizedOperations", "type": "bool", "versions": "0+",
       "about": "Whether to include cluster authorized operations." },
     { "name": "EndpointType", "type": "int8", "versions": "1+", "default": "1",
-      "about": "The endpoint type to describe. 1=brokers, 2=controllers." },
+      "about": "The endpoint type to describe. 1=brokers, 2=controllers. 3=all." },
     { "name": "IncludeFencedBrokers", "type": "bool", "versions": "2+",
       "about": "Whether to include fenced brokers when listing brokers." }
   ]

@@ -23,7 +23,8 @@ package org.apache.kafka.clients.admin;
 public enum EndpointType {
     UNKNOWN((byte) 0),
     BROKER((byte) 1),
-    CONTROLLER((byte) 2);
+    CONTROLLER((byte) 2),
+    ALL((byte) 3);
 
     private final byte id;
 
@@ -40,6 +41,8 @@ public enum EndpointType {
             return BROKER;
         } else if (id == CONTROLLER.id) {
             return CONTROLLER;
+        } else if (id == ALL.id) {
+            return ALL;
         } else {
             return UNKNOWN;
         }
