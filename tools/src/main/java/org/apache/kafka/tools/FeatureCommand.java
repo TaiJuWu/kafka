@@ -17,6 +17,7 @@
 package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.DescribeFeaturesOptions;
 import org.apache.kafka.clients.admin.FeatureMetadata;
 import org.apache.kafka.clients.admin.FeatureUpdate;
 import org.apache.kafka.clients.admin.SupportedVersionRange;
@@ -104,7 +105,7 @@ public class FeatureCommand {
         try (Admin adminClient = Admin.create(properties)) {
             switch (command) {
                 case "describe":
-                    handleDescribe(adminClient);
+                    handleDescribe(namespace, adminClient);
                     break;
                 case "upgrade":
                     handleUpgrade(namespace, adminClient);
@@ -128,8 +129,12 @@ public class FeatureCommand {
     }
 
     private static void addDescribeParser(Subparsers subparsers) {
-        subparsers.addParser("describe")
+        Subparser describeParser = subparsers.addParser("describe")
                 .help("Describes the current active feature flags.");
+        describeParser.addArgument("--node-id")
+                .type(String.class)
+                .help("Send request to specific node.")
+                .action(store());
     }
 
     private static void addUpgradeParser(Subparsers subparsers) {
@@ -223,8 +228,11 @@ public class FeatureCommand {
         return String.valueOf(level);
     }
 
-    static void handleDescribe(Admin adminClient) throws ExecutionException, InterruptedException {
-        FeatureMetadata featureMetadata = adminClient.describeFeatures().featureMetadata().get();
+    static void handleDescribe(Namespace namespace, Admin adminClient) throws ExecutionException, InterruptedException {
+
+        String target = namespace.getString("node_id");
+        DescribeFeaturesOptions options = target == null  ? new DescribeFeaturesOptions() : new DescribeFeaturesOptions().nodeId(Integer.parseInt(target));
+        FeatureMetadata featureMetadata = adminClient.describeFeatures(options).featureMetadata().get();
         featureMetadata.supportedFeatures().keySet().stream().sorted().forEach(feature -> {
             short finalizedLevel = (featureMetadata.finalizedFeatures().get(feature) == null) ? 0 : featureMetadata.finalizedFeatures().get(feature).maxVersionLevel();
             SupportedVersionRange range = featureMetadata.supportedFeatures().get(feature);

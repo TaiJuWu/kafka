@@ -54,6 +54,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 @ClusterTestDefaults(
     types = {Type.KRAFT},
     brokers = 3,
+    controllers = 3,
     serverProperties = {
         @ClusterConfigProperty(key = "log.retention.ms", value = "-1"),
     }
@@ -74,12 +75,19 @@ public class ListOffsetsIntegrationTest {
     public void setup() throws InterruptedException {
         clusterInstance.waitForReadyBrokers();
         clusterInstance.createTopic(TOPIC, PARTITION, REPLICAS);
-        adminClient = clusterInstance.admin();
+        adminClient = clusterInstance.admin(Map.of(), true);
     }
 
     @AfterEach
     public void teardown() {
         Utils.closeQuietly(adminClient, "ListOffsetsAdminClient");
+    }
+
+    @ClusterTest
+    public  void testFeature() throws ExecutionException, InterruptedException {
+        var opts = new DescribeFeaturesOptions().nodeId(2);
+//        var opts = new DescribeFeaturesOptions();
+        System.err.println(adminClient.describeFeatures(opts).featureMetadata().get());
     }
 
     @ClusterTest

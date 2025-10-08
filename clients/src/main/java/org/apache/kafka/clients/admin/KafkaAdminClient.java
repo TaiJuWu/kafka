@@ -756,6 +756,7 @@ public class KafkaAdminClient extends AdminClient {
         public Node provide() {
             if (metadataManager.isReady() &&
                 (metadataManager.nodeById(nodeId) != null)) {
+                System.err.println("ConstantNodeIdProvider nodeId" + nodeId);
                 return metadataManager.nodeById(nodeId);
             }
             // If we can't find the node with the given constant ID, we schedule a
@@ -4518,9 +4519,10 @@ public class KafkaAdminClient extends AdminClient {
     public DescribeFeaturesResult describeFeatures(final DescribeFeaturesOptions options) {
         final KafkaFutureImpl<FeatureMetadata> future = new KafkaFutureImpl<>();
         final long now = time.milliseconds();
+        NodeProvider nodeProvider = options.nodeId().isEmpty() ?
+                new LeastLoadedBrokerOrActiveKController() : new ConstantNodeIdProvider(options.nodeId().getAsInt(), true);
         final Call call = new Call(
-            "describeFeatures", calcDeadlineMs(now, options.timeoutMs()), new LeastLoadedBrokerOrActiveKController()) {
-
+            "describeFeatures", calcDeadlineMs(now, options.timeoutMs()), nodeProvider) {
             private FeatureMetadata createFeatureMetadata(final ApiVersionsResponse response) {
                 final Map<String, FinalizedVersionRange> finalizedFeatures = new HashMap<>();
                 for (final FinalizedFeatureKey key : response.data().finalizedFeatures().valuesSet()) {

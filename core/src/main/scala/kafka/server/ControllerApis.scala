@@ -454,6 +454,7 @@ class ControllerApis(
     // If this is considered to leak information about the controller version a workaround is to use SSL
     // with client authentication which is performed at an earlier stage of the connection where the
     // ApiVersionRequest is not available.
+    System.err.println("controllerApis handleApiVersionRequest node.id=" + config.nodeId)
     val apiVersionRequest = request.body[ApiVersionsRequest]
     if (apiVersionRequest.hasUnsupportedRequestVersion) {
       requestHelper.sendResponseMaybeThrottle(request,

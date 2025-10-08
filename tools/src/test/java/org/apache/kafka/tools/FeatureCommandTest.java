@@ -252,7 +252,9 @@ public class FeatureCommandTest {
     public void testHandleDescribe() {
         String describeResult = ToolsTestUtils.captureStandardOut(() -> {
             try {
-                FeatureCommand.handleDescribe(buildAdminClient());
+                Map<String, Object> namespace = new HashMap<>();
+                namespace.put("--node-id", "10");
+                FeatureCommand.handleDescribe(new Namespace(namespace), buildAdminClient());
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

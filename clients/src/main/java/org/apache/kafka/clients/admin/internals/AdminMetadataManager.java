@@ -207,6 +207,7 @@ public class AdminMetadataManager {
     }
 
     public Node nodeById(int nodeId) {
+        System.err.println("in adminMetadataManager cluster " + cluster);
         return cluster.nodeById(nodeId);
     }
 
