@@ -18,6 +18,7 @@ package org.apache.kafka.tools;
 
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientDnsLookup;
+import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.CommonClientConfigs;
@@ -25,10 +26,11 @@ import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.MetadataRecoveryStrategy;
 import org.apache.kafka.clients.NetworkClient;
 import org.apache.kafka.clients.NodeApiVersions;
+import org.apache.kafka.clients.RequestCompletionHandler;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.EndpointType;
-import org.apache.kafka.clients.consumer.internals.ConsumerNetworkClient;
-import org.apache.kafka.clients.consumer.internals.RequestFuture;
+import org.apache.kafka.clients.admin.internals.AdminBootstrapAddresses;
+import org.apache.kafka.clients.admin.internals.AdminMetadataManager;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
@@ -98,8 +100,10 @@ public class BrokerApiVersionsCommand {
 
     public static void execute(String... args) throws IOException, InterruptedException {
         BrokerVersionCommandOptions opts = new BrokerVersionCommandOptions(args);
+        boolean usingController = opts.options.has(opts.bootstrapControllerOpt);
         try (AdminClient adminClient = createAdminClient(opts)) {
-            adminClient.awaitBrokers();
+            Cluster cluster = adminClient.awaitMetadata(usingController);
+            System.err.println("KKKK cluster " + cluster);
             adminClient.awaitVoters();
             Map<Node, KafkaFuture<NodeApiVersions>> brokerMap = adminClient.listAllBrokerVersionInfo();
             List<Node> voters = adminClient.listAllVoters();
@@ -194,26 +198,42 @@ public class BrokerApiVersionsCommand {
                 .withClientSaslSupport();
 
         private final Time time;
-        private final ConsumerNetworkClient client;
+        private final NetworkClient client;
         private final List<Node> bootstrapBrokers;
+        private final Map<Node, ClientResponse> responses = new HashMap<>();
 
         static AdminClient create(Properties props) {
-            return create(new AbstractConfig(ADMIN_CONFIG_DEF, props, false));
+            return create(new AbstractConfig(ADMIN_CONFIG_DEF, props, false), true);
         }
 
-        static AdminClient create(AbstractConfig config) {
+        static AdminClient create(AbstractConfig config, boolean usingBootstrapController) {
             String clientId = "admin-" + ADMIN_CLIENT_ID_SEQUENCE.getAndIncrement();
             LogContext logContext = new LogContext("[LegacyAdminClient clientId=" + clientId + "] ");
             Time time = Time.SYSTEM;
             Metrics metrics = new Metrics(time);
-            Metadata metadata = new Metadata(
-                    CommonClientConfigs.DEFAULT_RETRY_BACKOFF_MS,
-                    CommonClientConfigs.DEFAULT_RETRY_BACKOFF_MAX_MS,
-                    60 * 60 * 1000L, logContext,
-                    new ClusterResourceListeners());
-            metadata.bootstrap(ClientUtils.parseAndValidateAddresses(
-                    config.getList(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG),
-                    config.getString(CommonClientConfigs.CLIENT_DNS_LOOKUP_CONFIG)));
+            AdminMetadataManager metadataManager = null;
+            Cluster cluster = null;
+            Metadata metadata = null;
+            if (usingBootstrapController) {
+                cluster = Cluster.bootstrap(AdminBootstrapAddresses.fromConfig(config).addresses());
+
+                metadataManager = new AdminMetadataManager(logContext,
+                        config.getLong(AdminClientConfig.RETRY_BACKOFF_MS_CONFIG),
+                        100000,
+                        true);
+                metadataManager.update(cluster, time.milliseconds());
+            } else {
+                metadata = new Metadata(
+                        CommonClientConfigs.DEFAULT_RETRY_BACKOFF_MS,
+                        CommonClientConfigs.DEFAULT_RETRY_BACKOFF_MAX_MS,
+                        60 * 60 * 1000L, logContext,
+                        new ClusterResourceListeners());
+                metadata.bootstrap(ClientUtils.parseAndValidateAddresses(
+                        config.getList(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG),
+                        config.getString(CommonClientConfigs.CLIENT_DNS_LOOKUP_CONFIG)));
+            }
+
+            System.err.println("metadataManager " + metadataManager);
             Selector selector = new Selector(
                     DEFAULT_CONNECTION_MAX_IDLE_MS,
                     metrics,
@@ -223,7 +243,7 @@ public class BrokerApiVersionsCommand {
                     logContext);
             NetworkClient networkClient = new NetworkClient(
                     selector,
-                    metadata,
+                    metadataManager.updater(),
                     clientId,
                     DEFAULT_MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION,
                     DEFAULT_RECONNECT_BACKOFF_MS,
@@ -238,56 +258,86 @@ public class BrokerApiVersionsCommand {
                     new ApiVersions(),
                     logContext,
                     MetadataRecoveryStrategy.NONE);
-            ConsumerNetworkClient highLevelClient = new ConsumerNetworkClient(
-                    logContext,
-                    networkClient,
-                    metadata,
-                    time,
-                    config.getLong(CommonClientConfigs.RETRY_BACKOFF_MS_CONFIG),
-                    config.getInt(CommonClientConfigs.REQUEST_TIMEOUT_MS_CONFIG),
-                    Integer.MAX_VALUE);
-            return new AdminClient(time, highLevelClient, metadata.fetch().nodes());
+            return new AdminClient(time, networkClient, usingBootstrapController ? cluster.nodes() : metadata.fetch().nodes());
         }
 
-        AdminClient(Time time, ConsumerNetworkClient client, List<Node> bootstrapBrokers) {
+        AdminClient(Time time, NetworkClient client, List<Node> bootstrapBrokers) {
             this.time = time;
             this.client = client;
             this.bootstrapBrokers = bootstrapBrokers;
         }
 
         private AbstractResponse send(Node target, AbstractRequest.Builder<?> request) {
-            RequestFuture<ClientResponse> future = client.send(target, request);
-            while (!future.isDone()) {
-                client.poll(time.timer(DEFAULT_REQUEST_TIMEOUT_MS));
+            client.poll(1000, time.milliseconds());
+            ClientRequest requestForNode = client.newClientRequest(target.idString(), request, time.milliseconds(),
+                    true, DEFAULT_REQUEST_TIMEOUT_MS, response -> responses.put(target, response));
+            client.send(requestForNode, time.milliseconds());
+
+            return null;
+        }
+
+        private ClientResponse sendRequestAndWaitForResponse(Node node, AbstractRequest.Builder<?> requestBuilder) {
+            final KafkaFutureImpl<ClientResponse> future = new KafkaFutureImpl<>();
+
+            ClientRequest request = client.newClientRequest(
+                    node.idString(),
+                    requestBuilder,
+                    time.milliseconds(),
+                    true,
+                    DEFAULT_REQUEST_TIMEOUT_MS,
+                    future::complete
+            );
+
+            client.send(request, time.milliseconds());
+
+            long deadline = time.milliseconds() + DEFAULT_REQUEST_TIMEOUT_MS;
+            while (!future.isDone() && time.milliseconds() < deadline) {
+                client.poll(1000, time.milliseconds());
             }
-            if (future.succeeded()) {
-                return future.value().responseBody();
-            } else {
-                throw future.exception();
+
+            if (!future.isDone()) {
+                throw new RuntimeException("Request timed out after " + DEFAULT_REQUEST_TIMEOUT_MS + " ms.");
+            }
+
+            try {
+                return future.get();
+            } catch (Exception e) {
+                throw new RuntimeException("Request failed", e);
             }
         }
 
         // non-blocking call for find ALL cluster nodes endpoint
         private AbstractResponse sendRequestToNodes(AbstractRequest.Builder<?> request, List<Node> nodes) {
-            Map<Node, RequestFuture<ClientResponse>> responses = new HashMap<>();
+            Map<Node, ClientResponse> responses = new HashMap<>();
 
             for (Node node : nodes) {
-                responses.put(node, client.send(node, request));
+                ClientRequest requestForNode = client.newClientRequest(node.idString(), request, time.milliseconds(),
+                    true, DEFAULT_REQUEST_TIMEOUT_MS, new RequestCompletionHandler() {
+                        @Override
+                        public void onComplete(ClientResponse response) {
+                            responses.put(node, response);
+                        }
+                    });
+                client.send(requestForNode, time.milliseconds());
+                client.poll(10000, time.milliseconds());
             }
 
             AbstractResponse metaDataResponse = null;
+            int count = 0;
             do {
-                client.poll(time.timer(DEFAULT_REQUEST_TIMEOUT_MS));
-                for (Map.Entry<Node, RequestFuture<ClientResponse>> entry : responses.entrySet()) {
-                    RequestFuture<ClientResponse> response = entry.getValue();
-                    if (response != null && response.succeeded()) {
-                        metaDataResponse = response.value().responseBody();
-                        break;
-                    }
-                }
-            } while (metaDataResponse == null);
+                count += 1;
+                System.err.println("RRR response " + responses);
+                time.sleep(10000);
+//                for (Map.Entry<Node, RequestFuture<ClientResponse>> entry : responses.entrySet()) {
+//                    RequestFuture<ClientResponse> response = entry.getValue();
+//                    if (response != null && response.succeeded()) {
+//                        metaDataResponse = response.value().responseBody();
+//                        break;
+//                    }
+//                }
+            } while (count != 10);
 
-            responses.clear();
+//            responses.clear();
             return metaDataResponse;
         }
 
@@ -344,6 +394,34 @@ public class BrokerApiVersionsCommand {
                 LOGGER.debug("Metadata request contained errors: {}", response.errors());
             }
             return response.buildCluster().nodes();
+        }
+
+        private Cluster awaitMetadata(boolean usingController) {
+            if (usingController) {
+                while (!client.ready(bootstrapBrokers.get(0), time.milliseconds())) {
+                    client.poll(100, time.milliseconds());
+                }
+                ClientResponse response = sendRequestAndWaitForResponse(bootstrapBrokers.get(0),
+                        new DescribeClusterRequest.Builder(new DescribeClusterRequestData()
+                        .setIncludeClusterAuthorizedOperations(false)
+                        .setEndpointType(EndpointType.CONTROLLER.id())));
+//                if (!response.errorCounts().isEmpty()) {
+//                    LOGGER.debug("Metadata request errorsCounts: {}", response.errorCounts());
+//                }
+
+                DescribeClusterResponse describeClusterResponse = (DescribeClusterResponse) response.responseBody();
+
+                System.err.println("KKKK response" + describeClusterResponse);
+                return parseDescribeClusterResponse(describeClusterResponse.data());
+//                return parseDescribeClusterResponse(response.data());
+            } else  {
+                MetadataResponse response = (MetadataResponse) sendRequestToNodes(
+                        MetadataRequest.Builder.allTopics(), bootstrapBrokers);
+                if (!response.errors().isEmpty()) {
+                    LOGGER.debug("Metadata request contained errors: {}", response.errors());
+                }
+                return response.buildCluster();
+            }
         }
 
         private List<Node> findAllVoters() {
@@ -417,11 +495,7 @@ public class BrokerApiVersionsCommand {
 
         @Override
         public void close() {
-            try {
-                client.close();
-            } catch (IOException e) {
-                LOGGER.error("Exception closing nioSelector:", e);
-            }
+            client.close();
         }
     }
 }
