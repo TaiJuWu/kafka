@@ -26,7 +26,6 @@ import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.MetadataRecoveryStrategy;
 import org.apache.kafka.clients.NetworkClient;
 import org.apache.kafka.clients.NodeApiVersions;
-import org.apache.kafka.clients.RequestCompletionHandler;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.EndpointType;
 import org.apache.kafka.clients.admin.internals.AdminBootstrapAddresses;
@@ -34,7 +33,6 @@ import org.apache.kafka.clients.admin.internals.AdminMetadataManager;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.internals.ClusterResourceListeners;
@@ -51,8 +49,6 @@ import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.DescribeClusterRequest;
 import org.apache.kafka.common.requests.DescribeClusterResponse;
-import org.apache.kafka.common.requests.DescribeQuorumRequest;
-import org.apache.kafka.common.requests.DescribeQuorumResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
@@ -72,6 +68,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -79,8 +76,6 @@ import java.util.stream.Collectors;
 import joptsimple.OptionSpec;
 
 import static org.apache.kafka.clients.admin.KafkaAdminClient.parseDescribeClusterResponse;
-import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_NAME;
-import static org.apache.kafka.common.internals.Topic.CLUSTER_METADATA_TOPIC_PARTITION;
 
 public class BrokerApiVersionsCommand {
     public static void main(String... args) {
@@ -103,24 +98,18 @@ public class BrokerApiVersionsCommand {
         boolean usingController = opts.options.has(opts.bootstrapControllerOpt);
         try (AdminClient adminClient = createAdminClient(opts)) {
             Cluster cluster = adminClient.awaitMetadata(usingController);
-            System.err.println("KKKK cluster " + cluster);
-            adminClient.awaitVoters();
-            Map<Node, KafkaFuture<NodeApiVersions>> brokerMap = adminClient.listAllBrokerVersionInfo();
-            List<Node> voters = adminClient.listAllVoters();
-            adminClient.awaitControllers(voters);
-            Map<Node, KafkaFuture<NodeApiVersions>> controllerMap = adminClient.listAllControllerVersionInfo(voters);
-            printSupportedVersion("BROKER", brokerMap);
-            printSupportedVersion("CONTROLLER", controllerMap);
+            Map<Node, KafkaFuture<NodeApiVersions>> nodeVersionMap = adminClient.listAllBrokerVersionInfo(cluster.nodes());
+            printSupportedVersion(nodeVersionMap);
         }
     }
 
-    private static void printSupportedVersion(String type, Map<Node, KafkaFuture<NodeApiVersions>> nodeMap) {
+    private static void printSupportedVersion(Map<Node, KafkaFuture<NodeApiVersions>> nodeMap) {
         nodeMap.forEach((node, future) -> {
             try {
                 NodeApiVersions apiVersions = future.get();
-                System.out.print("Node type: " + type + " " + node + " -> " + apiVersions.toString(true) + "\n");
+                System.out.print(node + " -> " + apiVersions.toString(true) + "\n");
             } catch (Exception e) {
-                System.out.print("Node type: " + type + " " + node + " -> ERROR: " + e.getMessage() + "\n");
+                System.out.print(node + " -> ERROR: " + e.getMessage() + "\n");
             }
         });
     }
@@ -200,6 +189,7 @@ public class BrokerApiVersionsCommand {
         private final Time time;
         private final NetworkClient client;
         private final List<Node> bootstrapBrokers;
+        private final AdminMetadataManager metadataManager;
         private final Map<Node, ClientResponse> responses = new HashMap<>();
 
         static AdminClient create(Properties props) {
@@ -233,7 +223,6 @@ public class BrokerApiVersionsCommand {
                         config.getString(CommonClientConfigs.CLIENT_DNS_LOOKUP_CONFIG)));
             }
 
-            System.err.println("metadataManager " + metadataManager);
             Selector selector = new Selector(
                     DEFAULT_CONNECTION_MAX_IDLE_MS,
                     metrics,
@@ -258,22 +247,26 @@ public class BrokerApiVersionsCommand {
                     new ApiVersions(),
                     logContext,
                     MetadataRecoveryStrategy.NONE);
-            return new AdminClient(time, networkClient, usingBootstrapController ? cluster.nodes() : metadata.fetch().nodes());
+            return new AdminClient(time, networkClient, metadataManager, usingBootstrapController ? cluster.nodes() : metadata.fetch().nodes());
         }
 
-        AdminClient(Time time, NetworkClient client, List<Node> bootstrapBrokers) {
+        AdminClient(Time time, NetworkClient client, AdminMetadataManager adminMetadataManager, List<Node> bootstrapBrokers) {
             this.time = time;
             this.client = client;
+            this.metadataManager = adminMetadataManager;
             this.bootstrapBrokers = bootstrapBrokers;
         }
 
-        private AbstractResponse send(Node target, AbstractRequest.Builder<?> request) {
-            client.poll(1000, time.milliseconds());
-            ClientRequest requestForNode = client.newClientRequest(target.idString(), request, time.milliseconds(),
-                    true, DEFAULT_REQUEST_TIMEOUT_MS, response -> responses.put(target, response));
-            client.send(requestForNode, time.milliseconds());
+        private KafkaFutureImpl<ClientResponse> send(Node target, AbstractRequest.Builder<?> request) {
+            final KafkaFutureImpl<ClientResponse> future = new KafkaFutureImpl<>();
 
-            return null;
+            ClientRequest requestForNode = client.newClientRequest(target.idString(), request, time.milliseconds(),
+                    true, DEFAULT_REQUEST_TIMEOUT_MS, future::complete);
+            client.send(requestForNode, time.milliseconds());
+            client.poll(100, time.milliseconds());
+
+            System.err.println("ZZZZ client.send(requestForNode, time.milliseconds()); " + requestForNode);
+            return future;
         }
 
         private ClientResponse sendRequestAndWaitForResponse(Node node, AbstractRequest.Builder<?> requestBuilder) {
@@ -292,7 +285,7 @@ public class BrokerApiVersionsCommand {
 
             long deadline = time.milliseconds() + DEFAULT_REQUEST_TIMEOUT_MS;
             while (!future.isDone() && time.milliseconds() < deadline) {
-                client.poll(1000, time.milliseconds());
+                client.poll(100, time.milliseconds());
             }
 
             if (!future.isDone()) {
@@ -306,189 +299,78 @@ public class BrokerApiVersionsCommand {
             }
         }
 
-        // non-blocking call for find ALL cluster nodes endpoint
-        private AbstractResponse sendRequestToNodes(AbstractRequest.Builder<?> request, List<Node> nodes) {
-            Map<Node, ClientResponse> responses = new HashMap<>();
-
-            for (Node node : nodes) {
-                ClientRequest requestForNode = client.newClientRequest(node.idString(), request, time.milliseconds(),
-                    true, DEFAULT_REQUEST_TIMEOUT_MS, new RequestCompletionHandler() {
-                        @Override
-                        public void onComplete(ClientResponse response) {
-                            responses.put(node, response);
-                        }
-                    });
-                client.send(requestForNode, time.milliseconds());
-                client.poll(10000, time.milliseconds());
-            }
-
-            AbstractResponse metaDataResponse = null;
-            int count = 0;
-            do {
-                count += 1;
-                System.err.println("RRR response " + responses);
-                time.sleep(10000);
-//                for (Map.Entry<Node, RequestFuture<ClientResponse>> entry : responses.entrySet()) {
-//                    RequestFuture<ClientResponse> response = entry.getValue();
-//                    if (response != null && response.succeeded()) {
-//                        metaDataResponse = response.value().responseBody();
-//                        break;
-//                    }
-//                }
-            } while (count != 10);
-
-//            responses.clear();
-            return metaDataResponse;
-        }
-
         protected KafkaFuture<NodeApiVersions> getNodeApiVersions(Node node) {
             final KafkaFutureImpl<NodeApiVersions> future = new KafkaFutureImpl<>();
-            try {
-                ApiVersionsResponse response = (ApiVersionsResponse) send(node, new ApiVersionsRequest.Builder());
-                Errors error = Errors.forCode(response.data().errorCode());
-                if (error.exception() != null) {
-                    future.completeExceptionally(error.exception());
-                } else {
-                    future.complete(new NodeApiVersions(response.data().apiKeys(), response.data().supportedFeatures()));
-                }
-            } catch (Exception e) {
-                future.completeExceptionally(e);
+            final KafkaFutureImpl<ClientResponse> sendFuture =
+                    send(node, new ApiVersionsRequest.Builder());
+
+            long deadline = time.milliseconds() + DEFAULT_REQUEST_TIMEOUT_MS;
+            while (!sendFuture.isDone() && time.milliseconds() < deadline) {
+                client.poll(100, time.milliseconds());
             }
 
+            if (!sendFuture.isDone()) {
+                future.completeExceptionally(new RuntimeException("ApiVersionsRequest timed out"));
+            } else {
+                try {
+                    ClientResponse resp = sendFuture.get();
+                    ApiVersionsResponse apiVersionsResponse = (ApiVersionsResponse) resp.responseBody();
+                    future.complete(new NodeApiVersions(
+                            apiVersionsResponse.data().apiKeys(),
+                            apiVersionsResponse.data().supportedFeatures()));
+                } catch (Exception e) {
+                    future.completeExceptionally(e);
+                }
+            }
             return future;
-        }
-
-        public void awaitBrokers() throws InterruptedException {
-            List<Node> nodes;
-            do {
-                nodes = findAllBrokers();
-                if (nodes.isEmpty()) {
-                    TimeUnit.MILLISECONDS.sleep(50);
-                }
-            } while (nodes.isEmpty());
-        }
-
-        public void awaitVoters() throws InterruptedException {
-            List<Node> nodes;
-            do {
-                nodes = findAllVoters();
-                if (nodes.isEmpty()) {
-                    TimeUnit.MILLISECONDS.sleep(50);
-                }
-            } while (nodes.isEmpty());
-        }
-
-        public void awaitControllers(List<Node> bootstrapVoter) throws InterruptedException {
-            List<Node> nodes;
-            do {
-                nodes = findAllControllers(bootstrapVoter);
-                if (nodes.isEmpty()) {
-                    TimeUnit.MILLISECONDS.sleep(50);
-                }
-            } while (nodes.isEmpty());
-        }
-
-        private List<Node> findAllBrokers() {
-            MetadataResponse response = (MetadataResponse) sendRequestToNodes(MetadataRequest.Builder.allTopics(), bootstrapBrokers);
-            if (!response.errors().isEmpty()) {
-                LOGGER.debug("Metadata request contained errors: {}", response.errors());
-            }
-            return response.buildCluster().nodes();
         }
 
         private Cluster awaitMetadata(boolean usingController) {
             if (usingController) {
-                while (!client.ready(bootstrapBrokers.get(0), time.milliseconds())) {
-                    client.poll(100, time.milliseconds());
+                ClientResponse response = null;
+                for (Node bootstrap : bootstrapBrokers.stream().toList()) {
+                    awaitConnect(bootstrap, time.milliseconds());
+                    response = sendRequestAndWaitForResponse(bootstrap,
+                            new DescribeClusterRequest.Builder(createDescribeClusterRequestData()));
+                    if (response != null) {
+                        break;
+                    }
                 }
-                ClientResponse response = sendRequestAndWaitForResponse(bootstrapBrokers.get(0),
-                        new DescribeClusterRequest.Builder(new DescribeClusterRequestData()
-                        .setIncludeClusterAuthorizedOperations(false)
-                        .setEndpointType(EndpointType.CONTROLLER.id())));
-//                if (!response.errorCounts().isEmpty()) {
-//                    LOGGER.debug("Metadata request errorsCounts: {}", response.errorCounts());
-//                }
 
+                assert response != null;
                 DescribeClusterResponse describeClusterResponse = (DescribeClusterResponse) response.responseBody();
-
-                System.err.println("KKKK response" + describeClusterResponse);
-                return parseDescribeClusterResponse(describeClusterResponse.data());
-//                return parseDescribeClusterResponse(response.data());
-            } else  {
-                MetadataResponse response = (MetadataResponse) sendRequestToNodes(
-                        MetadataRequest.Builder.allTopics(), bootstrapBrokers);
-                if (!response.errors().isEmpty()) {
-                    LOGGER.debug("Metadata request contained errors: {}", response.errors());
+                if (!describeClusterResponse.errorCounts().isEmpty()) {
+                    LOGGER.debug("Metadata request errorsCounts: {}", describeClusterResponse.errorCounts());
                 }
-                return response.buildCluster();
+
+                Cluster cluster = parseDescribeClusterResponse(describeClusterResponse.data());
+                metadataManager.update(cluster, time.milliseconds());
+                awaitConnect(cluster.controller(), time.milliseconds());
+
+                return cluster;
+            } else  {
+                for (Node bootstrap : bootstrapBrokers.stream().toList()) {
+                    MetadataResponse response = (MetadataResponse) sendRequestAndWaitForResponse(bootstrap,
+                            MetadataRequest.Builder.allTopics()).responseBody();
+                    if (!response.errors().isEmpty()) {
+                        LOGGER.debug("Metadata request contained errors: {}", response.errors());
+                    }
+                    return response.buildCluster();
+                }
+            }
+            throw new RuntimeException("Fail to find metadata");
+        }
+
+        private void awaitConnect(Node node, long now) {
+            while (!client.ready(node, time.milliseconds())) {
+                client.poll(100, now);
             }
         }
 
-        private List<Node> findAllVoters() {
-            DescribeQuorumResponse response = (DescribeQuorumResponse) sendRequestToNodes(
-                    new DescribeQuorumRequest.Builder(DescribeQuorumRequest.singletonRequest(
-                        new TopicPartition(CLUSTER_METADATA_TOPIC_NAME, CLUSTER_METADATA_TOPIC_PARTITION.partition())
-            )), bootstrapBrokers);
-
-            if (!response.errorCounts().isEmpty()) {
-                LOGGER.debug("DescribeQuorum request contained errors: {}", response.errorCounts());
-            }
-
-            DescribeQuorumResponseData.NodeCollection nodeCollection = response.data().nodes();
-
-            return convertCollectionToNodes(nodeCollection);
-        }
-
-        public List<Node> listAllVoters() {
-            return findAllVoters();
-        }
-
-        private List<Node> findAllControllers(List<Node> bootstrapVoters) {
-            DescribeClusterResponse response = (DescribeClusterResponse) sendRequestToNodes(
-                    new DescribeClusterRequest.Builder(new DescribeClusterRequestData()
-                    .setIncludeClusterAuthorizedOperations(false)
-                    .setEndpointType(EndpointType.CONTROLLER.id())), bootstrapVoters);
-
-            if (!response.errorCounts().isEmpty()) {
-                LOGGER.debug("DescribeQuorum request contained errors: {}", response.errorCounts());
-            }
-
-            return convertClusterBrokerToNodes(response.data());
-        }
-
-        private List<Node> convertClusterBrokerToNodes(DescribeClusterResponseData responseData) {
-            Cluster cluster = parseDescribeClusterResponse(responseData);
-            return cluster.nodes();
-        }
-
-
-        private List<Node> convertCollectionToNodes(DescribeQuorumResponseData.NodeCollection nodeCollection) {
-
-            return nodeCollection.stream().flatMap(n -> n.listeners().stream().map(l ->
-                new Node(n.nodeId(), l.host(), l.port())
-            )).toList();
-        }
-
-        public Map<Node, KafkaFuture<NodeApiVersions>> listAllBrokerVersionInfo() {
-            return findAllBrokers().stream()
+        public Map<Node, KafkaFuture<NodeApiVersions>> listAllBrokerVersionInfo(List<Node> nodes) {
+            return nodes.stream()
                     .collect(Collectors.toMap(
                             broker -> broker,
-                            this::getNodeApiVersions
-                    ));
-        }
-
-        public Map<Node, KafkaFuture<NodeApiVersions>> listAllVoterVersionInfo() {
-            return findAllVoters().stream()
-                    .collect(Collectors.toMap(
-                            voter -> voter,
-                            this::getNodeApiVersions
-                    ));
-        }
-
-        public Map<Node, KafkaFuture<NodeApiVersions>> listAllControllerVersionInfo(List<Node> nodes) {
-            return findAllControllers(nodes).stream()
-                    .collect(Collectors.toMap(
-                            controller -> controller,
                             this::getNodeApiVersions
                     ));
         }
@@ -497,5 +379,11 @@ public class BrokerApiVersionsCommand {
         public void close() {
             client.close();
         }
+    }
+
+    private static DescribeClusterRequestData createDescribeClusterRequestData() {
+        return new DescribeClusterRequestData()
+                .setIncludeClusterAuthorizedOperations(false)
+                .setEndpointType(EndpointType.CONTROLLER.id());
     }
 }
