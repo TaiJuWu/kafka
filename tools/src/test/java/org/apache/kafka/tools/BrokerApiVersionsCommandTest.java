@@ -42,14 +42,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@ClusterTestDefaults(types = {Type.KRAFT}, serverProperties = {
+@ClusterTestDefaults(types = {Type.KRAFT}, controllers = 3, serverProperties = {
     @ClusterConfigProperty(key = ServerConfigs.UNSTABLE_API_VERSIONS_ENABLE_CONFIG, value = "true"),
 })
 public class BrokerApiVersionsCommandTest {
     @ClusterTest
     public void testSingleBrokerApiVersionsCommandOutput(ClusterInstance clusterInstance) {
         String output = ToolsTestUtils.grabConsoleOutput(() ->
-                BrokerApiVersionsCommand.mainNoExit("--bootstrap-server", clusterInstance.bootstrapServers()));
+                BrokerApiVersionsCommand.mainNoExit("--bootstrap-controller", clusterInstance.bootstrapControllers()));
 
         System.err.println("output::");
         System.err.println(output);
@@ -81,7 +81,7 @@ public class BrokerApiVersionsCommandTest {
     }
 
     private static void validateApiVersionCommand(ApiMessageType.ListenerType listenerType, Iterator<String> lineIter) {
-        String expectedOutput = "Node type: (BROKER|CONTROLLER) localhost:\\d+ \\(id: \\d+ rack: null isFenced: false\\) -> \\(";
+        String expectedOutput = "localhost:\\d+ \\(id: \\d+ rack: null isFenced: false\\) -> \\(";
         assertTrue(lineIter.next().matches(expectedOutput));
 
         NodeApiVersions nodeApiVersions = new NodeApiVersions(
@@ -130,7 +130,7 @@ public class BrokerApiVersionsCommandTest {
     public void testAdminSendNoBlock(ClusterInstance clusterInstance) {
         Properties props = new Properties();
         props.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, clusterInstance.bootstrapServers());
-        try (BrokerApiVersionsCommand.AdminClient admin = BrokerApiVersionsCommand.AdminClient.create(props)) {
+        try (BrokerApiVersionsCommand.AdminClient admin = BrokerApiVersionsCommand.AdminClient.create(props, false)) {
             int brokerId = clusterInstance.brokers().keySet().iterator().next();
             KafkaFuture<NodeApiVersions> future =  admin.getNodeApiVersions(new Node(brokerId + 1, "localhost", 9093, null));
             assertTrue(future.isCompletedExceptionally());

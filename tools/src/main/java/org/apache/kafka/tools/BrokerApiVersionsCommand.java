@@ -22,6 +22,7 @@ import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.CommonClientConfigs;
+import org.apache.kafka.clients.DefaultHostResolver;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.MetadataRecoveryStrategy;
 import org.apache.kafka.clients.NetworkClient;
@@ -118,13 +119,14 @@ public class BrokerApiVersionsCommand {
         Properties props = opts.options.has(opts.commandConfigOpt) ?
                 Utils.loadProps(opts.options.valueOf(opts.commandConfigOpt)) :
                 new Properties();
-        if (opts.options.has(opts.bootstrapServerOpt)) {
-            props.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, opts.options.valueOf(opts.bootstrapServerOpt));
-        } else {
+        boolean usingBootstrapController = opts.options.has(opts.bootstrapControllerOpt);
+        if (usingBootstrapController) {
             props.put(AdminClientConfig.BOOTSTRAP_CONTROLLERS_CONFIG, opts.options.valueOf(opts.bootstrapControllerOpt));
+        } else {
+            props.put(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, opts.options.valueOf(opts.bootstrapServerOpt));
         }
 
-        return AdminClient.create(props);
+        return AdminClient.create(props, usingBootstrapController);
     }
 
     private static class BrokerVersionCommandOptions extends CommandDefaultOptions {
@@ -192,8 +194,8 @@ public class BrokerApiVersionsCommand {
         private final AdminMetadataManager metadataManager;
         private final Map<Node, ClientResponse> responses = new HashMap<>();
 
-        static AdminClient create(Properties props) {
-            return create(new AbstractConfig(ADMIN_CONFIG_DEF, props, false), true);
+        static AdminClient create(Properties props, boolean usingBootstrapController) {
+            return create(new AbstractConfig(ADMIN_CONFIG_DEF, props, false), usingBootstrapController);
         }
 
         static AdminClient create(AbstractConfig config, boolean usingBootstrapController) {
@@ -231,8 +233,9 @@ public class BrokerApiVersionsCommand {
                     ClientUtils.createChannelBuilder(config, time, logContext),
                     logContext);
             NetworkClient networkClient = new NetworkClient(
-                    selector,
                     metadataManager.updater(),
+                    metadata,
+                    selector,
                     clientId,
                     DEFAULT_MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION,
                     DEFAULT_RECONNECT_BACKOFF_MS,
@@ -245,7 +248,11 @@ public class BrokerApiVersionsCommand {
                     time,
                     true,
                     new ApiVersions(),
+                    null,
                     logContext,
+                    new DefaultHostResolver(),
+                    null,
+                    Long.MAX_VALUE,
                     MetadataRecoveryStrategy.NONE);
             return new AdminClient(time, networkClient, metadataManager, usingBootstrapController ? cluster.nodes() : metadata.fetch().nodes());
         }
@@ -305,6 +312,7 @@ public class BrokerApiVersionsCommand {
                     send(node, new ApiVersionsRequest.Builder());
 
             long deadline = time.milliseconds() + DEFAULT_REQUEST_TIMEOUT_MS;
+            awaitConnect(node, time.milliseconds());
             while (!sendFuture.isDone() && time.milliseconds() < deadline) {
                 client.poll(100, time.milliseconds());
             }
@@ -345,26 +353,35 @@ public class BrokerApiVersionsCommand {
 
                 Cluster cluster = parseDescribeClusterResponse(describeClusterResponse.data());
                 metadataManager.update(cluster, time.milliseconds());
-                awaitConnect(cluster.controller(), time.milliseconds());
+                for (Node bootstrap : cluster.nodes().stream().toList()) {
+                    awaitConnect(bootstrap, time.milliseconds());
+                    response = sendRequestAndWaitForResponse(bootstrap,
+                            new DescribeClusterRequest.Builder(createDescribeClusterRequestData()));
+                    awaitConnect(bootstrap, time.milliseconds());
+                }
 
                 return cluster;
             } else  {
+                MetadataResponse response = null;
                 for (Node bootstrap : bootstrapBrokers.stream().toList()) {
-                    MetadataResponse response = (MetadataResponse) sendRequestAndWaitForResponse(bootstrap,
+                    response = (MetadataResponse) sendRequestAndWaitForResponse(bootstrap,
                             MetadataRequest.Builder.allTopics()).responseBody();
                     if (!response.errors().isEmpty()) {
                         LOGGER.debug("Metadata request contained errors: {}", response.errors());
                     }
-                    return response.buildCluster();
                 }
+                assert response != null;
+                return response.buildCluster();
             }
-            throw new RuntimeException("Fail to find metadata");
+//            throw new RuntimeException("Fail to find metadata");
         }
 
         private void awaitConnect(Node node, long now) {
             while (!client.ready(node, time.milliseconds())) {
+                System.err.println("KKK awaitConnect");
                 client.poll(100, now);
             }
+            System.err.println("KKK connect successfully");
         }
 
         public Map<Node, KafkaFuture<NodeApiVersions>> listAllBrokerVersionInfo(List<Node> nodes) {
