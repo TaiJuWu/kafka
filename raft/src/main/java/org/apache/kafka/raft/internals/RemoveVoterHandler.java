@@ -164,15 +164,15 @@ public final class RemoveVoterHandler {
 
                     // Resign if the leader is not part of the new committed voter set
                     VoterSet voters = partitionState.lastVoterSet();
-                    ReplicaKey localKey = localReplicaKey.orElseThrow(
-                        () -> new IllegalStateException(
-                            String.format(
-                                "Leaders mush have an id and directory id %s",
-                                localReplicaKey
-                            )
-                        )
-                    );
-                    if (!voters.isVoter(localKey)) {
+//                    ReplicaKey localKey = localReplicaKey.orElseThrow(
+//                        () -> new IllegalStateException(
+//                            String.format(
+//                                "Leaders mush have an id and directory id %s",
+//                                localReplicaKey
+//                            )
+//                        )
+//                    );
+                    if (removeVoterIsLeader(leaderState)) {
                         logger.info(
                             "Leader is not in the committed voter set {} resign from epoch {}",
                             voters.voterKeys(),
@@ -184,5 +184,23 @@ public final class RemoveVoterHandler {
                 }
             })
         );
+    }
+
+    public boolean removeVoterIsLeader(LeaderState<?> leaderState) {
+        VoterSet voters = partitionState.lastVoterSet();
+        ReplicaKey localKey = localReplicaKey.orElseThrow(
+            () -> new IllegalStateException(
+                String.format(
+                    "Leaders mush have an id and directory id %s",
+                    localReplicaKey
+                )
+            )
+        );
+
+        if (!voters.isVoter(localKey)) {
+            leaderState.requestResign();
+            return true;
+        }
+        return false;
     }
 }

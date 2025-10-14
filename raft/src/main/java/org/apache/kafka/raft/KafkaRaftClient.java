@@ -2263,7 +2263,8 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
             newVoter.get(),
             newVoterEndpoints,
             data.ackWhenCommitted(),
-            currentTimeMs
+            currentTimeMs,
+            data.timeoutMs()
         );
     }
 

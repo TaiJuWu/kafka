@@ -160,6 +160,10 @@ public final class KRaftControlRecordStateMachine {
         }
     }
 
+    public VoterSet staticVoterSet() {
+        return staticVoterSet;
+    }
+
     /**
      * Return the latest entry for the set of voters.
      */

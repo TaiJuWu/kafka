@@ -167,6 +167,11 @@ public class Timer {
         return Math.max(0, deadlineMs - currentTimeMs);
     }
 
+    // FIXME: add doc
+    public long deadlineMs() {
+        return deadlineMs;
+    }
+
     /**
      * Get the current time in milliseconds. This will return the same cached value until the timer
      * has been updated using one of the {@link #update()} methods or {@link #sleep(long)} is used.
