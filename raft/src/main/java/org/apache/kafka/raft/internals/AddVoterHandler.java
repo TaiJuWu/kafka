@@ -447,7 +447,8 @@ public final class AddVoterHandler {
 
         VoterSet currentVoters = partitionState.lastVoterSet();
         VoterSet committedVoters = partitionState.voterSetAtOffset(highWatermark.get() - 1).orElse(partitionState.staticVoterSet());
-        return currentVoters == committedVoters;
+        // FIXME: use simple logic in trunk
+        return !currentVoters.equals(committedVoters);
     }
 
 
