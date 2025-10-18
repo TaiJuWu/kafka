@@ -90,12 +90,12 @@ public final class AddVoterHandler {
     }
 
     public CompletableFuture<AddRaftVoterResponseData> handleAddVoterRequest(
-            LeaderState<?> leaderState,
-            ReplicaKey voterKey,
-            Endpoints voterEndpoints,
-            boolean ackWhenCommitted,
-            long currentTimeMs,
-            long timeoutMs
+        LeaderState<?> leaderState,
+        ReplicaKey voterKey,
+        Endpoints voterEndpoints,
+        boolean ackWhenCommitted,
+        long currentTimeMs,
+        long timeoutMs
     ) {
         // Check that the cluster supports kraft.version >= 1
         logger.debug("Check that the cluster supports kraft.version >= 1");
@@ -125,6 +125,7 @@ public final class AddVoterHandler {
         // 1. There is already same tim to wait
         // 2. already timeout
         // 3. need to ack but there is uncommitted voter
+        // FIXME: split error msg
         if (requestDeadlineMs <= time.milliseconds() || requestsByDeadline.containsKey(requestDeadlineMs)
                 || (ackWhenCommitted && hasUnCommitedVoter(leaderState))) {
             return CompletableFuture.completedFuture(
@@ -140,16 +141,11 @@ public final class AddVoterHandler {
         return handleAddVoterRequest(leaderState, voterKey, voterEndpoints, ackWhenCommitted, currentTimeMs);
     }
 
-    public boolean isPendingOperation(LeaderState<?> leaderState) {
-        return !requestsByDeadline.isEmpty() || hasUnCommitedVoter(leaderState);
-    }
-
     private void failTimeoutAddVoterRequest(long currentTimeMs) {
         final Iterator<Map.Entry<Long, AddVoterHandlerState>> iterator = requestsByDeadline.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<Long, AddVoterHandlerState> entry = iterator.next();
             if (entry.getKey() < currentTimeMs) {
-                // 如果請求已超時，讓其失敗並從 Map 中移除
                 entry.getValue().future().complete(
                         RaftUtil.addVoterResponse(
                                 Errors.REQUEST_TIMED_OUT,
@@ -167,10 +163,10 @@ public final class AddVoterHandler {
     private void failAllAddVoterRequest() {
         for (Map.Entry<Long, AddVoterHandlerState> request : requestsByDeadline.entrySet()) {
             request.getValue().future().complete(
-                    RaftUtil.addVoterResponse(
-                        Errors.REQUEST_TIMED_OUT,
-                        "Request timed out waiting for leader is changed"
-                    )
+                RaftUtil.addVoterResponse(
+                    Errors.REQUEST_TIMED_OUT,
+                    "Request timed out waiting for leader is changed"
+                )
             );
         }
     }
@@ -287,6 +283,7 @@ public final class AddVoterHandler {
 
         // Check that the API_VERSIONS response matches the id of the voter getting added
         // FIXME: need to add test coverage
+        // FIXME: during update high watermark, we reset the value to new voter?
         AddVoterHandlerState current = handlerState.get();
         if (!current.expectingApiResponse(source.id())) {
             logger.info(

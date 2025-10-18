@@ -335,16 +335,6 @@ public class LeaderState<T> implements EpochState {
         return addVoterHandlerState.isPresent() || removeVoterHandlerState.isPresent();
     }
 
-    public boolean isPendingAddVoter(long currentTimeMs) {
-        maybeExpirePendingOperation(currentTimeMs);
-        return addVoterHandlerState.isPresent();
-    }
-
-    public boolean isPendingRemoveVoter(long currentTimeMs) {
-        maybeExpirePendingOperation(currentTimeMs);
-        return removeVoterHandlerState.isPresent();
-    }
-
     private static List<Voter> convertToVoters(Set<Integer> voterIds) {
         return voterIds.stream()
             .map(follower -> new Voter().setVoterId(follower))
