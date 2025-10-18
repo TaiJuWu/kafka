@@ -104,12 +104,7 @@ public final class AddVoterHandler {
         if (leaderState.isResignRequested()) {
             failAllAddVoterRequest();
         }
-
-        // FIXME: why need this?
-        // If there is a removeVoterReqeust, we just record this request.
-        if (leaderState.isPendingRemoveVoter(currentTimeMs)) {
-            failTimeoutAddVoterRequest(currentTimeMs);
-        }
+        failTimeoutAddVoterRequest(currentTimeMs);
 
         // If the request is ackWhenCommitted and there is uncommitted, we just fail this request.
         if (ackWhenCommitted && hasUnCommitedVoter(leaderState)) {
