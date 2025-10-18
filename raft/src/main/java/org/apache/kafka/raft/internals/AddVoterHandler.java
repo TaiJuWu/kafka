@@ -121,12 +121,12 @@ public final class AddVoterHandler {
                 || (ackWhenCommitted && hasUnCommitedVoter(leaderState))) {
             return handleAddVoterRequest(leaderState, voterKey, voterEndpoints, ackWhenCommitted, currentTimeMs);
         }
-
+        logger.debug("put request to wait");
         // FIXME: there is state in next function
         AddVoterHandlerState state = new AddVoterHandlerState(voterKey, voterEndpoints, ackWhenCommitted, time.timer(timeoutMs));
         requestsByDeadline.put(requestDeadlineMs, state);
 
-        return state.future();
+        return handleAddVoterRequest(leaderState, voterKey, voterEndpoints, ackWhenCommitted, currentTimeMs);
     }
 
     public boolean isPendingOperation(LeaderState<?> leaderState) {
@@ -197,6 +197,7 @@ public final class AddVoterHandler {
 //        }
 
         // Check that the cluster supports kraft.version >= 1
+        logger.debug("Check that the cluster supports kraft.version >= 1");
         KRaftVersion kraftVersion = partitionState.lastKraftVersion();
         if (!kraftVersion.isReconfigSupported()) {
             return CompletableFuture.completedFuture(
@@ -212,6 +213,7 @@ public final class AddVoterHandler {
         }
 
         // Check that there are no uncommitted VotersRecord
+        logger.debug("Check that there are no uncommitted VotersRecord");
         Optional<LogHistory.Entry<VoterSet>> votersEntry = partitionState.lastVoterSetEntry();
         if (votersEntry.isEmpty() || hasUnCommitedVoter(leaderState)) {
             return CompletableFuture.completedFuture(
@@ -224,6 +226,7 @@ public final class AddVoterHandler {
         }
 
         // Check that the new voter id is not part of the current voter set
+        logger.debug("Check that the new voter id is not part of the current voter set");
         VoterSet voters = votersEntry.get().value();
         if (voters.voterIds().contains(voterKey.id())) {
             return CompletableFuture.completedFuture(
@@ -275,6 +278,7 @@ public final class AddVoterHandler {
         return state.future();
     }
 
+    // FIXME: need to consider multiple state?
     public boolean handleApiVersionsResponse(
         LeaderState<?> leaderState,
         Node source,
@@ -366,7 +370,6 @@ public final class AddVoterHandler {
                 leaderState.getReplicaState(current.voterKey())
             );
 
-            // FIXME: need to consider multiple state
             leaderState.resetAddVoterHandlerState(
                 Errors.REQUEST_TIMED_OUT,
                 String.format(
@@ -446,6 +449,7 @@ public final class AddVoterHandler {
 
 
     private ApiVersionsRequestData buildApiVersionsRequest() {
+        logger.debug("Send buildApiVersionsRequest to newVoter");
         return new ApiVersionsRequest.Builder().build().data();
     }
 
