@@ -118,6 +118,10 @@ public final class KRaftControlRecordStateMachine {
         maybeLoadLog();
     }
 
+    public VoterSet staticVoterSet() {
+        return staticVoterSet;
+    }
+    
     /**
      * Remove the head of the log until the given offset.
      *

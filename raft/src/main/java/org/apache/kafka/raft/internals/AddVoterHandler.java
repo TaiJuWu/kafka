@@ -128,7 +128,7 @@ public final class AddVoterHandler {
 
         // Check that there are no uncommitted VotersRecord
         Optional<LogHistory.Entry<VoterSet>> votersEntry = partitionState.lastVoterSetEntry();
-        if (votersEntry.isEmpty() || votersEntry.get().offset() >= highWatermark.get()) {
+        if (votersEntry.isEmpty() || hasUnCommitedVoter(leaderState)) {
             return CompletableFuture.completedFuture(
                 RaftUtil.addVoterResponse(
                     Errors.REQUEST_TIMED_OUT,
@@ -329,6 +329,24 @@ public final class AddVoterHandler {
             current.future().complete(RaftUtil.addVoterResponse(Errors.NONE, null));
         }
         return true;
+    }
+
+    private boolean hasUnCommitedVoter(LeaderState<?> leaderState) {
+        Optional<Long> highWatermark = leaderState.highWatermark().map(LogOffsetMetadata::offset);
+//        Optional<LogHistory.Entry<VoterSet>> votersEntry = partitionState.lastVoterSetEntry();
+//        if (highWatermark.isEmpty() || votersEntry.isEmpty()) {
+//            return true;
+//        }
+//        return votersEntry.get().offset() >= highWatermark.get();
+
+        if (highWatermark.isEmpty()) {
+            return true;
+        }
+
+        VoterSet currentVoters = partitionState.lastVoterSet();
+        VoterSet committedVoters = partitionState.voterSetAtOffset(highWatermark.get() - 1).orElse(partitionState.staticVoterSet());
+
+        return !currentVoters.equals(committedVoters);
     }
 
     public void highWatermarkUpdated(LeaderState<?> leaderState) {
