@@ -435,15 +435,13 @@ public final class AddVoterHandler {
     }
 
     private boolean hasUnCommitedVoter(LeaderState<?> leaderState) {
+        Optional<LogHistory.Entry<VoterSet>> lastVoterSet = partitionState.lastVoterSetEntry();
         Optional<Long> highWatermark = leaderState.highWatermark().map(LogOffsetMetadata::offset);
-        if (highWatermark.isEmpty()) {
+        if (highWatermark.isEmpty() || lastVoterSet.isEmpty()) {
             return true;
         }
 
-        VoterSet currentVoters = partitionState.lastVoterSet();
-        VoterSet committedVoters = partitionState.voterSetAtOffset(highWatermark.get() - 1).orElse(partitionState.staticVoterSet());
-        // FIXME: use simple logic in trunk
-        return !currentVoters.equals(committedVoters);
+        return lastVoterSet.get().offset() >= highWatermark.get();
     }
 
 
