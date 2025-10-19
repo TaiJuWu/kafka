@@ -102,14 +102,14 @@ public final class AddVoterHandler {
         KRaftVersion kraftVersion = partitionState.lastKraftVersion();
         if (!kraftVersion.isReconfigSupported()) {
             return CompletableFuture.completedFuture(
-                    RaftUtil.addVoterResponse(
-                            Errors.UNSUPPORTED_VERSION,
-                            String.format(
-                                    "Cluster doesn't support adding voter because the %s feature is %s",
-                                    kraftVersion.featureName(),
-                                    kraftVersion.featureLevel()
-                            )
+                RaftUtil.addVoterResponse(
+                    Errors.UNSUPPORTED_VERSION,
+                    String.format(
+                            "Cluster doesn't support adding voter because the %s feature is %s",
+                            kraftVersion.featureName(),
+                            kraftVersion.featureLevel()
                     )
+                )
             );
         }
 
@@ -129,10 +129,10 @@ public final class AddVoterHandler {
         if (requestDeadlineMs <= time.milliseconds() || requestsByDeadline.containsKey(requestDeadlineMs)
                 || (ackWhenCommitted && hasUnCommitedVoter(leaderState))) {
             return CompletableFuture.completedFuture(
-                    RaftUtil.addVoterResponse(
-                        Errors.REQUEST_TIMED_OUT,
-                        "Request timeout"
-                    )
+                RaftUtil.addVoterResponse(
+                    Errors.REQUEST_TIMED_OUT,
+                    "Request timeout"
+                )
             );
         }
         AddVoterHandlerState state = new AddVoterHandlerState(voterKey, voterEndpoints, ackWhenCommitted, timer);
@@ -256,7 +256,7 @@ public final class AddVoterHandler {
             );
         }
 
-        AddVoterHandlerState state = requestsByDeadline.firstEntry().getValue();
+        AddVoterHandlerState state = requestsByDeadline.pollFirstEntry().getValue();
 
         leaderState.resetAddVoterHandlerState(
             Errors.UNKNOWN_SERVER_ERROR,

@@ -629,6 +629,8 @@ public class KafkaRaftClientReconfigTest {
         );
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, anotherNewVoter, anotherNewListeners));
         context.pollUntilResponse();
+        // FIXME: this test should be change since we support delayed addVoter
+        // FIXME: but it should not be unknown server error, it means production code error
         context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
 
@@ -800,7 +802,8 @@ public class KafkaRaftClientReconfigTest {
         context.assertSentFetchPartitionResponse(Errors.NONE, epoch, OptionalInt.of(local.id()));
 
         // Attempt to add new voter to the quorum
-        context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, newVoter, newListeners));
+        // We support delay add voter timeout so this value can't be too large.
+        context.deliverRequest(context.addVoterRequest(100, newVoter, newListeners));
 
         // Leader should send an API_VERSIONS request to the new voter's endpoint
         context.pollUntilRequest();
