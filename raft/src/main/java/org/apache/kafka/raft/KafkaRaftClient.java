@@ -69,6 +69,7 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
 import org.apache.kafka.raft.errors.NotLeaderException;
 import org.apache.kafka.raft.internals.AddVoterHandler;
+import org.apache.kafka.raft.internals.AddVoterHandlerState;
 import org.apache.kafka.raft.internals.BatchAccumulator;
 import org.apache.kafka.raft.internals.BatchMemoryPool;
 import org.apache.kafka.raft.internals.BlockingMessageQueue;
@@ -111,6 +112,7 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Random;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
@@ -3803,6 +3805,11 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
     QuorumState quorum() {
         // It's okay to return null since this method is only called by tests
         return quorum;
+    }
+
+    // Visible for test
+    TreeMap<Long, AddVoterHandlerState> requestsByDeadline() {
+        return addVoterHandler.requestsByDeadline();
     }
 
     private boolean isInitialized() {

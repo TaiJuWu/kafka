@@ -2217,6 +2217,10 @@ public final class RaftClientTestContext {
         pollUntil(() -> OptionalLong.of(localLogEndOffset).equals(client.highWatermark()));
     }
 
+    int pendingAddVoterRequest() {
+        return client.requestsByDeadline().size();
+    }
+
     static class MockListener implements RaftClient.Listener<String> {
         private final List<Batch<String>> commits = new ArrayList<>();
         private final List<BatchReader<String>> savedBatches = new ArrayList<>();

@@ -105,111 +105,23 @@ public final class AddVoterHandler {
                 RaftUtil.addVoterResponse(
                     Errors.UNSUPPORTED_VERSION,
                     String.format(
-                            "Cluster doesn't support adding voter because the %s feature is %s",
-                            kraftVersion.featureName(),
-                            kraftVersion.featureLevel()
+                        "Cluster doesn't support adding voter because the %s feature is %s",
+                        kraftVersion.featureName(),
+                        kraftVersion.featureLevel()
                     )
                 )
             );
         }
 
-        // if the leader is resigned, fail all requests.
-        if (leaderState.isResignRequested()) {
-            failAllAddVoterRequest();
-        }
-        failTimeoutAddVoterRequest(currentTimeMs);
-
-        Timer timer = time.timer(timeoutMs);
-        long requestDeadlineMs = timer.deadlineMs();
-        // There are three cases we can't delay the request
-        // 1. There is already same tim to wait
-        // 2. already timeout
-        // 3. need to ack but there is uncommitted voter
-        // FIXME: split error msg
-        if (requestDeadlineMs <= time.milliseconds() || requestsByDeadline.containsKey(requestDeadlineMs)
-                || (ackWhenCommitted && hasUnCommitedVoter(leaderState))) {
-            return CompletableFuture.completedFuture(
-                RaftUtil.addVoterResponse(
-                    Errors.REQUEST_TIMED_OUT,
-                    "Request timeout"
-                )
-            );
-        }
-        AddVoterHandlerState state = new AddVoterHandlerState(voterKey, voterEndpoints, ackWhenCommitted, timer);
-        requestsByDeadline.put(requestDeadlineMs, state);
-
-        return handleAddVoterRequest(leaderState, voterKey, voterEndpoints, ackWhenCommitted, currentTimeMs);
-    }
-
-    private void failTimeoutAddVoterRequest(long currentTimeMs) {
-        final Iterator<Map.Entry<Long, AddVoterHandlerState>> iterator = requestsByDeadline.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<Long, AddVoterHandlerState> entry = iterator.next();
-            if (entry.getKey() < currentTimeMs) {
-                entry.getValue().future().complete(
-                        RaftUtil.addVoterResponse(
-                                Errors.REQUEST_TIMED_OUT,
-                                "Request timed out"
-                        )
-                );
-                iterator.remove();
-            } else {
-                break;
-            }
-        }
-    }
-
-    // if the remove voter is leader
-    private void failAllAddVoterRequest() {
-        for (Map.Entry<Long, AddVoterHandlerState> request : requestsByDeadline.entrySet()) {
-            request.getValue().future().complete(
-                RaftUtil.addVoterResponse(
-                    Errors.REQUEST_TIMED_OUT,
-                    "Request timed out waiting for leader is changed"
-                )
-            );
-        }
-    }
-
-    public CompletableFuture<AddRaftVoterResponseData> handleAddVoterRequest(
-        LeaderState<?> leaderState,
-        ReplicaKey voterKey,
-        Endpoints voterEndpoints,
-        boolean ackWhenCommitted,
-        long currentTimeMs
-    ) {
-        // FIXME: if this change finish, this should be removed.
-//        // Check if there are any pending voter change requests
-//        if (leaderState.isOperationPending(currentTimeMs)) {
-//            return CompletableFuture.completedFuture(
-//                RaftUtil.addVoterResponse(
-//                    Errors.REQUEST_TIMED_OUT,
-//                    "Request timed out waiting for leader to handle previous voter change request"
-//                )
-//            );
-//        }
-
-        // Check that the leader has established a HWM and committed the current epoch
-        // FIXME: Can remove until we get the highWatermark since we allow delay
-//        Optional<Long> highWatermark = leaderState.highWatermark().map(LogOffsetMetadata::offset);
-//        if (highWatermark.isEmpty()) {
-//            return CompletableFuture.completedFuture(
-//                RaftUtil.addVoterResponse(
-//                    Errors.REQUEST_TIMED_OUT,
-//                    "Request timed out waiting for leader to establish HWM and fence previous voter changes"
-//                )
-//            );
-//        }
-
-        // Check that there are no uncommitted VotersRecord
-        logger.debug("Check that there are no uncommitted VotersRecord");
         Optional<LogHistory.Entry<VoterSet>> votersEntry = partitionState.lastVoterSetEntry();
-        if (votersEntry.isEmpty() || hasUnCommitedVoter(leaderState)) {
+        if (votersEntry.isEmpty()) {
             return CompletableFuture.completedFuture(
                 RaftUtil.addVoterResponse(
                     Errors.REQUEST_TIMED_OUT,
-                    String.format("Request timed out waiting for voters to commit the latest voter change at %s",
-                        votersEntry)
+                    String.format(
+                        "Request timed out waiting for voters to commit the latest voter change at %s",
+                        votersEntry.map(LogHistory.Entry::offset)
+                    )
                 )
             );
         }
@@ -229,6 +141,12 @@ public final class AddVoterHandler {
                 )
             );
         }
+        // if the leader is resigned, fail all requests.
+        logger.debug("leader resign");
+        if (leaderState.isResignRequested()) {
+            failAllAddVoterRequest();
+        }
+        failTimeoutAddVoterRequest(currentTimeMs);
 
         // Send API_VERSIONS request to new voter to discover their supported kraft.version range
         OptionalLong apiResponseTimeout = requestSender.send(
@@ -247,7 +165,9 @@ public final class AddVoterHandler {
             this::buildApiVersionsRequest,
             currentTimeMs
         );
+
         if (apiResponseTimeout.isEmpty()) {
+            logger.debug("apiResponseTimeout is not empty");
             return CompletableFuture.completedFuture(
                 RaftUtil.addVoterResponse(
                     Errors.REQUEST_TIMED_OUT,
@@ -256,17 +176,38 @@ public final class AddVoterHandler {
             );
         }
 
-        AddVoterHandlerState state = requestsByDeadline.pollFirstEntry().getValue();
+        logger.debug("leader state=" + leaderState.addVoterHandlerState() + " !leaderState.isRemoveVoterPending(currentTimeMs)=" + !leaderState.isRemoveVoterPending(currentTimeMs));
+        if (leaderState.addVoterHandlerState().isEmpty() && !leaderState.isRemoveVoterPending(currentTimeMs)) {
+            AddVoterHandlerState state = requestsByDeadline.pollFirstEntry().getValue();
+            leaderState.resetAddVoterHandlerState(
+                Errors.UNKNOWN_SERVER_ERROR,
+                null,
+                Optional.of(state)
+            );
+        }
 
-        leaderState.resetAddVoterHandlerState(
-            Errors.UNKNOWN_SERVER_ERROR,
-            null,
-            Optional.of(state)
-        );
+        Timer timer = time.timer(timeoutMs);
+        long requestDeadlineMs = timer.deadlineMs();
+        // There are three cases we can't delay the request
+        // 1. There is already same tim to wait
+        // 2. already timeout
+        // 3. need to ack but there is uncommitted voter
+        // FIXME: split error msg
+        if (requestDeadlineMs <= time.milliseconds() || requestsByDeadline.containsKey(requestDeadlineMs)
+                || (ackWhenCommitted && hasUnCommitedVoter(leaderState))) {
+            return CompletableFuture.completedFuture(
+                    RaftUtil.addVoterResponse(
+                            Errors.REQUEST_TIMED_OUT,
+                            "Request timeout"
+                    )
+            );
+        }
+        AddVoterHandlerState newState = new AddVoterHandlerState(voterKey, voterEndpoints, ackWhenCommitted, timer);
+        logger.debug("Put new request at " + requestDeadlineMs + " ms " + "state=" + newState);
+        requestsByDeadline.put(requestDeadlineMs, newState);
 
-        return state.future();
+        return newState.future();
     }
-
     // FIXME: need to consider multiple state?
     public boolean handleApiVersionsResponse(
         LeaderState<?> leaderState,
@@ -275,8 +216,10 @@ public final class AddVoterHandler {
         Optional<ApiVersionsResponseData.SupportedFeatureKey> supportedKraftVersions,
         long currentTimeMs
     ) {
+        logger.debug("1-handleApiVersionsResponse in AddVoterHandler");
         Optional<AddVoterHandlerState> handlerState = leaderState.addVoterHandlerState();
         if (handlerState.isEmpty()) {
+            logger.debug("1-handlerState.isEmpty() in AddVoterHandler");
             // There are no pending add operation just ignore the api response
             return true;
         }
@@ -285,6 +228,7 @@ public final class AddVoterHandler {
         // FIXME: need to add test coverage
         // FIXME: during update high watermark, we reset the value to new voter?
         AddVoterHandlerState current = handlerState.get();
+        logger.debug("2-handleApiVersionsResponse in AddVoterHandler");
         if (!current.expectingApiResponse(source.id())) {
             logger.info(
                 "API_VERSIONS response is not expected from {}: voterKey is {}, lastOffset is {}",
@@ -316,7 +260,7 @@ public final class AddVoterHandler {
 
             return false;
         }
-
+        logger.debug("3-handleApiVersionsResponse in AddVoterHandler");
         // Check that the new voter supports the kraft.version for reconfiguration
         KRaftVersion kraftVersion = partitionState.lastKraftVersion();
         if (!validVersionRange(kraftVersion, supportedKraftVersions)) {
@@ -395,9 +339,11 @@ public final class AddVoterHandler {
                     )
                 )
             );
+        logger.debug("state appendVoterRecord");
         current.setLastOffset(leaderState.appendVotersRecord(newVoters, currentTimeMs));
         if (!current.ackWhenCommitted()) {
             if (hasUnCommitedVoter(leaderState)) {
+                // If the state need to be acked, it is disallowed when there is any uncommitted voter on leader
                 current.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT,
                         "Request timed out waiting for leader to handle previous voter change request"));
             } else {
@@ -427,6 +373,11 @@ public final class AddVoterHandler {
         );
     }
 
+    // Visible for test
+    public TreeMap<Long, AddVoterHandlerState> requestsByDeadline() {
+        return requestsByDeadline;
+    }
+
     private boolean hasUnCommitedVoter(LeaderState<?> leaderState) {
         Optional<LogHistory.Entry<VoterSet>> lastVoterSet = partitionState.lastVoterSetEntry();
         Optional<Long> highWatermark = leaderState.highWatermark().map(LogOffsetMetadata::offset);
@@ -437,9 +388,37 @@ public final class AddVoterHandler {
         return lastVoterSet.get().offset() >= highWatermark.get();
     }
 
+    private void failTimeoutAddVoterRequest(long currentTimeMs) {
+        final Iterator<Map.Entry<Long, AddVoterHandlerState>> iterator = requestsByDeadline.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<Long, AddVoterHandlerState> entry = iterator.next();
+            if (entry.getKey() < currentTimeMs) {
+                entry.getValue().future().complete(
+                        RaftUtil.addVoterResponse(
+                                Errors.REQUEST_TIMED_OUT,
+                                "Request timed out"
+                        )
+                );
+                iterator.remove();
+            } else {
+                break;
+            }
+        }
+    }
+
+    // if the remove voter is leader
+    private void failAllAddVoterRequest() {
+        for (Map.Entry<Long, AddVoterHandlerState> request : requestsByDeadline.entrySet()) {
+            request.getValue().future().complete(
+                    RaftUtil.addVoterResponse(
+                            Errors.REQUEST_TIMED_OUT,
+                            "Request timed out waiting for leader is changed"
+                    )
+            );
+        }
+    }
 
     private ApiVersionsRequestData buildApiVersionsRequest() {
-        logger.debug("Send buildApiVersionsRequest to newVoter");
         return new ApiVersionsRequest.Builder().build().data();
     }
 

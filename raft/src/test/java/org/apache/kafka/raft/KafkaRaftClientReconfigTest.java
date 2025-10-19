@@ -627,11 +627,13 @@ public class KafkaRaftClientReconfigTest {
         Endpoints anotherNewListeners = Endpoints.fromInetSocketAddresses(
             Map.of(context.channel.listenerName(), anotherNewAddress)
         );
-        context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, anotherNewVoter, anotherNewListeners));
-        context.pollUntilResponse();
+        // FIXME: add test cover the same deadline
+        context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE - 100, anotherNewVoter, anotherNewListeners));
+        context.pollUntil(() -> {
+            return context.pendingAddVoterRequest() == 1;
+        });
         // FIXME: this test should be change since we support delayed addVoter
         // FIXME: but it should not be unknown server error, it means production code error
-        context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
 
     @Test
