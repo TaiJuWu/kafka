@@ -176,16 +176,6 @@ public final class AddVoterHandler {
             );
         }
 
-        logger.debug("leader state=" + leaderState.addVoterHandlerState() + " !leaderState.isRemoveVoterPending(currentTimeMs)=" + !leaderState.isRemoveVoterPending(currentTimeMs));
-        if (leaderState.addVoterHandlerState().isEmpty() && !leaderState.isRemoveVoterPending(currentTimeMs)) {
-            AddVoterHandlerState state = requestsByDeadline.pollFirstEntry().getValue();
-            leaderState.resetAddVoterHandlerState(
-                Errors.UNKNOWN_SERVER_ERROR,
-                null,
-                Optional.of(state)
-            );
-        }
-
         Timer timer = time.timer(timeoutMs);
         long requestDeadlineMs = timer.deadlineMs();
         // There are three cases we can't delay the request
@@ -205,10 +195,19 @@ public final class AddVoterHandler {
         AddVoterHandlerState newState = new AddVoterHandlerState(voterKey, voterEndpoints, ackWhenCommitted, timer);
         logger.debug("Put new request at " + requestDeadlineMs + " ms " + "state=" + newState);
         requestsByDeadline.put(requestDeadlineMs, newState);
+        // FIXME: think again, we retrieve state is newState, should be ok?
+        if (leaderState.addVoterHandlerState().isEmpty() && !leaderState.isRemoveVoterPending(currentTimeMs)) {
+            AddVoterHandlerState state = requestsByDeadline.pollFirstEntry().getValue();
+            leaderState.resetAddVoterHandlerState(
+                    Errors.UNKNOWN_SERVER_ERROR,
+                    null,
+                    Optional.of(state)
+            );
+        }
 
         return newState.future();
     }
-    // FIXME: need to consider multiple state?
+
     public boolean handleApiVersionsResponse(
         LeaderState<?> leaderState,
         Node source,
@@ -216,17 +215,14 @@ public final class AddVoterHandler {
         Optional<ApiVersionsResponseData.SupportedFeatureKey> supportedKraftVersions,
         long currentTimeMs
     ) {
-        logger.debug("1-handleApiVersionsResponse in AddVoterHandler");
         Optional<AddVoterHandlerState> handlerState = leaderState.addVoterHandlerState();
         if (handlerState.isEmpty()) {
-            logger.debug("1-handlerState.isEmpty() in AddVoterHandler");
+            logger.debug("There are no pending add operation just ignore the api response");
             // There are no pending add operation just ignore the api response
             return true;
         }
 
         // Check that the API_VERSIONS response matches the id of the voter getting added
-        // FIXME: need to add test coverage
-        // FIXME: during update high watermark, we reset the value to new voter?
         AddVoterHandlerState current = handlerState.get();
         logger.debug("2-handleApiVersionsResponse in AddVoterHandler");
         if (!current.expectingApiResponse(source.id())) {
