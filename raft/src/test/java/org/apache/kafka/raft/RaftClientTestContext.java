@@ -63,6 +63,7 @@ import org.apache.kafka.common.requests.FetchSnapshotResponse;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.raft.internals.AddVoterHandlerState;
 import org.apache.kafka.raft.internals.BatchBuilder;
 import org.apache.kafka.raft.internals.StringSerde;
 import org.apache.kafka.server.common.Feature;
@@ -1166,8 +1167,12 @@ public final class RaftClientTestContext {
         return sentRequests.get(0);
     }
 
-    int pendingAddVoterRequest() {
+    int pendingAddVoterRequestSize() {
         return client.deadlineEventQueue().size();
+    }
+
+    AddVoterHandlerState dequeue(long currentTimeMs) {
+        return client.deadlineEventQueue().dequeue(currentTimeMs).get();
     }
 
     RaftRequest.Outbound assertSentFetchRequest(
