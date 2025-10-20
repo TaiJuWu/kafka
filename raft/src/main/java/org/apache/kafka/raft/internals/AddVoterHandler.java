@@ -26,6 +26,7 @@ import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
+import org.apache.kafka.queue.KafkaDeadlineEventQueue;
 import org.apache.kafka.raft.Endpoints;
 import org.apache.kafka.raft.LeaderState;
 import org.apache.kafka.raft.LogOffsetMetadata;
@@ -36,13 +37,11 @@ import org.apache.kafka.server.common.KRaftVersion;
 
 import org.slf4j.Logger;
 
-import java.util.Iterator;
-import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
-import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 
+import static org.apache.kafka.queue.KafkaDeadlineEventQueue.Event;
 /**
  * This type implements the protocol for adding a voter to a KRaft partition.
  *
@@ -74,19 +73,20 @@ public final class AddVoterHandler {
     private final RequestSender requestSender;
     private final Time time;
     private final Logger logger;
-    TreeMap<Long, AddVoterHandlerState> requestsByDeadline;
+    private final KafkaDeadlineEventQueue<AddVoterHandlerState> deadlineEventQueue;
 
     public AddVoterHandler(
         KRaftControlRecordStateMachine partitionState,
         RequestSender requestSender,
         Time time,
-        LogContext logContext
+        LogContext logContext,
+        KafkaDeadlineEventQueue<AddVoterHandlerState> deadlineEventQueue
     ) {
         this.partitionState = partitionState;
         this.requestSender = requestSender;
         this.time = time;
         this.logger = logContext.logger(AddVoterHandler.class);
-        this.requestsByDeadline = new TreeMap<>();
+        this.deadlineEventQueue = deadlineEventQueue;
     }
 
     public CompletableFuture<AddRaftVoterResponseData> handleAddVoterRequest(
@@ -141,12 +141,6 @@ public final class AddVoterHandler {
                 )
             );
         }
-        // if the leader is resigned, fail all requests.
-        logger.debug("leader resign");
-        if (leaderState.isResignRequested()) {
-            failAllAddVoterRequest();
-        }
-        failTimeoutAddVoterRequest(currentTimeMs);
 
         // Send API_VERSIONS request to new voter to discover their supported kraft.version range
         OptionalLong apiResponseTimeout = requestSender.send(
@@ -183,8 +177,7 @@ public final class AddVoterHandler {
         // 2. already timeout
         // 3. need to ack but there is uncommitted voter
         // FIXME: split error msg
-        if (requestDeadlineMs <= time.milliseconds() || requestsByDeadline.containsKey(requestDeadlineMs)
-                || (ackWhenCommitted && hasUnCommitedVoter(leaderState))) {
+        if (requestDeadlineMs <= time.milliseconds() || (ackWhenCommitted && hasUnCommitedVoter(leaderState))) {
             return CompletableFuture.completedFuture(
                     RaftUtil.addVoterResponse(
                             Errors.REQUEST_TIMED_OUT,
@@ -194,15 +187,15 @@ public final class AddVoterHandler {
         }
         AddVoterHandlerState newState = new AddVoterHandlerState(voterKey, voterEndpoints, ackWhenCommitted, timer);
         logger.debug("Put new request at " + requestDeadlineMs + " ms " + "state=" + newState);
-        requestsByDeadline.put(requestDeadlineMs, newState);
+        deadlineEventQueue.enqueue(new Event<>(timer, newState.toString(), newState));
         // FIXME: think again, we retrieve state is newState, should be ok?
         if (leaderState.addVoterHandlerState().isEmpty() && !leaderState.isRemoveVoterPending(currentTimeMs)) {
-            AddVoterHandlerState state = requestsByDeadline.pollFirstEntry().getValue();
-            leaderState.resetAddVoterHandlerState(
+            Optional<AddVoterHandlerState> stateOpt = deadlineEventQueue.dequeue();
+            stateOpt.ifPresent(addVoterHandlerState -> leaderState.resetAddVoterHandlerState(
                     Errors.UNKNOWN_SERVER_ERROR,
                     null,
-                    Optional.of(state)
-            );
+                    Optional.of(addVoterHandlerState)
+            ));
         }
 
         return newState.future();
@@ -358,10 +351,9 @@ public final class AddVoterHandler {
                     if (highWatermark.offset() > lastOffset) {
                         // VotersRecord with the added voter was committed; complete the RPC
                         leaderState.resetAddVoterHandlerState(Errors.NONE, null, Optional.empty());
-                        failTimeoutAddVoterRequest(time.milliseconds());
-                        if (!requestsByDeadline.isEmpty()) {
-                            leaderState.resetAddVoterHandlerState(Errors.NONE, null,
-                                    Optional.of(requestsByDeadline.firstEntry().getValue()));
+                        if (!deadlineEventQueue.isEmpty()) {
+                            // FIXME: we need this isEmpty check?
+                            leaderState.resetAddVoterHandlerState(Errors.NONE, null, deadlineEventQueue.dequeue());
                         }
                     }
                 })
@@ -370,8 +362,8 @@ public final class AddVoterHandler {
     }
 
     // Visible for test
-    public TreeMap<Long, AddVoterHandlerState> requestsByDeadline() {
-        return requestsByDeadline;
+    public KafkaDeadlineEventQueue<AddVoterHandlerState> deadlineEventQueue() {
+        return deadlineEventQueue;
     }
 
     private boolean hasUnCommitedVoter(LeaderState<?> leaderState) {
@@ -382,36 +374,6 @@ public final class AddVoterHandler {
         }
 
         return lastVoterSet.get().offset() >= highWatermark.get();
-    }
-
-    private void failTimeoutAddVoterRequest(long currentTimeMs) {
-        final Iterator<Map.Entry<Long, AddVoterHandlerState>> iterator = requestsByDeadline.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<Long, AddVoterHandlerState> entry = iterator.next();
-            if (entry.getKey() < currentTimeMs) {
-                entry.getValue().future().complete(
-                        RaftUtil.addVoterResponse(
-                                Errors.REQUEST_TIMED_OUT,
-                                "Request timed out"
-                        )
-                );
-                iterator.remove();
-            } else {
-                break;
-            }
-        }
-    }
-
-    // if the remove voter is leader
-    private void failAllAddVoterRequest() {
-        for (Map.Entry<Long, AddVoterHandlerState> request : requestsByDeadline.entrySet()) {
-            request.getValue().future().complete(
-                    RaftUtil.addVoterResponse(
-                            Errors.REQUEST_TIMED_OUT,
-                            "Request timed out waiting for leader is changed"
-                    )
-            );
-        }
     }
 
     private ApiVersionsRequestData buildApiVersionsRequest() {

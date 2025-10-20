@@ -1166,6 +1166,10 @@ public final class RaftClientTestContext {
         return sentRequests.get(0);
     }
 
+    int pendingAddVoterRequest() {
+        return client.deadlineEventQueue().size();
+    }
+
     RaftRequest.Outbound assertSentFetchRequest(
         int epoch,
         long fetchOffset,
@@ -2215,10 +2219,6 @@ public final class RaftClientTestContext {
         }
 
         pollUntil(() -> OptionalLong.of(localLogEndOffset).equals(client.highWatermark()));
-    }
-
-    int pendingAddVoterRequest() {
-        return client.requestsByDeadline().size();
     }
 
     static class MockListener implements RaftClient.Listener<String> {

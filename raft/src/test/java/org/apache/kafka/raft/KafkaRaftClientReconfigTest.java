@@ -628,12 +628,8 @@ public class KafkaRaftClientReconfigTest {
             Map.of(context.channel.listenerName(), anotherNewAddress)
         );
         // FIXME: add test cover the same deadline
-        context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE - 100, anotherNewVoter, anotherNewListeners));
-        context.pollUntil(() -> {
-            return context.pendingAddVoterRequest() == 1;
-        });
-        // FIXME: this test should be change since we support delayed addVoter
-        // FIXME: but it should not be unknown server error, it means production code error
+        context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, anotherNewVoter, anotherNewListeners));
+        context.pollUntil(() -> context.pendingAddVoterRequest() == 1);
     }
 
     @Test
@@ -805,7 +801,7 @@ public class KafkaRaftClientReconfigTest {
 
         // Attempt to add new voter to the quorum
         // We support delay add voter timeout so this value can't be too large.
-        context.deliverRequest(context.addVoterRequest(100, newVoter, newListeners));
+        context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, newVoter, newListeners));
 
         // Leader should send an API_VERSIONS request to the new voter's endpoint
         context.pollUntilRequest();

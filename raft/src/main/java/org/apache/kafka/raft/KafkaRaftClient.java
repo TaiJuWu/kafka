@@ -67,6 +67,7 @@ import org.apache.kafka.common.utils.BufferSupplier;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
+import org.apache.kafka.queue.KafkaDeadlineEventQueue;
 import org.apache.kafka.raft.errors.NotLeaderException;
 import org.apache.kafka.raft.internals.AddVoterHandler;
 import org.apache.kafka.raft.internals.AddVoterHandlerState;
@@ -112,7 +113,6 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Random;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
@@ -196,6 +196,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
     private final RaftMessageQueue messageQueue;
     private final QuorumConfig quorumConfig;
     private final RaftMetadataLogCleanerManager snapshotCleaner;
+    private final KafkaDeadlineEventQueue<AddVoterHandlerState> deadlineEventQueue;
 
     private final Map<Listener<T>, ListenerContext> listenerContexts = new IdentityHashMap<>();
     private final ConcurrentLinkedQueue<Registration<T>> pendingRegistrations = new ConcurrentLinkedQueue<>();
@@ -315,6 +316,13 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
         this.random = random;
         this.quorumConfig = quorumConfig;
         this.snapshotCleaner = new RaftMetadataLogCleanerManager(logger, time, 60000, log::maybeClean);
+        this.deadlineEventQueue =  new KafkaDeadlineEventQueue<>(state ->
+                state.future().complete(
+                        RaftUtil.addVoterResponse(
+                                Errors.REQUEST_TIMED_OUT,
+                                "Request timeout due to timeout. Please try again later."
+                        )
+                ));
 
         if (!bootstrapServers.isEmpty()) {
             // generate Node objects from network addresses by using decreasing negative ids
@@ -585,7 +593,8 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
                 logContext
             ),
             time,
-            logContext
+            logContext,
+            deadlineEventQueue
         );
 
         // Specialized remove voter handler
@@ -3081,6 +3090,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
     private long pollLeader(long currentTimeMs) {
         LeaderState<T> state = quorum.leaderStateOrThrow();
         maybeFireLeaderChange(state);
+        deadlineEventQueue.checkTimeout();
 
         long timeUntilCheckQuorumExpires = state.timeUntilCheckQuorumExpires(currentTimeMs);
         if (shutdown.get() != null || state.isResignRequested() || timeUntilCheckQuorumExpires == 0) {
@@ -3808,8 +3818,8 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
     }
 
     // Visible for test
-    TreeMap<Long, AddVoterHandlerState> requestsByDeadline() {
-        return addVoterHandler.requestsByDeadline();
+    KafkaDeadlineEventQueue<AddVoterHandlerState> deadlineEventQueue() {
+        return deadlineEventQueue;
     }
 
     private boolean isInitialized() {
