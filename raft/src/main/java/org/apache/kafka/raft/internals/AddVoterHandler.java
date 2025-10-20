@@ -74,14 +74,17 @@ public final class AddVoterHandler {
     private final Time time;
     private final Logger logger;
     private final KafkaDeadlineEventQueue<AddVoterHandlerState> deadlineEventQueue;
+    private final long requestTimeoutMs;
 
     public AddVoterHandler(
         KRaftControlRecordStateMachine partitionState,
         RequestSender requestSender,
         Time time,
         LogContext logContext,
+        long requestTimeoutMs,
         KafkaDeadlineEventQueue<AddVoterHandlerState> deadlineEventQueue
     ) {
+        this.requestTimeoutMs = requestTimeoutMs;
         this.partitionState = partitionState;
         this.requestSender = requestSender;
         this.time = time;
@@ -170,7 +173,7 @@ public final class AddVoterHandler {
             );
         }
 
-        Timer timer = time.timer(timeoutMs);
+        Timer timer = time.timer(Math.max(0, Math.min(requestTimeoutMs, timeoutMs)));
         long requestDeadlineMs = timer.deadlineMs();
         // There are three cases we can't delay the request
         // 1. There is already same tim to wait

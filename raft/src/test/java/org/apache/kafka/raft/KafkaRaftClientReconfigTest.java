@@ -800,7 +800,6 @@ public class KafkaRaftClientReconfigTest {
         context.assertSentFetchPartitionResponse(Errors.NONE, epoch, OptionalInt.of(local.id()));
 
         // Attempt to add new voter to the quorum
-        // We support delay add voter timeout so this value can't be too large.
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, newVoter, newListeners));
 
         // Leader should send an API_VERSIONS request to the new voter's endpoint

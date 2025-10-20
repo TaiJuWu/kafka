@@ -594,6 +594,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
             ),
             time,
             logContext,
+            quorumConfig.requestTimeoutMs(),
             deadlineEventQueue
         );
 
