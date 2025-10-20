@@ -16,9 +16,7 @@
  */
 package org.apache.kafka.queue;
 
-import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
-import org.apache.kafka.server.util.KafkaScheduler;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -26,34 +24,17 @@ import java.util.Queue;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.function.Consumer;
 
-public class KafkaDeadlineEventQueue<T> implements AutoCloseable {
+public class KafkaDeadlineEventQueue<T> {
     private final Queue<Event<T>> eventQueue;
-    private final Time time;
-    private final Consumer<T> timeOutOperation;
-    private final KafkaScheduler sched;
+    private final Consumer<T> timeoutOperation;
 
-    public KafkaDeadlineEventQueue(Time time) {
-        this(time, null);
+    public KafkaDeadlineEventQueue() {
+        this(null);
     }
 
-    public KafkaDeadlineEventQueue(Time time, Consumer<T> timeOutOperation) {
+    public KafkaDeadlineEventQueue(Consumer<T> timeoutOperation) {
         this.eventQueue = new PriorityBlockingQueue<>();
-        this.time = time;
-        this.timeOutOperation = timeOutOperation;
-        this.sched = new KafkaScheduler(1, true, "kafka-deadline-event-cleaner-");
-        this.sched.startup();
-        this.sched.schedule("clean timeout task", () -> {
-            while (!eventQueue.isEmpty()) {
-                if (eventQueue.peek().timer.remainingMs() >= 0) {
-                    Event<T> event = eventQueue.poll();
-                    if (timeOutOperation != null) {
-                        timeOutOperation.accept(event.get());
-                    }
-                } else {
-                    break;
-                }
-            }
-        }, 100, 1000);
+        this.timeoutOperation = timeoutOperation;
     }
 
     public Queue<Event<T>> eventQueue() {
@@ -64,45 +45,59 @@ public class KafkaDeadlineEventQueue<T> implements AutoCloseable {
         eventQueue.add(Objects.requireNonNull(element));
     }
 
-    public Optional<Event<T>> dequeue() {
-        Event<T> event;
+    public Optional<T> dequeue() {
+        checkTimeout();
+        Event<T> event = eventQueue.poll();
+        return Optional.ofNullable(event == null ? null : event.get());
+    }
+
+    public boolean isEmpty() {
+        checkTimeout();
+        return eventQueue.isEmpty();
+    }
+
+    public void checkTimeout() {
         while (true) {
-            event = eventQueue.poll();
-            System.err.println("pop event: " + event);
-            if (event == null) {
-                return Optional.empty();
-            }
-            if (event.timer.deadlineMs() <= time.milliseconds()) {
-                if (timeOutOperation != null) {
-                    timeOutOperation.accept(event.get());
+            Event<T> event = eventQueue.peek();
+
+            if (event != null) {
+                event.timer.update();
+                if (event.timer.isExpired()) {
+                    eventQueue.poll();
+                    if (timeoutOperation != null) {
+                        timeoutOperation.accept(event.get());
+                    }
+                    continue;
                 }
-                continue;
             }
             break;
         }
-        return Optional.of(event);
     }
 
-    @Override
-    public void close() throws Exception {
-        sched.shutdown();
+    public int size() {
+        return eventQueue.size();
     }
 
+    // Visible for test
+    Optional<Event<T>> dequeueContext() {
+        checkTimeout();
+        Event<T> event = eventQueue.poll();
+        return Optional.ofNullable(event);
+    }
 
     public static class Event<T> implements Comparable<Event<T>> {
         private final Timer timer;
         private final String tag;
-        private final T playload;
-
+        private final T payload;
 
         public Event(Timer timer, String tag, T payload) {
             this.timer = timer;
             this.tag = tag;
-            this.playload = Objects.requireNonNull(payload);
+            this.payload = Objects.requireNonNull(payload);
         }
 
         public T get() {
-            return playload;
+            return payload;
         }
 
         public String getTag() {
@@ -119,7 +114,7 @@ public class KafkaDeadlineEventQueue<T> implements AutoCloseable {
             return "Event={" +
                     "timer=" + timer +
                     ", tag=" + tag +
-                    ", playload=" + playload +
+                    ", playload=" + payload +
                     "}";
         }
 
