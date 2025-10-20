@@ -386,7 +386,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
 
             // Notify the add and remove voter handlers that the HWM has been updated in case there are
             // add or remove voter request that need to be completed
-            addVoterHandler.highWatermarkUpdated(state);
+            addVoterHandler.highWatermarkUpdated(state, currentTimeMs);
             removeVoterHandler.highWatermarkUpdated(state);
 
             // After updating the high watermark, we first clear the append
@@ -3090,7 +3090,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
     private long pollLeader(long currentTimeMs) {
         LeaderState<T> state = quorum.leaderStateOrThrow();
         maybeFireLeaderChange(state);
-        deadlineEventQueue.checkTimeout();
+        deadlineEventQueue.checkTimeout(currentTimeMs);
 
         long timeUntilCheckQuorumExpires = state.timeUntilCheckQuorumExpires(currentTimeMs);
         if (shutdown.get() != null || state.isResignRequested() || timeUntilCheckQuorumExpires == 0) {

@@ -38,7 +38,7 @@ public class KafkaDeadlineEventQueueTest {
     @Test
     public void testEnqueueAndDequeue() {
         queue.enqueue(new Event<>(mockTime.timer(Long.MAX_VALUE), "insert no deadline task", 10L));
-        assertEquals(10L, queue.dequeue().get());
+        assertEquals(10L, queue.dequeue(mockTime.milliseconds()).get());
     }
 
     @Test
@@ -47,9 +47,9 @@ public class KafkaDeadlineEventQueueTest {
         queue.enqueue(new Event<>(mockTime.timer(Long.MAX_VALUE), "insert no deadline task", 100L));
         queue.enqueue(new Event<>(mockTime.timer(10), "insert deadline task 10", 10L));
         assertEquals(3, queue.eventQueue().size());
-        assertEquals(10L, queue.dequeue().get());
-        assertEquals(20L, queue.dequeue().get());
-        assertEquals(100L, queue.dequeue().get());
+        assertEquals(10L, queue.dequeue(mockTime.milliseconds()).get());
+        assertEquals(20L, queue.dequeue(mockTime.milliseconds()).get());
+        assertEquals(100L, queue.dequeue(mockTime.milliseconds()).get());
     }
 
     @Test
@@ -70,9 +70,9 @@ public class KafkaDeadlineEventQueueTest {
         // At the point, queue size still 3 because it timeout element will be removed
         // after call dequeue or checkTimeout
         assertEquals(3, queue.eventQueue().size());
-        assertEquals(20L, queue.dequeue().get());
+        assertEquals(20L, queue.dequeue(mockTime.milliseconds()).get());
         assertEquals(1, queue.eventQueue().size());
-        assertEquals(100L, queue.dequeue().get());
+        assertEquals(100L, queue.dequeue(mockTime.milliseconds()).get());
         assertEquals(0, queue.eventQueue().size());
     }
 
@@ -85,12 +85,12 @@ public class KafkaDeadlineEventQueueTest {
         // At the point, queue size still 3 because it timeout element will be removed
         // after call dequeue or checkTimeout
         assertEquals(3, queue.eventQueue().size());
-        assertEquals(20L, queue.dequeue().get());
+        assertEquals(20L, queue.dequeue(mockTime.milliseconds()).get());
         queue.enqueue(new Event<>(mockTime.timer(100), "insert no deadline task", 100L));
         assertEquals(2, queue.eventQueue().size());
-        assertEquals(100, queue.dequeue().get());
+        assertEquals(100, queue.dequeue(mockTime.milliseconds()).get());
         assertEquals(1, queue.eventQueue().size());
-        assertEquals(Long.MAX_VALUE, queue.dequeue().get());
+        assertEquals(Long.MAX_VALUE, queue.dequeue(mockTime.milliseconds()).get());
     }
 
 
@@ -100,7 +100,7 @@ public class KafkaDeadlineEventQueueTest {
         this.queue = new KafkaDeadlineEventQueue<>(c -> isConsumered.set(true));
         queue.enqueue(new Event<>(mockTime.timer(100), "insert no deadline task", 100L));
         mockTime.sleep(100);
-        queue.dequeue();
+        queue.dequeue(mockTime.milliseconds());
         assertEquals(true, isConsumered.get());
     }
 
@@ -110,7 +110,7 @@ public class KafkaDeadlineEventQueueTest {
         this.queue = new KafkaDeadlineEventQueue<>(c -> isConsumered.set(true));
         queue.enqueue(new Event<>(mockTime.timer(100), "insert no deadline task", 100L));
         mockTime.sleep(100);
-        queue.checkTimeout();
+        queue.checkTimeout(mockTime.milliseconds());
         assertEquals(true, isConsumered.get());
     }
 }

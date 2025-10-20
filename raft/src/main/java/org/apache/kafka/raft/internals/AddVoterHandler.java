@@ -190,7 +190,7 @@ public final class AddVoterHandler {
         deadlineEventQueue.enqueue(new Event<>(timer, newState.toString(), newState));
         // FIXME: think again, we retrieve state is newState, should be ok?
         if (leaderState.addVoterHandlerState().isEmpty() && !leaderState.isRemoveVoterPending(currentTimeMs)) {
-            Optional<AddVoterHandlerState> stateOpt = deadlineEventQueue.dequeue();
+            Optional<AddVoterHandlerState> stateOpt = deadlineEventQueue.dequeue(currentTimeMs);
             stateOpt.ifPresent(addVoterHandlerState -> leaderState.resetAddVoterHandlerState(
                     Errors.UNKNOWN_SERVER_ERROR,
                     null,
@@ -344,7 +344,7 @@ public final class AddVoterHandler {
         return true;
     }
 
-    public void highWatermarkUpdated(LeaderState<?> leaderState) {
+    public void highWatermarkUpdated(LeaderState<?> leaderState, long currentTimeMs) {
         leaderState.addVoterHandlerState().ifPresent(current ->
             leaderState.highWatermark().ifPresent(highWatermark ->
                 current.lastOffset().ifPresent(lastOffset -> {
@@ -352,8 +352,8 @@ public final class AddVoterHandler {
                         // VotersRecord with the added voter was committed; complete the RPC
                         leaderState.resetAddVoterHandlerState(Errors.NONE, null, Optional.empty());
                         if (!deadlineEventQueue.isEmpty()) {
-                            // FIXME: we need this isEmpty check?
-                            leaderState.resetAddVoterHandlerState(Errors.NONE, null, deadlineEventQueue.dequeue());
+                            // Reset the state as UNKNOWN_SERVER_ERROR
+                            leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, null, deadlineEventQueue.dequeue(currentTimeMs));
                         }
                     }
                 })

@@ -45,23 +45,22 @@ public class KafkaDeadlineEventQueue<T> {
         eventQueue.add(Objects.requireNonNull(element));
     }
 
-    public Optional<T> dequeue() {
-        checkTimeout();
+    public Optional<T> dequeue(long currentTimeMs) {
+        checkTimeout(currentTimeMs);
         Event<T> event = eventQueue.poll();
         return Optional.ofNullable(event == null ? null : event.get());
     }
 
     public boolean isEmpty() {
-        checkTimeout();
         return eventQueue.isEmpty();
     }
 
-    public void checkTimeout() {
+    public void checkTimeout(long currentTimeMs) {
         while (true) {
             Event<T> event = eventQueue.peek();
 
             if (event != null) {
-                event.timer.update();
+                event.timer.update(currentTimeMs);
                 if (event.timer.isExpired()) {
                     eventQueue.poll();
                     if (timeoutOperation != null) {
@@ -80,7 +79,6 @@ public class KafkaDeadlineEventQueue<T> {
 
     // Visible for test
     Optional<Event<T>> dequeueContext() {
-        checkTimeout();
         Event<T> event = eventQueue.poll();
         return Optional.ofNullable(event);
     }
