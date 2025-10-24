@@ -316,7 +316,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
         this.random = random;
         this.quorumConfig = quorumConfig;
         this.snapshotCleaner = new RaftMetadataLogCleanerManager(logger, time, 60000, log::maybeClean);
-        this.eventQueue = new KafkaDeadlineEventQueue<>(DeadlineTaskManager.DeferredTask::onTimeout);
+        this.eventQueue = new KafkaDeadlineEventQueue<>(deferredTask -> deferredTask.onTimeout().run());
 
         if (!bootstrapServers.isEmpty()) {
             // generate Node objects from network addresses by using decreasing negative ids

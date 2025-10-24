@@ -673,6 +673,13 @@ public final class RaftClientTestContext {
         }, 5000, "Condition failed to be satisfied before timeout");
     }
 
+    void pollUntilAndAdvanceTime(int advanceTimeMs) throws InterruptedException {
+        pollUntil(() -> {
+            time.sleep(advanceTimeMs);
+            return !sentResponses.isEmpty();
+        });
+    }
+
     void pollUntilResponse() throws InterruptedException {
         pollUntil(() -> !sentResponses.isEmpty());
     }

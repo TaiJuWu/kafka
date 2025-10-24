@@ -161,7 +161,13 @@ public final class AddVoterHandler {
                     leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, "", Optional.of(state));
                     // Send API_VERSIONS request to new voter to discover their supported kraft.version range
                     long sendTime = time.milliseconds();
-                    logger.debug("Send ApiVersionRequest from deffered event");
+                    timer.update(sendTime);
+                    // Due to delay send Api request, we need check here again
+                    if (timer.isExpired()) {
+                        leaderState.resetAddVoterHandlerState(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time", Optional.empty());
+                        state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time"));
+                    }
+
                     OptionalLong timeout = requestSender.send(
                             voterEndpoints
                                     .address(requestSender.listenerName())
@@ -179,12 +185,16 @@ public final class AddVoterHandler {
                             sendTime
                     );
                     if (timeout.isEmpty()) {
+                        leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, "", Optional.empty());
                         state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT,
                                 String.format("New voter %s is not ready to receive requests", voterKey)));
                     }
-                }, () -> state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT, "Request timeout kkkk"))
+                }, () -> {
+                    leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, "", Optional.empty());
+                    state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time"));
+                }
                 ),
-                timer.remainingMs() // apiVersionResponse timeout
+                timer // apiVersionResponse timeout
         );
         deadlineTaskManager.poll(currentTimeMs);
 

@@ -110,7 +110,7 @@ public class KafkaDeadlineEventQueue<T> {
             return "Event={" +
                     "timer=" + timer +
                     ", tag=" + tag +
-                    ", playload=" + payload +
+                    ", payload=" + payload +
                     "}";
         }
 

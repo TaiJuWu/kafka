@@ -18,6 +18,7 @@
 package org.apache.kafka.raft.internals;
 
 import org.apache.kafka.common.utils.Time;
+import org.apache.kafka.common.utils.Timer;
 import org.apache.kafka.queue.KafkaDeadlineEventQueue;
 
 import java.util.Optional;
@@ -31,8 +32,8 @@ public class DeadlineTaskManager {
         this.time = time;
     }
 
-    public void addTask(String taskName, DeferredTask task, long timeoutMs) {
-        eventQueue.enqueue(new KafkaDeadlineEventQueue.Event<>(time.timer(timeoutMs), taskName, task));
+    public void addTask(String taskName, DeferredTask task, Timer timeout) {
+        eventQueue.enqueue(new KafkaDeadlineEventQueue.Event<>(timeout, taskName, task));
     }
 
     public void poll(long currentTimeMs) {
