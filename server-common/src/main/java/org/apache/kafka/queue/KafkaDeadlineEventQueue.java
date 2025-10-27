@@ -25,17 +25,7 @@ import java.util.concurrent.PriorityBlockingQueue;
 import java.util.function.Consumer;
 
 public class KafkaDeadlineEventQueue<T> {
-    private final Queue<Event<T>> eventQueue;
-    private final Optional<Consumer<T>> timeoutOperation;
-
-    public KafkaDeadlineEventQueue() {
-        this(null);
-    }
-
-    public KafkaDeadlineEventQueue(Consumer<T> timeoutOperation) {
-        this.eventQueue = new PriorityBlockingQueue<>();
-        this.timeoutOperation = Optional.ofNullable(timeoutOperation);
-    }
+    private final Queue<Event<T>> eventQueue = new PriorityBlockingQueue<>();
 
     public Queue<Event<T>> eventQueue() {
         return eventQueue;
@@ -46,7 +36,11 @@ public class KafkaDeadlineEventQueue<T> {
     }
 
     public Optional<T> dequeue(long currentTimeMs) {
-        checkTimeout(currentTimeMs);
+        return dequeue(currentTimeMs, null);
+    }
+
+    public Optional<T> dequeue(long currentTimeMs, Consumer<T> consumer) {
+        checkTimeout(currentTimeMs, consumer);
         Event<T> event = eventQueue.poll();
         return Optional.ofNullable(event == null ? null : event.get());
     }
@@ -55,7 +49,7 @@ public class KafkaDeadlineEventQueue<T> {
         return eventQueue.isEmpty();
     }
 
-    public void checkTimeout(long currentTimeMs) {
+    public void checkTimeout(long currentTimeMs, Consumer<T> consumer) {
         while (true) {
             Event<T> event = eventQueue.peek();
 
@@ -63,7 +57,9 @@ public class KafkaDeadlineEventQueue<T> {
                 event.timer.update(currentTimeMs);
                 if (event.timer.isExpired()) {
                     eventQueue.poll();
-                    timeoutOperation.ifPresent(tConsumer -> tConsumer.accept(event.get()));
+                    if (consumer != null) {
+                        consumer.accept(event.get());
+                    }
                     continue;
                 }
             }

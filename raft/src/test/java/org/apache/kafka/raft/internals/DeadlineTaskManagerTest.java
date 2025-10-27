@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class DeadlineTaskManagerTest {
 
     Time mockTime = new MockTime();
-    KafkaDeadlineEventQueue<DeadlineTaskManager.DeferredTask> eventQueue = new KafkaDeadlineEventQueue<>(deferredTask -> deferredTask.onTimeout().run());
+    KafkaDeadlineEventQueue<DeadlineTaskManager.DeferredTask> eventQueue = new KafkaDeadlineEventQueue<>();
     DeadlineTaskManager deadlineTaskManager = new DeadlineTaskManager(mockTime, eventQueue);
 
     @Test

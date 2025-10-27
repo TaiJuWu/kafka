@@ -97,20 +97,20 @@ public class KafkaDeadlineEventQueueTest {
     @Test
     public void testTimeoutConsumerWithDequeue() {
         final AtomicBoolean isConsumered = new AtomicBoolean(false);
-        this.queue = new KafkaDeadlineEventQueue<>(c -> isConsumered.set(true));
+        this.queue = new KafkaDeadlineEventQueue<>();
         queue.enqueue(new Event<>(mockTime.timer(100), "insert no deadline task", 100L));
         mockTime.sleep(100);
-        queue.dequeue(mockTime.milliseconds());
+        queue.dequeue(mockTime.milliseconds(), c -> isConsumered.set(true));
         assertEquals(true, isConsumered.get());
     }
 
     @Test
     public void testTimeoutConsumerWithCheckTimeout() {
         final AtomicBoolean isConsumered = new AtomicBoolean(false);
-        this.queue = new KafkaDeadlineEventQueue<>(c -> isConsumered.set(true));
+        this.queue = new KafkaDeadlineEventQueue<>();
         queue.enqueue(new Event<>(mockTime.timer(100), "insert no deadline task", 100L));
         mockTime.sleep(100);
-        queue.checkTimeout(mockTime.milliseconds());
+        queue.checkTimeout(mockTime.milliseconds(), c -> isConsumered.set(true));
         assertEquals(true, isConsumered.get());
     }
 }

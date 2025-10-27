@@ -67,7 +67,6 @@ import org.apache.kafka.common.utils.BufferSupplier;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
-import org.apache.kafka.queue.KafkaDeadlineEventQueue;
 import org.apache.kafka.raft.errors.NotLeaderException;
 import org.apache.kafka.raft.internals.AddVoterHandler;
 import org.apache.kafka.raft.internals.BatchAccumulator;
@@ -196,7 +195,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
     private final RaftMessageQueue messageQueue;
     private final QuorumConfig quorumConfig;
     private final RaftMetadataLogCleanerManager snapshotCleaner;
-    private final KafkaDeadlineEventQueue<DeadlineTaskManager.DeferredTask> eventQueue;
+    private final DeadlineTaskManager deadlineTaskManager;
 
     private final Map<Listener<T>, ListenerContext> listenerContexts = new IdentityHashMap<>();
     private final ConcurrentLinkedQueue<Registration<T>> pendingRegistrations = new ConcurrentLinkedQueue<>();
@@ -316,7 +315,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
         this.random = random;
         this.quorumConfig = quorumConfig;
         this.snapshotCleaner = new RaftMetadataLogCleanerManager(logger, time, 60000, log::maybeClean);
-        this.eventQueue = new KafkaDeadlineEventQueue<>(deferredTask -> deferredTask.onTimeout().run());
+        this.deadlineTaskManager = new DeadlineTaskManager(time);
 
         if (!bootstrapServers.isEmpty()) {
             // generate Node objects from network addresses by using decreasing negative ids
@@ -589,7 +588,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
             time,
             logContext,
             quorumConfig.requestTimeoutMs(),
-            eventQueue
+            deadlineTaskManager
         );
 
         // Specialized remove voter handler
@@ -3175,7 +3174,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
 
     private long pollLeader(long currentTimeMs) {
         LeaderState<T> state = quorum.leaderStateOrThrow();
-        eventQueue.checkTimeout(currentTimeMs);
+//        deadlineTaskManager.checkTimeout(currentTimeMs); // FIXME: Do we need this check? But it impact performance
         maybeFireLeaderChange(state);
 
         long timeUntilCheckQuorumExpires = state.timeUntilCheckQuorumExpires(currentTimeMs);

@@ -26,7 +26,6 @@ import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
-import org.apache.kafka.queue.KafkaDeadlineEventQueue;
 import org.apache.kafka.raft.Endpoints;
 import org.apache.kafka.raft.LeaderState;
 import org.apache.kafka.raft.LogOffsetMetadata;
@@ -73,7 +72,6 @@ public final class AddVoterHandler {
     private final Time time;
     private final Logger logger;
     private final long requestTimeoutConfig;
-    private final KafkaDeadlineEventQueue<DeadlineTaskManager.DeferredTask> eventQueue;
     private final DeadlineTaskManager deadlineTaskManager;
 
     public AddVoterHandler(
@@ -82,15 +80,14 @@ public final class AddVoterHandler {
         Time time,
         LogContext logContext,
         long requestTimeoutConfig,
-        KafkaDeadlineEventQueue<DeadlineTaskManager.DeferredTask> eventQueue
+        DeadlineTaskManager deadlineTaskManager
     ) {
         this.partitionState = partitionState;
         this.requestSender = requestSender;
         this.time = time;
         this.logger = logContext.logger(AddVoterHandler.class);
         this.requestTimeoutConfig = requestTimeoutConfig;
-        this.eventQueue = eventQueue;
-        this.deadlineTaskManager = new DeadlineTaskManager(time, this.eventQueue);
+        this.deadlineTaskManager = deadlineTaskManager;
     }
 
     public CompletableFuture<AddRaftVoterResponseData> handleAddVoterRequest(
@@ -155,15 +152,17 @@ public final class AddVoterHandler {
                 ackWhenCommitted,
                 timer // the time need to finish apiRequest and voterResponse
         );
+        logger.debug("state hash code=" + state.hashCode());
 
         deadlineTaskManager.addTask("deffer addVoterRequest",
                 new DeadlineTaskManager.DeferredTask(timer.deadlineMs(), () -> {
-                    leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, "", Optional.of(state));
+                    leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, null, Optional.of(state));
                     // Send API_VERSIONS request to new voter to discover their supported kraft.version range
                     long sendTime = time.milliseconds();
                     timer.update(sendTime);
                     // Due to delay send Api request, we need check here again
                     if (timer.isExpired()) {
+                        logger.debug("1-Reset to timeout from handleAddVoterReuqest");
                         leaderState.resetAddVoterHandlerState(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time", Optional.empty());
                         state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time"));
                     }
@@ -185,18 +184,24 @@ public final class AddVoterHandler {
                             sendTime
                     );
                     if (timeout.isEmpty()) {
-                        leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, "", Optional.empty());
+                        logger.debug("2-Reset to timeout from handleAddVoterReuqest");
+                        leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, null, Optional.empty());
                         state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT,
                                 String.format("New voter %s is not ready to receive requests", voterKey)));
                     }
                 }, () -> {
-                    leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, "", Optional.empty());
+                    logger.debug("AddVoterHandleRequest");
+                    leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, null, Optional.empty());
                     state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time"));
                 }
                 ),
-                timer // apiVersionResponse timeout
+                timer // send ApiRequest and apiVersionResponse timeout
         );
-        deadlineTaskManager.poll(currentTimeMs);
+
+        if (!deadlineTaskManager.isProcess()) {
+            deadlineTaskManager.poll(currentTimeMs);
+        }
+//        deadlineTaskManager.poll(currentTimeMs);
 
         return state.future();
     }
@@ -350,7 +355,10 @@ public final class AddVoterHandler {
                 current.lastOffset().ifPresent(lastOffset -> {
                     if (highWatermark.offset() > lastOffset) {
                         // VotersRecord with the added voter was committed; complete the RPC
+                        logger.debug("4-reset from highWatermarkUpdated");
                         leaderState.resetAddVoterHandlerState(Errors.NONE, null, Optional.empty());
+                        long currentTimeMs = time.milliseconds();
+                        deadlineTaskManager.checkTimeout(currentTimeMs);
                         deadlineTaskManager.poll(time.milliseconds());
                     }
                 })
