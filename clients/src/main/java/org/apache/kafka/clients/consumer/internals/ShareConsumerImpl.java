@@ -56,6 +56,7 @@ import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.GroupAuthorizationException;
+import org.apache.kafka.common.errors.GroupMaxSizeReachedException;
 import org.apache.kafka.common.errors.InterruptException;
 import org.apache.kafka.common.errors.InvalidGroupIdException;
 import org.apache.kafka.common.errors.InvalidTopicException;
@@ -566,6 +567,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
     @SuppressWarnings("unchecked")
     public synchronized ConsumerRecords<K, V> poll(final Duration timeout) {
         Timer timer = time.timer(timeout);
+        GroupMaxSizeReachedException groupMaxSizeReachedException = null;
 
         acquireAndEnsureOpen();
         try {
@@ -614,6 +616,9 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
             // the exception because the fetched records would then not be returned to the caller
             try {
                 handleCompletedAcknowledgements(false);
+            } catch (GroupMaxSizeReachedException e) {
+                log.warn("Exception thrown in acknowledgement commit callback", e);
+                throw e;
             } catch (Throwable t) {
                 log.warn("Exception thrown in acknowledgement commit callback", t);
             }

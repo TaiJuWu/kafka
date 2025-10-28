@@ -24,6 +24,7 @@ import org.apache.kafka.clients.admin.AlterConfigsOptions;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DescribeShareGroupsOptions;
+import org.apache.kafka.clients.admin.DescribeShareGroupsResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.RecordsToDelete;
 import org.apache.kafka.clients.admin.ShareMemberDescription;
@@ -2337,6 +2338,7 @@ public class ShareConsumerTest {
         brokers = 1,
         serverProperties = {
             @ClusterConfigProperty(key = "auto.create.topics.enable", value = "false"),
+//            @ClusterConfigProperty(key = "heartbeat.interval.ms", value = "100"),
             @ClusterConfigProperty(key = "group.coordinator.rebalance.protocols", value = "classic,consumer,share"),
             @ClusterConfigProperty(key = "group.share.enable", value = "true"),
             @ClusterConfigProperty(key = "group.share.partition.max.record.locks", value = "10000"),
@@ -2364,19 +2366,26 @@ public class ShareConsumerTest {
         shareConsumer2.poll(Duration.ofMillis(5000));
         shareConsumer3.poll(Duration.ofMillis(5000));
 
+        try (var admin = cluster.admin()) {
+            TestUtils.waitForCondition(() -> {
+                DescribeShareGroupsResult result = admin.describeShareGroups(List.of("group1"));
+                return result.all().get().get("group1").members().size() == 3;
+            }, 30000, 200L, () -> "The number of share consumer should be 3.");
+        }
+
         ShareConsumer<byte[], byte[]> shareConsumer4 = createShareConsumer("group1");
         shareConsumer4.subscribe(Set.of(tp.topic()));
 
         TestUtils.waitForCondition(() -> {
             try {
-                shareConsumer4.poll(Duration.ofMillis(5000));
+                shareConsumer4.poll(Duration.ofMillis(2000));
             } catch (GroupMaxSizeReachedException e) {
                 return true;
             } catch (Exception e) {
                 return false;
             }
             return false;
-        }, 30000, 200L, () -> "The 4th consumer was not kicked out of the group");
+        }, 30000, 100L, () -> "The 4th consumer was not kicked out of the group");
 
         shareConsumer1.close();
         shareConsumer2.close();
