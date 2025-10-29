@@ -67,13 +67,23 @@ import java.util.concurrent.CompletableFuture;
  * immediately for 1., 2. and 7., KRaft can wait with a timeout until those invariants are true.
  */
 public final class AddVoterHandler {
+    enum AddVoterStates {
+        INIT,
+        WAIT_KRAFT_VERSION,
+        WAITING_ADD_VOTER_REQUEST,
+        SENDING_API_REQUEST,
+        WAIT_API_RESPONSE,
+        COMMITTING_VOTER,
+        COMMITTED_VOTER
+    }
+
     private final KRaftControlRecordStateMachine partitionState;
     private final RequestSender requestSender;
     private final Time time;
     private final Logger logger;
     private final long requestTimeoutConfig;
     private final DeadlineTaskManager deadlineTaskManager;
-    private boolean isProcessing = false;
+    private AddVoterStateMachine addVoterStateMachine;
 
     public AddVoterHandler(
         KRaftControlRecordStateMachine partitionState,
@@ -89,6 +99,7 @@ public final class AddVoterHandler {
         this.logger = logContext.logger(AddVoterHandler.class);
         this.requestTimeoutConfig = requestTimeoutConfig;
         this.deadlineTaskManager = deadlineTaskManager;
+        this.addVoterStateMachine = new AddVoterStateMachine(new LogContext("addVoterStateMachine-test"));
     }
 
     public CompletableFuture<AddRaftVoterResponseData> handleAddVoterRequest(
@@ -114,6 +125,8 @@ public final class AddVoterHandler {
                 )
             );
         }
+
+        addVoterStateMachine.transitionTo(AddVoterStates.WAITING_ADD_VOTER_REQUEST);
 
         Optional<LogHistory.Entry<VoterSet>> votersEntry = partitionState.lastVoterSetEntry();
         // Check that the new voter id is not part of the current voter set
@@ -167,7 +180,7 @@ public final class AddVoterHandler {
                         leaderState.resetAddVoterHandlerState(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time", Optional.empty());
                         state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time"));
                     }
-
+                    addVoterStateMachine.transitionTo(AddVoterStates.SENDING_API_REQUEST);
                     OptionalLong timeout = requestSender.send(
                             voterEndpoints
                                     .address(requestSender.listenerName())
@@ -190,10 +203,10 @@ public final class AddVoterHandler {
                         state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT,
                                 String.format("New voter %s is not ready to receive requests", voterKey)));
                     }
-                    isProcessing = true;
+                    addVoterStateMachine.transitionTo(AddVoterStates.WAIT_API_RESPONSE);
                 }, () -> {
                     logger.debug("AddVoterHandleRequest");
-                    isProcessing = false;
+                    addVoterStateMachine.transitionTo(AddVoterStates.WAITING_ADD_VOTER_REQUEST);
                     leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, null, Optional.empty());
                     state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time"));
                 }
@@ -201,7 +214,7 @@ public final class AddVoterHandler {
                 timer // send ApiRequest and apiVersionResponse timeout
         );
 
-        if (!isProcessing) {
+        if (addVoterStateMachine.current() == AddVoterStates.WAITING_ADD_VOTER_REQUEST) {
             deadlineTaskManager.poll(currentTimeMs);
         }
 
@@ -215,14 +228,12 @@ public final class AddVoterHandler {
         Optional<ApiVersionsResponseData.SupportedFeatureKey> supportedKraftVersions,
         long currentTimeMs
     ) {
-        logger.debug("handleApiVersionsResponse from AddVoterHandle");
         Optional<AddVoterHandlerState> handlerState = leaderState.addVoterHandlerState();
         if (handlerState.isEmpty()) {
             // There are no pending add operation just ignore the api response
-            isProcessing = false;
+            addVoterStateMachine.transitionTo(AddVoterStates.WAITING_ADD_VOTER_REQUEST);
             return true;
         }
-        logger.debug("ZZZZZ");
         // Check that the API_VERSIONS response matches the id of the voter getting added
         AddVoterHandlerState current = handlerState.get();
         if (!current.expectingApiResponse(source.id())) {
@@ -232,7 +243,7 @@ public final class AddVoterHandler {
                 current.voterKey(),
                 current.lastOffset()
             );
-            isProcessing = false;
+            addVoterStateMachine.transitionTo(AddVoterStates.WAITING_ADD_VOTER_REQUEST);
             return true;
         }
 
@@ -253,7 +264,7 @@ public final class AddVoterHandler {
                 ),
                 Optional.empty()
             );
-            isProcessing = false;
+            addVoterStateMachine.transitionTo(AddVoterStates.WAITING_ADD_VOTER_REQUEST);
             return false;
         }
 
@@ -288,7 +299,7 @@ public final class AddVoterHandler {
                 ),
                 Optional.empty()
             );
-            isProcessing = false;
+            addVoterStateMachine.transitionTo(AddVoterStates.WAIT_KRAFT_VERSION);
             return true;
         }
 
@@ -309,7 +320,7 @@ public final class AddVoterHandler {
                 ),
                 Optional.empty()
             );
-            isProcessing = false;
+            addVoterStateMachine.transitionTo(AddVoterStates.WAITING_ADD_VOTER_REQUEST);
             return true;
         }
 
@@ -336,20 +347,24 @@ public final class AddVoterHandler {
                 )
             );
         current.setLastOffset(leaderState.appendVotersRecord(newVoters, currentTimeMs));
-        if (!current.ackWhenCommitted()) {
+        if (current.ackWhenCommitted()) {
+            addVoterStateMachine.transitionTo(AddVoterStates.COMMITTING_VOTER);
+        } else {
             // complete the future to send response, but do not reset the state,
             // since the new voter set is not yet committed
             if (hasUnCommitedVoter(leaderState)) {
                 // If the state need to be acked immediately, it is disallowed when there is any uncommitted voter on leader
+                addVoterStateMachine.transitionTo(AddVoterStates.WAITING_ADD_VOTER_REQUEST);
                 current.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT,
                         "Request timed out waiting for leader to handle previous voter change request"));
             } else {
                 // complete the future to send response, but do not reset the state,
                 // since the new voter set is not yet committed
+                addVoterStateMachine.transitionTo(AddVoterStates.COMMITTING_VOTER);
                 current.future().complete(RaftUtil.addVoterResponse(Errors.NONE, null));
             }
         }
-        isProcessing = false;
+
         return true;
     }
 
@@ -358,12 +373,13 @@ public final class AddVoterHandler {
             leaderState.highWatermark().ifPresent(highWatermark ->
                 current.lastOffset().ifPresent(lastOffset -> {
                     if (highWatermark.offset() > lastOffset) {
+                        addVoterStateMachine.transitionTo(AddVoterStates.COMMITTED_VOTER);
                         // VotersRecord with the added voter was committed; complete the RPC
-                        logger.debug("4-reset from highWatermarkUpdated");
                         leaderState.resetAddVoterHandlerState(Errors.NONE, null, Optional.empty());
                         long currentTimeMs = time.milliseconds();
                         deadlineTaskManager.checkTimeout(currentTimeMs);
                         deadlineTaskManager.poll(time.milliseconds());
+                        addVoterStateMachine.transitionTo(AddVoterStates.WAITING_ADD_VOTER_REQUEST);
                     }
                 })
             )
@@ -391,5 +407,47 @@ public final class AddVoterHandler {
         }
 
         return lastVoterSet.get().offset() >= highWatermark.get();
+    }
+
+    private static class AddVoterStateMachine {
+        private AddVoterStates state = AddVoterStates.INIT;
+        private final Logger log;
+
+        AddVoterStateMachine(Logger log) {
+            this.log = log;
+        }
+
+        AddVoterStateMachine(LogContext logContext) {
+            this.log = logContext.logger(getClass());
+        }
+
+        public AddVoterStates current() {
+            return state;
+        }
+
+        public void transitionTo(AddVoterStates newState) {
+            if (!isValidTransition(state, newState)) {
+                throw new IllegalStateException("Invalid transition from " + state + " to " + newState);
+            }
+            log.debug("State transition from {} to {}", state, newState);
+            this.state = newState;
+        }
+
+        private boolean isValidTransition(AddVoterStates oldState, AddVoterStates newState) {
+            return switch (oldState) {
+                case INIT -> newState == AddVoterStates.WAIT_KRAFT_VERSION
+                        || newState == AddVoterStates.WAITING_ADD_VOTER_REQUEST; // FIXME: need to be fix.
+                case WAITING_ADD_VOTER_REQUEST -> newState == AddVoterStates.SENDING_API_REQUEST
+                        || newState == AddVoterStates.WAIT_API_RESPONSE;
+                case SENDING_API_REQUEST -> newState == AddVoterStates.WAIT_API_RESPONSE
+                        || newState == AddVoterStates.WAITING_ADD_VOTER_REQUEST;
+                case WAIT_API_RESPONSE -> newState == AddVoterStates.COMMITTING_VOTER
+                        || newState == AddVoterStates.WAITING_ADD_VOTER_REQUEST;
+                case COMMITTING_VOTER -> newState == AddVoterStates.COMMITTED_VOTER
+                        || newState == AddVoterStates.WAITING_ADD_VOTER_REQUEST;
+                case COMMITTED_VOTER -> newState == AddVoterStates.WAITING_ADD_VOTER_REQUEST;
+                default -> false;
+            };
+        }
     }
 }
