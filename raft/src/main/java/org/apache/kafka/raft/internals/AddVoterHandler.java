@@ -73,6 +73,7 @@ public final class AddVoterHandler {
     private final Logger logger;
     private final long requestTimeoutConfig;
     private final DeadlineTaskManager deadlineTaskManager;
+    private boolean isProcessing = false;
 
     public AddVoterHandler(
         KRaftControlRecordStateMachine partitionState,
@@ -189,8 +190,10 @@ public final class AddVoterHandler {
                         state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT,
                                 String.format("New voter %s is not ready to receive requests", voterKey)));
                     }
+                    isProcessing = true;
                 }, () -> {
                     logger.debug("AddVoterHandleRequest");
+                    isProcessing = false;
                     leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, null, Optional.empty());
                     state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time"));
                 }
@@ -198,10 +201,9 @@ public final class AddVoterHandler {
                 timer // send ApiRequest and apiVersionResponse timeout
         );
 
-        if (!deadlineTaskManager.isProcess()) {
+        if (!isProcessing) {
             deadlineTaskManager.poll(currentTimeMs);
         }
-//        deadlineTaskManager.poll(currentTimeMs);
 
         return state.future();
     }
@@ -217,6 +219,7 @@ public final class AddVoterHandler {
         Optional<AddVoterHandlerState> handlerState = leaderState.addVoterHandlerState();
         if (handlerState.isEmpty()) {
             // There are no pending add operation just ignore the api response
+            isProcessing = false;
             return true;
         }
         logger.debug("ZZZZZ");
@@ -229,7 +232,7 @@ public final class AddVoterHandler {
                 current.voterKey(),
                 current.lastOffset()
             );
-
+            isProcessing = false;
             return true;
         }
 
@@ -250,7 +253,7 @@ public final class AddVoterHandler {
                 ),
                 Optional.empty()
             );
-
+            isProcessing = false;
             return false;
         }
 
@@ -285,7 +288,7 @@ public final class AddVoterHandler {
                 ),
                 Optional.empty()
             );
-
+            isProcessing = false;
             return true;
         }
 
@@ -306,7 +309,7 @@ public final class AddVoterHandler {
                 ),
                 Optional.empty()
             );
-
+            isProcessing = false;
             return true;
         }
 
@@ -346,6 +349,7 @@ public final class AddVoterHandler {
                 current.future().complete(RaftUtil.addVoterResponse(Errors.NONE, null));
             }
         }
+        isProcessing = false;
         return true;
     }
 

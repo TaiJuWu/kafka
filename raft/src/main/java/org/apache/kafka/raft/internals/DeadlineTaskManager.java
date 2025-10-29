@@ -26,7 +26,6 @@ import java.util.Optional;
 public class DeadlineTaskManager {
     private final KafkaDeadlineEventQueue<DeferredTask> eventQueue;
     private final Time time;
-    private boolean isProcess = false;
 
     public DeadlineTaskManager(Time time) {
         this(time, new KafkaDeadlineEventQueue<>());
@@ -42,34 +41,12 @@ public class DeadlineTaskManager {
     }
 
     public void poll(long currentTimeMs) {
-        Optional<DeferredTask> taskOpt = eventQueue.dequeue(currentTimeMs, event -> {
-            isProcess = true;
-            checkTimeout(currentTimeMs);
-            isProcess = false;
-        });
-        taskOpt.ifPresent(deferredTask -> {
-            isProcess = true;
-            try {
-                deferredTask.action.run();
-            } finally {
-                isProcess = false;
-            }
-        });
+        Optional<DeferredTask> taskOpt = eventQueue.dequeue(currentTimeMs, event -> checkTimeout(currentTimeMs));
+        taskOpt.ifPresent(deferredTask -> deferredTask.action.run());
     }
 
     public void checkTimeout(long current) {
-        eventQueue.checkTimeout(current, event -> {
-            isProcess = true;
-            try {
-                event.onTimeout.run();
-            } finally {
-                isProcess = false;
-            }
-        });
-    }
-
-    public boolean isProcess() {
-        return isProcess;
+        eventQueue.checkTimeout(current, event -> event.onTimeout.run());
     }
 
     public record DeferredTask(long deadlineMs, Runnable action, Runnable onTimeout) { }

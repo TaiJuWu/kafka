@@ -38,12 +38,8 @@ public class DeadlineTaskManagerTest {
         AtomicBoolean timeout = new AtomicBoolean(false);
 
         deadlineTaskManager.addTask("test Deadline", new DeadlineTaskManager.DeferredTask(
-                1000, () -> { }, () -> {
-                    System.err.println("timeout callback");
-            timeout.set(true);
-        }
-        ), mockTime.timer(1000));
-        mockTime.sleep(1000);
+                1000, () -> { }, () -> timeout.set(true)), mockTime.timer(1000));
+        mockTime.sleep(1001);
         deadlineTaskManager.poll(mockTime.milliseconds());
         assertTrue(timeout.get());
     }
