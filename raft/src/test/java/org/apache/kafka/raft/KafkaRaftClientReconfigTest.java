@@ -628,7 +628,6 @@ public class KafkaRaftClientReconfigTest {
             Map.of(context.channel.listenerName(), anotherNewAddress)
         );
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, anotherNewVoter, anotherNewListeners));
-        context.time.sleep(context.requestTimeoutMs());
         context.pollUntilResponse();
         context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
@@ -667,7 +666,8 @@ public class KafkaRaftClientReconfigTest {
 
         // Attempt to add new voter to the quorum
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, newVoter, newListeners));
-        context.pollUntilAndAdvanceTime(context.requestTimeoutMs() / 3);
+
+        context.pollUntilResponse();
         context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
 
@@ -1647,7 +1647,8 @@ public class KafkaRaftClientReconfigTest {
             Map.of(context.channel.listenerName(), newAddress)
         );
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, newVoter, newListeners));
-        context.pollUntilAndAdvanceTime(context.requestTimeoutMs() / 3);
+        context.time.sleep(context.requestTimeoutMs());
+        context.pollUntilResponse();
         context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
 

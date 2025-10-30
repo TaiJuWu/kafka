@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.kafka.raft.internals;
 
 import org.apache.kafka.common.utils.Time;
@@ -23,6 +22,10 @@ import org.apache.kafka.queue.KafkaDeadlineEventQueue;
 
 import java.util.Optional;
 
+/**
+ * Manage deferred tasks that should execute once before their deadline,
+ * or trigger a timeout callback if missed.
+ */
 public class DeadlineTaskManager {
     private final KafkaDeadlineEventQueue<DeadlineTask> eventQueue;
     private final Time time;
@@ -32,21 +35,40 @@ public class DeadlineTaskManager {
     }
 
     public DeadlineTaskManager(Time time, KafkaDeadlineEventQueue<DeadlineTask> eventQueue) {
-        this.eventQueue = eventQueue;
         this.time = time;
+        this.eventQueue = eventQueue;
     }
 
-    public void addTask(String taskName, DeadlineTask task, Timer timeout) {
-        eventQueue.enqueue(new KafkaDeadlineEventQueue.Event<>(timeout, taskName, task));
+    /**
+     * Add a new one-shot task.
+     */
+    public void addTask(String tag, DeadlineTask task, Timer timer) {
+        eventQueue.enqueue(new KafkaDeadlineEventQueue.Event<>(timer, tag, task));
     }
 
-    public void poll(long currentTimeMs) {
-        Optional<DeadlineTask> taskOpt = eventQueue.dequeue(currentTimeMs, event -> checkTimeout(currentTimeMs));
-        taskOpt.ifPresent(deferredTask -> deferredTask.action.run());
+    /**
+     * Poll once:
+     * - If deadline not reached → run action (normal path)
+     * - If deadline reached or passed → run onTimeout (timeout path)
+     *
+     * After execution, task is automatically removed.
+     */
+    public void poll(long now) {
+        Optional<DeadlineTask> taskOpt = eventQueue.dequeue(now, null);
+        taskOpt.ifPresent(task -> {
+            if (task.deadlineMs <= now) {
+                task.onTimeout.run();
+            } else {
+                task.action.run();
+            }
+        });
     }
 
-    public void checkTimeout(long current) {
-        eventQueue.checkTimeout(current, event -> event.onTimeout.run());
+    /**
+     * Explicitly trigger onTimeout for all expired tasks.
+     */
+    public void checkTimeout(long now) {
+        eventQueue.checkTimeout(now, task -> task.onTimeout.run());
     }
 
     public int size() {
