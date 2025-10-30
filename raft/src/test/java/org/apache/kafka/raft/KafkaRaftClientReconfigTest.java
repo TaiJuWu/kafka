@@ -629,7 +629,7 @@ public class KafkaRaftClientReconfigTest {
         );
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, anotherNewVoter, anotherNewListeners));
         context.time.sleep(context.requestTimeoutMs());
-        context.deadlineTaskManager().checkTimeout(context.time.milliseconds());
+        context.pollUntilResponse();
         context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
 
@@ -667,8 +667,7 @@ public class KafkaRaftClientReconfigTest {
 
         // Attempt to add new voter to the quorum
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, newVoter, newListeners));
-        context.time.sleep(context.requestTimeoutMs());
-        context.deadlineTaskManager().poll(context.time.milliseconds());
+        context.pollUntilAndAdvanceTime(context.requestTimeoutMs() / 3);
         context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
 
@@ -1114,7 +1113,7 @@ public class KafkaRaftClientReconfigTest {
                 Map.of(context.channel.listenerName(), anotherNewAddress)
         );
 
-        context.deliverRequest(context.addVoterRequest(200, anotherNewVoter, anotherNewListeners));
+        context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, anotherNewVoter, anotherNewListeners));
 
         // Attempting to add another voter should be pending
         ReplicaKey thirdNewVoter = replicaKey(local.id() + 4, true);
@@ -1126,8 +1125,8 @@ public class KafkaRaftClientReconfigTest {
                 Map.of(context.channel.listenerName(), thirdNewAddress)
         );
 
-        context.deliverRequest(context.addVoterRequest(100, thirdNewVoter, thirdNewListeners));
-        assertEquals(2, context.deadlineTaskManager().size());
+        context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, thirdNewVoter, thirdNewListeners));
+        context.pollUntil(() -> context.deadlineTaskManager().size() == 2);
     }
 
     @Test
@@ -1648,9 +1647,7 @@ public class KafkaRaftClientReconfigTest {
             Map.of(context.channel.listenerName(), newAddress)
         );
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, newVoter, newListeners));
-        context.time.sleep(context.requestTimeoutMs());
-        context.deadlineTaskManager().checkTimeout(context.time.milliseconds());
-        context.pollUntilResponse();
+        context.pollUntilAndAdvanceTime(context.requestTimeoutMs() / 3);
         context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
 

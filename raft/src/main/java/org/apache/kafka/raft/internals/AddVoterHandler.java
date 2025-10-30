@@ -158,7 +158,7 @@ public final class AddVoterHandler {
             return CompletableFuture.completedFuture(
                     RaftUtil.addVoterResponse(
                             Errors.REQUEST_TIMED_OUT,
-                            "Request timeout"
+                            "Request timeout from AddVoterHandler#handleAddVoterRequest"
                     )
             );
         }
@@ -169,17 +169,19 @@ public final class AddVoterHandler {
                 ackWhenCommitted,
                 timer // the time need to finish apiRequest and voterResponse
         );
-        logger.debug("state hash code=" + state.hashCode());
 
-        deadlineTaskManager.addTask("deffer addVoterRequest",
+        String taskName = "deffer addVoterRequest " + voterKey;
+        logger.debug("DeadlineTask Manager add deadline={} task='{}' ", timer.deadlineMs(), taskName);
+
+        deadlineTaskManager.addTask(taskName,
                 new DeadlineTaskManager.DeadlineTask(timer.deadlineMs(), () -> {
                     leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, null, Optional.of(state));
                     // Send API_VERSIONS request to new voter to discover their supported kraft.version range
                     long sendTime = time.milliseconds();
+                    logger.debug("Execute task='{}' at timestamp={}", taskName, sendTime);
                     timer.update(sendTime);
                     // Due to delay send Api request, we need check here again
                     if (timer.isExpired()) {
-                        logger.debug("1-Reset to timeout from handleAddVoterReuqest");
                         leaderState.resetAddVoterHandlerState(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time", Optional.empty());
                         state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time"));
                     }
@@ -201,14 +203,12 @@ public final class AddVoterHandler {
                             sendTime
                     );
                     if (timeout.isEmpty()) {
-                        logger.debug("2-Reset to timeout from handleAddVoterReuqest");
                         leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, null, Optional.empty());
                         state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT,
                                 String.format("New voter %s is not ready to receive requests", voterKey)));
                     }
                     addVoterStateMachine.transitionTo(AddVoterStates.WAIT_API_RESPONSE);
                 }, () -> {
-                    logger.debug("AddVoterHandleRequest");
                     addVoterStateMachine.transitionTo(AddVoterStates.WAITING_ADD_VOTER_REQUEST);
                     leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, null, Optional.empty());
                     state.future().complete(RaftUtil.addVoterResponse(Errors.REQUEST_TIMED_OUT, "AddVoter can not finish in time"));
