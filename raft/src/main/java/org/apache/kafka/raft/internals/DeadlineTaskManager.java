@@ -24,24 +24,24 @@ import org.apache.kafka.queue.KafkaDeadlineEventQueue;
 import java.util.Optional;
 
 public class DeadlineTaskManager {
-    private final KafkaDeadlineEventQueue<DeferredTask> eventQueue;
+    private final KafkaDeadlineEventQueue<DeadlineTask> eventQueue;
     private final Time time;
 
     public DeadlineTaskManager(Time time) {
         this(time, new KafkaDeadlineEventQueue<>());
     }
 
-    public DeadlineTaskManager(Time time, KafkaDeadlineEventQueue<DeferredTask> eventQueue) {
+    public DeadlineTaskManager(Time time, KafkaDeadlineEventQueue<DeadlineTask> eventQueue) {
         this.eventQueue = eventQueue;
         this.time = time;
     }
 
-    public void addTask(String taskName, DeferredTask task, Timer timeout) {
+    public void addTask(String taskName, DeadlineTask task, Timer timeout) {
         eventQueue.enqueue(new KafkaDeadlineEventQueue.Event<>(timeout, taskName, task));
     }
 
     public void poll(long currentTimeMs) {
-        Optional<DeferredTask> taskOpt = eventQueue.dequeue(currentTimeMs, event -> checkTimeout(currentTimeMs));
+        Optional<DeadlineTask> taskOpt = eventQueue.dequeue(currentTimeMs, event -> checkTimeout(currentTimeMs));
         taskOpt.ifPresent(deferredTask -> deferredTask.action.run());
     }
 
@@ -49,5 +49,9 @@ public class DeadlineTaskManager {
         eventQueue.checkTimeout(current, event -> event.onTimeout.run());
     }
 
-    public record DeferredTask(long deadlineMs, Runnable action, Runnable onTimeout) { }
+    public int size() {
+        return eventQueue.size();
+    }
+
+    public record DeadlineTask(long deadlineMs, Runnable action, Runnable onTimeout) { }
 }

@@ -36,8 +36,10 @@ import org.apache.kafka.server.common.KRaftVersion;
 
 import org.slf4j.Logger;
 
+import java.util.HashSet;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -83,7 +85,8 @@ public final class AddVoterHandler {
     private final Logger logger;
     private final long requestTimeoutConfig;
     private final DeadlineTaskManager deadlineTaskManager;
-    private AddVoterStateMachine addVoterStateMachine;
+    private final AddVoterStateMachine addVoterStateMachine;
+    private final Set<String> executedTasks = new HashSet<>();
 
     public AddVoterHandler(
         KRaftControlRecordStateMachine partitionState,
@@ -169,7 +172,7 @@ public final class AddVoterHandler {
         logger.debug("state hash code=" + state.hashCode());
 
         deadlineTaskManager.addTask("deffer addVoterRequest",
-                new DeadlineTaskManager.DeferredTask(timer.deadlineMs(), () -> {
+                new DeadlineTaskManager.DeadlineTask(timer.deadlineMs(), () -> {
                     leaderState.resetAddVoterHandlerState(Errors.UNKNOWN_SERVER_ERROR, null, Optional.of(state));
                     // Send API_VERSIONS request to new voter to discover their supported kraft.version range
                     long sendTime = time.milliseconds();
@@ -407,6 +410,11 @@ public final class AddVoterHandler {
         }
 
         return lastVoterSet.get().offset() >= highWatermark.get();
+    }
+
+    // Visible for test
+    DeadlineTaskManager deadlineTaskManager() {
+        return deadlineTaskManager;
     }
 
     private static class AddVoterStateMachine {

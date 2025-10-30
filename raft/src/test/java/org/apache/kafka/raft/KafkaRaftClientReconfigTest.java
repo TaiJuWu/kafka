@@ -628,8 +628,8 @@ public class KafkaRaftClientReconfigTest {
             Map.of(context.channel.listenerName(), anotherNewAddress)
         );
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, anotherNewVoter, anotherNewListeners));
-
-        context.pollUntilAndAdvanceTime(context.requestTimeoutMs() / 3);
+        context.time.sleep(context.requestTimeoutMs());
+        context.deadlineTaskManager().checkTimeout(context.time.milliseconds());
         context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
 
@@ -667,7 +667,8 @@ public class KafkaRaftClientReconfigTest {
 
         // Attempt to add new voter to the quorum
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, newVoter, newListeners));
-        context.pollUntilAndAdvanceTime(context.requestTimeoutMs() / 3);
+        context.time.sleep(context.requestTimeoutMs());
+        context.deadlineTaskManager().poll(context.time.milliseconds());
         context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
 
@@ -1059,6 +1060,74 @@ public class KafkaRaftClientReconfigTest {
         assertEquals(2, getMetric(context.metrics, "number-of-voters").metricValue());
         assertNull(getMetric(context.metrics, "number-of-observers"));
         assertNull(getMetric(context.metrics, "uncommitted-voter-change"));
+    }
+
+    @Test
+    void testAddVoterWithPendingAddVoterSize() throws Exception {
+        ReplicaKey local = replicaKey(randomReplicaId(), true);
+        ReplicaKey follower = replicaKey(local.id() + 1, true);
+
+        VoterSet voters = VoterSetTest.voterSet(Stream.of(local, follower));
+
+        RaftClientTestContext context = new RaftClientTestContext.Builder(local.id(), local.directoryId().get())
+                .withKip853Rpc(true)
+                .withBootstrapSnapshot(Optional.of(voters))
+                .withUnknownLeader(3)
+                .build();
+
+        context.unattachedToLeader();
+        int epoch = context.currentEpoch();
+
+        ReplicaKey newVoter = replicaKey(local.id() + 2, true);
+        InetSocketAddress newAddress = InetSocketAddress.createUnresolved(
+                "localhost",
+                9990 + newVoter.id()
+        );
+        Endpoints newListeners = Endpoints.fromInetSocketAddresses(
+                Map.of(context.channel.listenerName(), newAddress)
+        );
+
+        // Establish a HWM and fence previous leaders
+        context.deliverRequest(
+                context.fetchRequest(epoch, follower, context.log.endOffset().offset(), epoch, 0)
+        );
+        context.pollUntilResponse();
+        context.assertSentFetchPartitionResponse(Errors.NONE, epoch, OptionalInt.of(local.id()));
+
+        // Catch up the new voter to the leader's LEO
+        context.deliverRequest(
+                context.fetchRequest(epoch, newVoter, context.log.endOffset().offset(), epoch, 0)
+        );
+        context.pollUntilResponse();
+        context.assertSentFetchPartitionResponse(Errors.NONE, epoch, OptionalInt.of(local.id()));
+
+        // Attempt to add new voter to the quorum
+        context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, newVoter, newListeners));
+
+        // Attempting to add another voter should be pending
+        ReplicaKey anotherNewVoter = replicaKey(local.id() + 3, true);
+        InetSocketAddress anotherNewAddress = InetSocketAddress.createUnresolved(
+                "localhost",
+                9990 + anotherNewVoter.id()
+        );
+        Endpoints anotherNewListeners = Endpoints.fromInetSocketAddresses(
+                Map.of(context.channel.listenerName(), anotherNewAddress)
+        );
+
+        context.deliverRequest(context.addVoterRequest(200, anotherNewVoter, anotherNewListeners));
+
+        // Attempting to add another voter should be pending
+        ReplicaKey thirdNewVoter = replicaKey(local.id() + 4, true);
+        InetSocketAddress thirdNewAddress = InetSocketAddress.createUnresolved(
+                "localhost",
+                9990 + anotherNewVoter.id()
+        );
+        Endpoints thirdNewListeners = Endpoints.fromInetSocketAddresses(
+                Map.of(context.channel.listenerName(), thirdNewAddress)
+        );
+
+        context.deliverRequest(context.addVoterRequest(100, thirdNewVoter, thirdNewListeners));
+        assertEquals(2, context.deadlineTaskManager().size());
     }
 
     @Test
@@ -1579,7 +1648,9 @@ public class KafkaRaftClientReconfigTest {
             Map.of(context.channel.listenerName(), newAddress)
         );
         context.deliverRequest(context.addVoterRequest(Integer.MAX_VALUE, newVoter, newListeners));
-        context.pollUntilAndAdvanceTime(context.requestTimeoutMs() / 3);
+        context.time.sleep(context.requestTimeoutMs());
+        context.deadlineTaskManager().checkTimeout(context.time.milliseconds());
+        context.pollUntilResponse();
         context.assertSentAddVoterResponse(Errors.REQUEST_TIMED_OUT);
     }
 

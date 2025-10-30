@@ -30,16 +30,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class DeadlineTaskManagerTest {
 
     Time mockTime = new MockTime();
-    KafkaDeadlineEventQueue<DeadlineTaskManager.DeferredTask> eventQueue = new KafkaDeadlineEventQueue<>();
+    KafkaDeadlineEventQueue<DeadlineTaskManager.DeadlineTask> eventQueue = new KafkaDeadlineEventQueue<>();
     DeadlineTaskManager deadlineTaskManager = new DeadlineTaskManager(mockTime, eventQueue);
 
     @Test
     public void DeadlineTaskTimeout() {
         AtomicBoolean timeout = new AtomicBoolean(false);
 
-        deadlineTaskManager.addTask("test Deadline", new DeadlineTaskManager.DeferredTask(
+        deadlineTaskManager.addTask("test Deadline", new DeadlineTaskManager.DeadlineTask(
                 1000, () -> { }, () -> timeout.set(true)), mockTime.timer(1000));
         mockTime.sleep(1001);
+        deadlineTaskManager.checkTimeout(mockTime.milliseconds());
         deadlineTaskManager.poll(mockTime.milliseconds());
         assertTrue(timeout.get());
     }
@@ -48,7 +49,7 @@ public class DeadlineTaskManagerTest {
     public void DeadlineTaskNotTimeout() {
         AtomicBoolean timeout = new AtomicBoolean(false);
 
-        deadlineTaskManager.addTask("test Deadline", new DeadlineTaskManager.DeferredTask(
+        deadlineTaskManager.addTask("test Deadline", new DeadlineTaskManager.DeadlineTask(
                 1000, () -> timeout.set(true), () -> { }
         ), mockTime.timer(1000));
         deadlineTaskManager.poll(mockTime.milliseconds());

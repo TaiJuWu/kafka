@@ -64,6 +64,7 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.raft.internals.BatchBuilder;
+import org.apache.kafka.raft.internals.DeadlineTaskManager;
 import org.apache.kafka.raft.internals.StringSerde;
 import org.apache.kafka.server.common.Feature;
 import org.apache.kafka.server.common.KRaftVersion;
@@ -1354,6 +1355,7 @@ public final class RaftClientTestContext {
             assertNull(addVoterResponse.errorMessage());
         } else {
             assertEquals(error, Errors.forCode(addVoterResponse.errorCode()));
+            System.err.println("ZZZ " + error.message());
         }
         return addVoterResponse;
     }
@@ -2222,6 +2224,10 @@ public final class RaftClientTestContext {
         }
 
         pollUntil(() -> OptionalLong.of(localLogEndOffset).equals(client.highWatermark()));
+    }
+
+    DeadlineTaskManager deadlineTaskManager() {
+        return client.deadlineTaskManager();
     }
 
     static class MockListener implements RaftClient.Listener<String> {

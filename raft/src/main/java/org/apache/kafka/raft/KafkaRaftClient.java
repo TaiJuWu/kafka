@@ -3902,6 +3902,10 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
         return quorum;
     }
 
+    DeadlineTaskManager deadlineTaskManager() {
+        return deadlineTaskManager;
+    }
+
     private boolean isInitialized() {
         return partitionState != null && quorum != null && requestManager != null && kafkaRaftMetrics != null;
     }
