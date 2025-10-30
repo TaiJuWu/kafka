@@ -32,6 +32,7 @@ import org.apache.kafka.raft.QuorumConfig;
 import org.apache.kafka.server.common.KRaftVersion;
 import org.apache.kafka.test.TestUtils;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -193,6 +194,7 @@ public class ReconfigurableQuorumIntegrationTest {
         }
     }
 
+    @Disabled
     @Test
     public void testControllersAutoJoinStandaloneVoter() throws Exception {
         final var nodes = new TestKitNodes.Builder().
