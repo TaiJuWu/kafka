@@ -32,6 +32,8 @@ import java.util.Set;
 public class FollowerState implements EpochState {
     private final Logger log;
 
+    private static final int AUTO_JOIN_PERIOD_MS = 300_000;
+
     private final int fetchTimeoutMs;
     private final int epoch;
     private final int leaderId;
@@ -42,6 +44,8 @@ public class FollowerState implements EpochState {
     private final Timer fetchTimer;
     // Used to track when to send another add, remove, or update voter request
     private final Timer updateVoterSetPeriodTimer;
+    // Use to track auto-join is expired,
+    private final Timer autoJoinPeriodTimer;
 
     /* Used to track if the replica has fetched successfully from the leader at least once since
      * the transition to follower in this epoch. If the replica has not yet fetched successfully,
@@ -77,6 +81,8 @@ public class FollowerState implements EpochState {
         this.voters = voters;
         this.fetchTimer = time.timer(fetchTimeoutMs);
         this.updateVoterSetPeriodTimer = time.timer(updateVoterPeriodMs());
+        // init to zero in order to send addVoterRequest when start up
+        this.autoJoinPeriodTimer = time.timer(0);
         this.highWatermark = highWatermark;
         this.log = logContext.logger(FollowerState.class);
     }
@@ -162,6 +168,17 @@ public class FollowerState implements EpochState {
     public void resetUpdateVoterSetPeriod(long currentTimeMs) {
         updateVoterSetPeriodTimer.update(currentTimeMs);
         updateVoterSetPeriodTimer.reset(updateVoterPeriodMs());
+    }
+
+
+    public boolean hasAutoJoinPeriodExpired(long currentTimeMs) {
+        autoJoinPeriodTimer.update(currentTimeMs);
+        return autoJoinPeriodTimer.isExpired();
+    }
+
+    public void resetAutoJoinPeriodExpired(long currentTimeMs) {
+        autoJoinPeriodTimer.update(currentTimeMs);
+        autoJoinPeriodTimer.reset(AUTO_JOIN_PERIOD_MS);
     }
 
     public boolean hasUpdatedLeader() {

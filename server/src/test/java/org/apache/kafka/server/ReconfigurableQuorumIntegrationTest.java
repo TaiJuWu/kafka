@@ -256,7 +256,7 @@ public class ReconfigurableQuorumIntegrationTest {
                 });
 
                 // Remove 3002 from voter set
-                TestUtils.retryOnExceptionWithTimeout(30_000, 100, () -> {
+                TestUtils.retryOnExceptionWithTimeout(30_000, 100, () ->
                     TestUtils.retryOnExceptionWithTimeout(30_000, 100, () -> {
                         Map<Integer, Uuid> voters = findVoterDirs(admin);
                         if (!voters.containsKey(3002)) {
@@ -269,11 +269,10 @@ public class ReconfigurableQuorumIntegrationTest {
                         for (int replicaId : new int[] {3000, 3001}) {
                             assertEquals(nodes.controllerNodes().get(replicaId).metadataDirectoryId(), voters.get(replicaId));
                         }
-                    });
-                });
+                }));
 
 
-                // do not join voter set for twenty seconds
+                // do not join voter set in next twenty seconds
                 for (int i = 0; i < 20; ++i) {
                     TestUtils.retryOnExceptionWithTimeout(30_000, 100, () -> {
                         TestUtils.retryOnExceptionWithTimeout(30_000, 100, () -> {
