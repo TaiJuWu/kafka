@@ -115,7 +115,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -198,7 +197,6 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
 
     private final Map<Listener<T>, ListenerContext> listenerContexts = new IdentityHashMap<>();
     private final ConcurrentLinkedQueue<Registration<T>> pendingRegistrations = new ConcurrentLinkedQueue<>();
-    private AtomicBoolean hasJoin = new AtomicBoolean(false);
 
     // These components need to be initialized by the method initialize() because they depend on
     // the voter set
@@ -2337,11 +2335,8 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
         /* These error codes indicate the replica was successfully added or the leader is unable to
          * process the request. In either case, reset the update voter set timer to back off.
          */
-        if (error == Errors.NONE) {
-            quorum.followerStateOrThrow().resetUpdateVoterSetPeriod(currentTimeMs);
-            hasJoin.set(true);
-            return true;
-        } else if (error == Errors.DUPLICATE_VOTER || error == Errors.REQUEST_TIMED_OUT) {
+        if (error == Errors.NONE || error == Errors.REQUEST_TIMED_OUT ||
+            error == Errors.DUPLICATE_VOTER) {
             quorum.followerStateOrThrow().resetUpdateVoterSetPeriod(currentTimeMs);
             return true;
         } else {
@@ -3358,7 +3353,7 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
          * set for the configured topic partition.
          */
         return partitionState.lastKraftVersion().isReconfigSupported() && canBecomeVoter &&
-                (!hasJoin.get() && quorumConfig.autoJoin()) && state.hasUpdateVoterSetPeriodExpired(currentTimeMs);
+            quorumConfig.autoJoin() && state.hasUpdateVoterSetPeriodExpired(currentTimeMs);
     }
 
     private long pollFollowerAsObserver(FollowerState state, long currentTimeMs) {
