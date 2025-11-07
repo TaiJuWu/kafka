@@ -32,7 +32,7 @@ import java.util.Set;
 public class FollowerState implements EpochState {
     private final Logger log;
 
-    private static final int AUTO_JOIN_PERIOD_MS = 300_000;
+    private static final int AUTO_JOIN_PERIOD_MS = 60_000;
 
     private final int fetchTimeoutMs;
     private final int epoch;
