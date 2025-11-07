@@ -222,6 +222,8 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
     private volatile RemoveVoterHandler removeVoterHandler;
     private volatile UpdateVoterHandler updateVoterHandler;
 
+    private volatile boolean skipFirstAutoJoinAttempt = false;
+
     /**
      * Create a new instance.
      *
@@ -501,6 +503,9 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
         logger.info("Reading KRaft snapshot and log as part of the initialization");
         partitionState.updateState();
         logger.info("Starting voters are {}", partitionState.lastVoterSet());
+        if (nodeId.isPresent()) {
+            skipFirstAutoJoinAttempt = partitionState.initBootstrapNode().contains(nodeId.getAsInt());
+        }
 
         if (requestManager == null) {
             if (voterAddresses.isEmpty()) {
@@ -3354,6 +3359,12 @@ public final class KafkaRaftClient<T> implements RaftClient<T> {
     }
 
     private boolean shouldSendAddRequest(FollowerState state, long currentTimeMs) {
+        // Defer the initial auto-join for bootstrap nodes so they don't rejoin the quorum instantly.
+        if (skipFirstAutoJoinAttempt) {
+            skipFirstAutoJoinAttempt = false;
+            state.resetAutoJoinPeriodExpired(currentTimeMs);
+        }
+
         /* When the cluster supports reconfiguration, only replicas that can become a voter
          * and are configured to auto join should attempt to automatically join the voter
          * set for the configured topic partition.

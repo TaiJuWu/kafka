@@ -35,6 +35,8 @@ import org.apache.kafka.snapshot.SnapshotReader;
 
 import org.slf4j.Logger;
 
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 
@@ -215,6 +217,12 @@ public final class KRaftControlRecordStateMachine {
             return kraftVersionHistory.valueAtOrBefore(offset).
                 orElse(KRaftVersion.KRAFT_VERSION_0);
         }
+    }
+
+    public List<Integer> initBootstrapNode() {
+        final List<Integer> bootstrapNodes = new LinkedList<>();
+        lastVoterSet().voterNodes().forEach(voterNode -> bootstrapNodes.add(voterNode.voterKey().id()));
+        return bootstrapNodes;
     }
 
     private void checkOffsetIsValid(long offset) {
