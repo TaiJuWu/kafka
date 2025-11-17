@@ -529,13 +529,11 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (authorizedRequestInfo.isEmpty)
       sendResponseCallback(Map.empty)
     else {
-      val internalTopicsAllowed = request.header.clientId == "__admin_client"
       val transactionSupportedOperation = AddPartitionsToTxnManager.produceRequestVersionToTransactionSupportedOperation(request.header.apiVersion())
       // call the replica manager to append messages to the replicas
       replicaManager.handleProduceAppend(
         timeout = produceRequest.timeout.toLong,
         requiredAcks = produceRequest.acks,
-        internalTopicsAllowed = internalTopicsAllowed,
         transactionalId = produceRequest.transactionalId,
         entriesPerPartition = authorizedRequestInfo,
         responseCallback = sendResponseCallback,

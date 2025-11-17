@@ -2736,7 +2736,6 @@ class ReplicaManagerTest {
     replicaManager.handleProduceAppend(
       timeout = 1000,
       requiredAcks = requiredAcks,
-      internalTopicsAllowed = false,
       transactionalId = transactionalId,
       entriesPerPartition = entriesToAppend.map { case(tp, memoryRecords) => replicaManager.topicIdPartition(tp) -> memoryRecords },
       responseCallback = appendCallback,
@@ -2767,7 +2766,6 @@ class ReplicaManagerTest {
     replicaManager.handleProduceAppend(
       timeout = 1000,
       requiredAcks = requiredAcks,
-      internalTopicsAllowed = false,
       transactionalId = transactionalId,
       entriesPerPartition = entriesPerPartition.map {
         case (topicPartition, records) => replicaManager.topicIdPartition(topicPartition) -> records

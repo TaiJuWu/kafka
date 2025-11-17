@@ -2398,7 +2398,6 @@ class KafkaApisTest extends Logging {
 
       when(replicaManager.handleProduceAppend(anyLong,
         anyShort,
-        ArgumentMatchers.eq(false),
         any(),
         any(),
         responseCallback.capture(),
@@ -2792,7 +2791,6 @@ class KafkaApisTest extends Logging {
 
       when(replicaManager.handleProduceAppend(anyLong,
         anyShort,
-        ArgumentMatchers.eq(false),
         any(),
         any(),
         responseCallback.capture(),
@@ -2863,7 +2861,6 @@ class KafkaApisTest extends Logging {
 
       when(replicaManager.handleProduceAppend(anyLong,
         anyShort,
-        ArgumentMatchers.eq(false),
         any(),
         any(),
         responseCallback.capture(),
@@ -2935,7 +2932,6 @@ class KafkaApisTest extends Logging {
 
       when(replicaManager.handleProduceAppend(anyLong,
         anyShort,
-        ArgumentMatchers.eq(false),
         any(),
         any(),
         responseCallback.capture(),
@@ -3014,7 +3010,6 @@ class KafkaApisTest extends Logging {
 
         verify(replicaManager).handleProduceAppend(anyLong,
           anyShort,
-          ArgumentMatchers.eq(false),
           ArgumentMatchers.eq(transactionalId),
           any(),
           any(),
