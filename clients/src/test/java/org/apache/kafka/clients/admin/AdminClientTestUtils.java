@@ -208,7 +208,7 @@ public class AdminClientTestUtils {
                         )
                     )
                 ));
-        return new ListOffsetsResult(futures);
+        return ListOffsetsResult.ofTopicNames(futures);
     }
 
     /**

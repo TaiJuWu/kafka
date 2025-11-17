@@ -23,6 +23,7 @@ import org.apache.kafka.clients.admin.internals.AdminApiHandler.ApiResult;
 import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic;
@@ -76,10 +77,17 @@ public final class ListOffsetsHandlerTest {
         }
     };
 
+    private final Map<String, Uuid> topicIdsByName = new HashMap<>() {
+        {
+            put("t0", Uuid.ZERO_UUID);
+            put("t1", Uuid.ZERO_UUID);
+            put("t2", Uuid.ZERO_UUID);
+        }
+    };
+
     @Test
     public void testBuildRequestSimple() {
-        ListOffsetsHandler handler =
-            new ListOffsetsHandler(offsetTimestampsByPartition, new ListOffsetsOptions(), logContext, defaultApiTimeoutMs);
+        ListOffsetsHandler handler = newHandler(new ListOffsetsOptions());
         ListOffsetsRequest request = handler.buildBatchedRequest(node.id(), Set.of(t0p0, t0p1)).build();
         List<ListOffsetsTopic> topics = request.topics();
         assertEquals(1, topics.size());
@@ -94,9 +102,7 @@ public final class ListOffsetsHandlerTest {
 
     @Test
     public void testBuildRequestMultipleTopicsWithReadCommitted() {
-        ListOffsetsHandler handler =
-            new ListOffsetsHandler(
-                offsetTimestampsByPartition, new ListOffsetsOptions(IsolationLevel.READ_COMMITTED), logContext, defaultApiTimeoutMs);
+        ListOffsetsHandler handler = newHandler(new ListOffsetsOptions(IsolationLevel.READ_COMMITTED));
         ListOffsetsRequest request =
             handler.buildBatchedRequest(node.id(), offsetTimestampsByPartition.keySet()).build();
         List<ListOffsetsTopic> topics = request.topics();
@@ -116,15 +122,12 @@ public final class ListOffsetsHandlerTest {
 
     @Test
     public void testBuildRequestAllowedVersions() {
-        ListOffsetsHandler defaultOptionsHandler =
-            new ListOffsetsHandler(offsetTimestampsByPartition, new ListOffsetsOptions(), logContext, defaultApiTimeoutMs);
+        ListOffsetsHandler defaultOptionsHandler = newHandler(new ListOffsetsOptions());
         ListOffsetsRequest.Builder builder =
             defaultOptionsHandler.buildBatchedRequest(node.id(), Set.of(t0p0, t0p1, t1p0));
         assertEquals(1, builder.oldestAllowedVersion());
 
-        ListOffsetsHandler readCommittedHandler =
-            new ListOffsetsHandler(
-                offsetTimestampsByPartition, new ListOffsetsOptions(IsolationLevel.READ_COMMITTED), logContext, defaultApiTimeoutMs);
+        ListOffsetsHandler readCommittedHandler = newHandler(new ListOffsetsOptions(IsolationLevel.READ_COMMITTED));
         builder = readCommittedHandler.buildBatchedRequest(node.id(), Set.of(t0p0, t0p1, t1p0));
         assertEquals(2, builder.oldestAllowedVersion());
 
@@ -223,8 +226,7 @@ public final class ListOffsetsHandlerTest {
         Map<TopicPartition, OffsetSpec> maxTimestampPartitions = new HashMap<>();
         maxTimestampPartitions.put(t1p1, OffsetSpec.maxTimestamp());
 
-        ListOffsetsHandler handler =
-            new ListOffsetsHandler(offsetTimestampsByPartition, new ListOffsetsOptions(), logContext, defaultApiTimeoutMs);
+        ListOffsetsHandler handler = newHandler(new ListOffsetsOptions());
 
         final Map<TopicPartition, Long> nonMaxTimestampPartitions = new HashMap<>(offsetTimestampsByPartition);
         maxTimestampPartitions.forEach((k, v) -> nonMaxTimestampPartitions.remove(k));
@@ -255,8 +257,7 @@ public final class ListOffsetsHandlerTest {
     @Test
     public void testBuildRequestWithDefaultApiTimeoutMs() {
         ListOffsetsOptions options = new ListOffsetsOptions();
-        ListOffsetsHandler handler =
-                new ListOffsetsHandler(offsetTimestampsByPartition, options, logContext, defaultApiTimeoutMs);
+        ListOffsetsHandler handler = newHandler(options);
         ListOffsetsRequest request = handler.buildBatchedRequest(node.id(), Set.of(t0p0, t0p1)).build();
         assertEquals(defaultApiTimeoutMs, request.timeoutMs());
     }
@@ -265,8 +266,7 @@ public final class ListOffsetsHandlerTest {
     public void testBuildRequestWithTimeoutMs() {
         Integer timeoutMs = 200;
         ListOffsetsOptions options = new ListOffsetsOptions().timeoutMs(timeoutMs);
-        ListOffsetsHandler handler =
-                new ListOffsetsHandler(offsetTimestampsByPartition, options, logContext, defaultApiTimeoutMs);
+        ListOffsetsHandler handler = newHandler(options);
         ListOffsetsRequest request = handler.buildBatchedRequest(node.id(), Set.of(t0p0, t0p1)).build();
         assertEquals(timeoutMs, request.timeoutMs());
     }
@@ -294,6 +294,7 @@ public final class ListOffsetsHandlerTest {
             ListOffsetsTopicResponse topicResponse = responsesByTopic.computeIfAbsent(
                 topicPartition.topic(), t -> new ListOffsetsTopicResponse());
             topicResponse.setName(topicPartition.topic());
+            topicResponse.setTopicId(Uuid.randomUuid());
             ListOffsetsPartitionResponse partitionResponse = new ListOffsetsPartitionResponse();
             partitionResponse.setPartitionIndex(topicPartition.partition());
             partitionResponse.setOffset(getOffset(topicPartition, offsetSpecEntry.getValue()));
@@ -306,8 +307,7 @@ public final class ListOffsetsHandlerTest {
     }
 
     private ApiResult<TopicPartition, ListOffsetsResultInfo> handleResponse(ListOffsetsResponse response) {
-        ListOffsetsHandler handler =
-            new ListOffsetsHandler(offsetTimestampsByPartition, new ListOffsetsOptions(), logContext, defaultApiTimeoutMs);
+        ListOffsetsHandler handler = newHandler(new ListOffsetsOptions());
         return handler.handleResponse(node, offsetTimestampsByPartition.keySet(), response);
     }
 
@@ -338,5 +338,15 @@ public final class ListOffsetsHandlerTest {
             return base + 1 + (topicPartition.hashCode() & (base - 1));
         }
         return 2 * base + 1;
+    }
+
+    private ListOffsetsHandler newHandler(ListOffsetsOptions options) {
+        return new ListOffsetsHandler(
+            offsetTimestampsByPartition,
+            new HashMap<>(topicIdsByName),
+            options,
+            logContext,
+            defaultApiTimeoutMs,
+            new PartitionLeaderCache());
     }
 }

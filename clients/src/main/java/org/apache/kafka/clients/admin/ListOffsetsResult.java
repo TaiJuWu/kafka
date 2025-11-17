@@ -33,6 +33,10 @@ public class ListOffsetsResult {
     private final Map<TopicPartition, KafkaFuture<ListOffsetsResultInfo>> nameFutures;
     private final Map<TopicIdPartition, KafkaFuture<ListOffsetsResultInfo>> topicIdFutures;
 
+    public ListOffsetsResult(Map<TopicPartition, KafkaFuture<ListOffsetsResultInfo>> nameFutures) {
+        this(null, nameFutures);
+    }
+
     private ListOffsetsResult(Map<TopicIdPartition, KafkaFuture<ListOffsetsResultInfo>> topicIdfutures,
                              Map<TopicPartition, KafkaFuture<ListOffsetsResultInfo>> nameFutures) {
         if (topicIdfutures != null && nameFutures != null)

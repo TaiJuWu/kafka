@@ -58,11 +58,11 @@ public class PartitionLeaderCache {
         return topicById.get(uuid);
     }
 
-    public int getLeaderByTopicName(TopicPartition topicPartition) {
+    public Integer getLeaderByTopicName(TopicPartition topicPartition) {
         return partitionLeaderCache.get(topicPartition);
     }
 
-    public int getLeaderById(TopicIdPartition tip) {
+    public Integer getLeaderById(TopicIdPartition tip) {
         return partitionIdLeaderCache.get(tip);
     }
 
@@ -107,6 +107,14 @@ public class PartitionLeaderCache {
 
     public int removeById(TopicIdPartition tp) {
         return partitionIdLeaderCache.remove(tp);
+    }
+
+    public void recordTopicId(String topic, Uuid topicId) {
+        if (topic == null) {
+            return;
+        }
+        Uuid effective = topicId == null ? Uuid.ZERO_UUID : topicId;
+        updateTopicIdMapping(topic, effective);
     }
 
     private void updateTopicIdMapping(String topic, Uuid uuid) {

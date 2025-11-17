@@ -81,7 +81,6 @@ import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicCollection;
 import org.apache.kafka.common.TopicCollection.TopicIdCollection;
 import org.apache.kafka.common.TopicCollection.TopicNameCollection;
-import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.TopicPartitionReplica;
@@ -4260,19 +4259,26 @@ public class KafkaAdminClient extends AdminClient {
     @Override
     public ListOffsetsResult listOffsets(Map<TopicPartition, OffsetSpec> topicPartitionOffsets,
                                          ListOffsetsOptions options) {
-        Map<TopicIdPartition, OffsetSpec> topicIdPartitionOffsets =
-            topicPartitionOffsets.entrySet().stream()
-                .collect(Collectors.toMap(
-                    entry -> {
-                        Uuid topicId = partitionLeaderCache.getTopicIdByName(entry.getKey().topic());
-                        return new TopicIdPartition(topicId, entry.getKey());
-                    },
-                    Map.Entry::getValue));
-        PartitionLeaderStrategy.PartitionLeaderFuture<ListOffsetsResultInfo> future =
-            ListOffsetsHandler.newFuture(topicIdPartitionOffsets.keySet(), partitionLeaderCache);
-        Map<TopicIdPartition, Long> offsetQueriesByPartition = topicIdPartitionOffsets.entrySet().stream()
+        Map<TopicPartition, Long> offsetQueriesByPartition = topicPartitionOffsets.entrySet().stream()
             .collect(Collectors.toMap(Map.Entry::getKey, e -> getOffsetFromSpec(e.getValue())));
-        ListOffsetsHandler handler = new ListOffsetsHandler(offsetQueriesByPartition, options, logContext, defaultApiTimeoutMs, partitionLeaderCache);
+        Map<String, Uuid> topicIdsByName = new HashMap<>();
+        for (TopicPartition topicPartition : topicPartitionOffsets.keySet()) {
+            Uuid topicId = partitionLeaderCache.getTopicIdByName(topicPartition.topic());
+            if (topicId == null) {
+                topicId = Uuid.ZERO_UUID;
+            }
+            topicIdsByName.merge(topicPartition.topic(), topicId,
+                (existing, current) -> existing.equals(Uuid.ZERO_UUID) ? current : existing);
+        }
+        PartitionLeaderStrategy.PartitionLeaderFuture<ListOffsetsResultInfo> future =
+            ListOffsetsHandler.newFuture(topicPartitionOffsets.keySet(), partitionLeaderCache);
+        ListOffsetsHandler handler = new ListOffsetsHandler(
+            offsetQueriesByPartition,
+            topicIdsByName,
+            options,
+            logContext,
+            defaultApiTimeoutMs,
+            partitionLeaderCache);
         invokeDriver(handler, future, options.timeoutMs);
         return ListOffsetsResult.ofTopicNames(future.all());
     }

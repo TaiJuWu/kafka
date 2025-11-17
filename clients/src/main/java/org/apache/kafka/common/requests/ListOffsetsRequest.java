@@ -65,15 +65,26 @@ public class ListOffsetsRequest extends AbstractRequest {
 
         public static Builder forConsumer(boolean requireTimestamp,
                                           IsolationLevel isolationLevel,
+                                          boolean requireMaxTimestamp,
+                                          boolean requireEarliestLocalTimestamp,
+                                          boolean requireTieredStorageTimestamp,
+                                          boolean requireEarliestPendingUploadTimestamp) {
+            return forConsumer(requireTimestamp, isolationLevel, false,
+                requireMaxTimestamp, requireEarliestLocalTimestamp,
+                requireTieredStorageTimestamp, requireEarliestPendingUploadTimestamp);
+        }
+
+        public static Builder forConsumer(boolean requireTimestamp,
+                                          IsolationLevel isolationLevel,
                                           boolean requireTopicId,
                                           boolean requireMaxTimestamp,
                                           boolean requireEarliestLocalTimestamp,
                                           boolean requireTieredStorageTimestamp,
                                           boolean requireEarliestPendingUploadTimestamp) {
             short minVersion = ApiKeys.LIST_OFFSETS.oldestVersion();
-            if (requireTopicId) {
-              minVersion = 12;
-            } else if (requireEarliestPendingUploadTimestamp)
+            if (requireTopicId)
+                minVersion = 12;
+            else if (requireEarliestPendingUploadTimestamp)
                 minVersion = 11;
             else if (requireTieredStorageTimestamp)
                 minVersion = 9;
