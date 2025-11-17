@@ -16,7 +16,9 @@
  */
 package org.apache.kafka.common.utils;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -89,5 +91,23 @@ public final class CollectionUtils {
             addToGroup.accept(topicData, tp.partition());
         }
         return dataByTopic;
+    }
+
+    public static <T> Map<Uuid, T> groupPartitionsByTopicId(
+            Collection<TopicIdPartition> partitions,
+            Function<Uuid, T> buildGroup,
+            BiConsumer<T, Integer> addToGroup
+    ) {
+        // FIXME: need to distinguish zero and others
+        Map<Uuid, T> dataByTopicId = new HashMap<>();
+        for (TopicIdPartition tp : partitions) {
+            if (tp.topicId() == null || tp.topicId().equals(Uuid.ZERO_UUID)) {
+                continue;
+            }
+            Uuid topicId = tp.topicId();
+            T topicData = dataByTopicId.computeIfAbsent(topicId, buildGroup);
+            addToGroup.accept(topicData, tp.partition());
+        }
+        return dataByTopicId;
     }
 }

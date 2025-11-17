@@ -20,7 +20,9 @@ import org.apache.kafka.clients.admin.ListOffsetsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult.ListOffsetsResultInfo;
 import org.apache.kafka.clients.admin.internals.AdminApiHandler.Batched;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
@@ -54,18 +56,21 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
     private final Logger log;
     private final AdminApiLookupStrategy<TopicPartition> lookupStrategy;
     private final int defaultApiTimeoutMs;
+    private final PartitionLeaderCache cache;
 
     public ListOffsetsHandler(
         Map<TopicPartition, Long> offsetTimestampsByPartition,
         ListOffsetsOptions options,
         LogContext logContext,
-        int defaultApiTimeoutMs
+        int defaultApiTimeoutMs,
+        PartitionLeaderCache cache
     ) {
         this.offsetTimestampsByPartition = offsetTimestampsByPartition;
         this.options = options;
         this.log = logContext.logger(ListOffsetsHandler.class);
         this.lookupStrategy = new PartitionLeaderStrategy(logContext, false);
         this.defaultApiTimeoutMs = defaultApiTimeoutMs;
+        this.cache = cache;
     }
 
     @Override
@@ -82,7 +87,7 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
     ListOffsetsRequest.Builder buildBatchedRequest(int brokerId, Set<TopicPartition> keys) {
         Map<String, ListOffsetsTopic> topicsByName = CollectionUtils.groupPartitionsByTopic(
             keys,
-            topicName -> new ListOffsetsTopic().setName(topicName),
+            topicName -> new ListOffsetsTopic().setName(topicName).setTopicId(cache.getTopicIdByName(topicName)),
             (listOffsetsTopic, partitionId) -> {
                 TopicPartition topicPartition = new TopicPartition(listOffsetsTopic.name(), partitionId);
                 long offsetTimestamp = offsetTimestampsByPartition.get(topicPartition);
@@ -107,9 +112,12 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
             .stream()
             .anyMatch(key -> offsetTimestampsByPartition.get(key) == ListOffsetsRequest.EARLIEST_PENDING_UPLOAD_TIMESTAMP);
 
+        boolean requireTopicId = !cache.getById().isEmpty();
+
         int timeoutMs = options.timeoutMs() != null ? options.timeoutMs() : defaultApiTimeoutMs;
         return ListOffsetsRequest.Builder.forConsumer(true,
                         options.isolationLevel(),
+                        requireTopicId,
                         supportsMaxTimestamp,
                         requireEarliestLocalTimestamp,
                         requireTieredStorageTimestamp,
@@ -125,10 +133,10 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
         AbstractResponse abstractResponse
     ) {
         ListOffsetsResponse response = (ListOffsetsResponse) abstractResponse;
-        Map<TopicPartition, ListOffsetsResultInfo> completed = new HashMap<>();
-        Map<TopicPartition, Throwable> failed = new HashMap<>();
-        List<TopicPartition> unmapped = new ArrayList<>();
-        Set<TopicPartition> retriable = new HashSet<>();
+        Map<TopicIdPartition, ListOffsetsResultInfo> completed = new HashMap<>();
+        Map<TopicIdPartition, Throwable> failed = new HashMap<>();
+        List<TopicIdPartition> unmapped = new ArrayList<>();
+        Set<TopicIdPartition> retriable = new HashSet<>();
 
         for (ListOffsetsTopicResponse topic : response.topics()) {
             for (ListOffsetsPartitionResponse partition : topic.partitions()) {
@@ -150,20 +158,20 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
         }
 
         // Sanity-check if the current leader for these partitions returned results for all of them
-        for (TopicPartition topicPartition : keys) {
+        for (TopicIdPartition topicIdPartition : keys) {
             if (unmapped.isEmpty()
-                && !completed.containsKey(topicPartition)
-                && !failed.containsKey(topicPartition)
-                && !retriable.contains(topicPartition)
+                && !completed.containsKey(topicIdPartition)
+                && !failed.containsKey(topicIdPartition)
+                && !retriable.contains(topicIdPartition)
             ) {
                 ApiException sanityCheckException = new ApiException(
                     "The response from broker " + broker.id() +
-                        " did not contain a result for topic partition " + topicPartition);
+                        " did not contain a result for topic partition " + topicIdPartition);
                 log.error(
                     "ListOffsets request for topic partition {} failed sanity check",
-                    topicPartition,
+                        topicIdPartition,
                     sanityCheckException);
-                failed.put(topicPartition, sanityCheckException);
+                failed.put(topicIdPartition, sanityCheckException);
             }
         }
 
@@ -222,9 +230,14 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
     }
 
     public static PartitionLeaderStrategy.PartitionLeaderFuture<ListOffsetsResultInfo> newFuture(
-        Collection<TopicPartition> topicPartitions,
-        Map<TopicPartition, Integer> partitionLeaderCache
+        Collection<TopicIdPartition> topicIdPartitions,
+        PartitionLeaderCache partitionLeaderCache
     ) {
-        return new PartitionLeaderStrategy.PartitionLeaderFuture<>(new HashSet<>(topicPartitions), partitionLeaderCache);
+        return new PartitionLeaderStrategy.PartitionLeaderFuture<>(new HashSet<>(convertToTopicPartition(topicIdPartitions)), partitionLeaderCache);
     }
+
+    private static Collection<TopicPartition> convertToTopicPartition(Collection<TopicIdPartition> topicIdPartitions) {
+        return topicIdPartitions.stream().map(TopicIdPartition::topicPartition).collect(Collectors.toList());
+    }
+
 }
