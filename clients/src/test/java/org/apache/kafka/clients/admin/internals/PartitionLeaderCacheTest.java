@@ -24,18 +24,19 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class PartitionLeaderCacheTest {
 
     @Test
-    public void testUpgradeFromUnknownTopicId() {
+    public void testTopicIdRecordedFromPartitionId() {
         PartitionLeaderCache cache = new PartitionLeaderCache();
         TopicPartition tp = new TopicPartition("foo", 0);
 
         cache.putByTopicName(tp, 1);
-        assertEquals(Uuid.ZERO_UUID, cache.getTopicIdByName("foo"));
+        assertNull(cache.getTopicIdByName("foo"));
         assertFalse(cache.containTopicId(Uuid.ZERO_UUID));
 
         Uuid topicId = Uuid.randomUuid();

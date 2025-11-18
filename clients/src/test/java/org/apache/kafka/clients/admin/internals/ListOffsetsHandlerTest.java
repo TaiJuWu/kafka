@@ -271,6 +271,42 @@ public final class ListOffsetsHandlerTest {
         assertEquals(timeoutMs, request.timeoutMs());
     }
 
+    @Test
+    public void testBuildRequestIncludesExplicitTopicIds() {
+        Map<String, Uuid> topicIds = new HashMap<>(topicIdsByName);
+        Uuid topicId = Uuid.randomUuid();
+        topicIds.put("t0", topicId);
+
+        ListOffsetsHandler handler = newHandler(new ListOffsetsOptions(), topicIds, new PartitionLeaderCache());
+        ListOffsetsRequest request = handler.buildBatchedRequest(node.id(), Set.of(t0p0, t0p1)).build();
+
+        ListOffsetsTopic topic = request.topics().stream()
+            .filter(t -> t.name().equals("t0"))
+            .findFirst()
+            .orElseThrow();
+        assertEquals(topicId, topic.topicId());
+    }
+
+    @Test
+    public void testBuildRequestUsesCachedTopicIds() {
+        PartitionLeaderCache partitionLeaderCache = new PartitionLeaderCache();
+        Uuid topicId = Uuid.randomUuid();
+        partitionLeaderCache.recordTopicId("t1", topicId);
+
+        Map<String, Uuid> topicIds = new HashMap<>(topicIdsByName);
+        topicIds.remove("t1");
+
+        ListOffsetsHandler handler = newHandler(new ListOffsetsOptions(), topicIds, partitionLeaderCache);
+        ListOffsetsRequest request = handler.buildBatchedRequest(node.id(), Set.of(t1p0)).build();
+
+        ListOffsetsTopic topic = request.topics().stream()
+            .filter(t -> t.name().equals("t1"))
+            .findFirst()
+            .orElseThrow();
+        assertEquals(topicId, topic.topicId());
+    }
+
+
     private static Map<TopicPartition, Throwable> mapToError(Set<TopicPartition> keys, Throwable t) {
         return keys.stream().collect(Collectors.toMap(k -> k, k -> t));
     }
@@ -341,12 +377,20 @@ public final class ListOffsetsHandlerTest {
     }
 
     private ListOffsetsHandler newHandler(ListOffsetsOptions options) {
+        return newHandler(options, new HashMap<>(topicIdsByName), new PartitionLeaderCache());
+    }
+
+    private ListOffsetsHandler newHandler(
+        ListOffsetsOptions options,
+        Map<String, Uuid> topicIdsByNameOverride,
+        PartitionLeaderCache partitionLeaderCache
+    ) {
         return new ListOffsetsHandler(
             offsetTimestampsByPartition,
-            new HashMap<>(topicIdsByName),
+            topicIdsByNameOverride,
             options,
             logContext,
             defaultApiTimeoutMs,
-            new PartitionLeaderCache());
+            partitionLeaderCache);
     }
 }
