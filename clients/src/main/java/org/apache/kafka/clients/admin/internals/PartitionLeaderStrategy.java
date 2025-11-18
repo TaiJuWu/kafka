@@ -220,12 +220,6 @@ public class PartitionLeaderStrategy implements AdminApiLookupStrategy<TopicPart
             ));
         }
 
-        // For compatibility issue, we don't want to change other RPC
-        PartitionLeaderFuture(Set<TopicPartition> requestKeys, Map<TopicPartition, Integer> leaderMapping) {
-            this(requestKeys, new PartitionLeaderCache());
-            this.partitionLeaderCache.putAllByTopicName(leaderMapping);
-        }
-
         @Override
         public Set<TopicPartition> lookupKeys() {
             return futures.keySet();

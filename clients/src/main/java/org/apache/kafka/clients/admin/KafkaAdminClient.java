@@ -3262,7 +3262,7 @@ public class KafkaAdminClient extends AdminClient {
     public DeleteRecordsResult deleteRecords(final Map<TopicPartition, RecordsToDelete> recordsToDelete,
                                              final DeleteRecordsOptions options) {
         PartitionLeaderStrategy.PartitionLeaderFuture<DeletedRecords> future =
-            DeleteRecordsHandler.newFuture(recordsToDelete.keySet(), partitionLeaderCache.getByName());
+            DeleteRecordsHandler.newFuture(recordsToDelete.keySet(), partitionLeaderCache);
         int timeoutMs = defaultApiTimeoutMs;
         if (options.timeoutMs() != null) {
             timeoutMs = options.timeoutMs();
@@ -4822,7 +4822,7 @@ public class KafkaAdminClient extends AdminClient {
     @Override
     public DescribeProducersResult describeProducers(Collection<TopicPartition> topicPartitions, DescribeProducersOptions options) {
         PartitionLeaderStrategy.PartitionLeaderFuture<DescribeProducersResult.PartitionProducerState> future =
-            DescribeProducersHandler.newFuture(topicPartitions, partitionLeaderCache.getByName());
+            DescribeProducersHandler.newFuture(topicPartitions, partitionLeaderCache);
         DescribeProducersHandler handler = new DescribeProducersHandler(options, logContext);
         invokeDriver(handler, future, options.timeoutMs);
         return new DescribeProducersResult(future.all());
@@ -4840,7 +4840,7 @@ public class KafkaAdminClient extends AdminClient {
     @Override
     public AbortTransactionResult abortTransaction(AbortTransactionSpec spec, AbortTransactionOptions options) {
         PartitionLeaderStrategy.PartitionLeaderFuture<Void> future =
-            AbortTransactionHandler.newFuture(Collections.singleton(spec.topicPartition()), partitionLeaderCache.getByName());
+            AbortTransactionHandler.newFuture(Collections.singleton(spec.topicPartition()), partitionLeaderCache);
         AbortTransactionHandler handler = new AbortTransactionHandler(spec, logContext);
         invokeDriver(handler, future, options.timeoutMs);
         return new AbortTransactionResult(future.all());

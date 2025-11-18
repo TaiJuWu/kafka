@@ -56,7 +56,7 @@ public class AbortTransactionHandler extends AdminApiHandler.Batched<TopicPartit
 
     public static PartitionLeaderStrategy.PartitionLeaderFuture<Void> newFuture(
         Set<TopicPartition> topicPartitions,
-        Map<TopicPartition, Integer> partitionLeaderCache
+        PartitionLeaderCache partitionLeaderCache
     ) {
         return new PartitionLeaderStrategy.PartitionLeaderFuture<>(topicPartitions, partitionLeaderCache);
     }
