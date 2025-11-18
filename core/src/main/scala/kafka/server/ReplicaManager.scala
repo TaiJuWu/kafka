@@ -1466,17 +1466,31 @@ class ReplicaManager(val config: KafkaConfig,
                   buildErrorResponse: (Errors, ListOffsetsPartition) => ListOffsetsPartitionResponse,
                   responseCallback: Consumer[util.Collection[ListOffsetsTopicResponse]],
                   timeoutMs: Int = 0): Unit = {
-    val statusByPartition = mutable.Map[TopicPartition, ListOffsetsPartitionStatus]()
+    val statusByPartition = mutable.Map[TopicIdPartition, ListOffsetsPartitionStatus]()
     topics.foreach { topic =>
       topic.partitions.asScala.foreach { partition =>
-        val topicPartition = new TopicPartition(topic.name, partition.partitionIndex)
-        if (duplicatePartitions.contains(topicPartition)) {
-          debug(s"OffsetRequest with correlation id $correlationId from client $clientId on partition $topicPartition " +
+        var topicId = topic.topicId()
+        if (topicId == null) {
+          topicId = Uuid.ZERO_UUID
+        }
+
+        val topicIdPartition = new TopicIdPartition(topicId, partition.partitionIndex, topic.name)
+        val requestTopicIdOpt = if (topicIdPartition.topicId == Uuid.ZERO_UUID) None else Some(topicIdPartition.topicId)
+        val metadataTopicId = metadataCache.getTopicId(topic.name)
+        val cachedTopicIdOpt = Option(metadataTopicId).filterNot(_ == Uuid.ZERO_UUID)
+
+        if (duplicatePartitions.contains(topicIdPartition.topicPartition())) {
+          debug(s"OffsetRequest with correlation id $correlationId from client $clientId on partition ${topicIdPartition} " +
             s"failed because the partition is duplicated in the request.")
-          statusByPartition += topicPartition ->
+          statusByPartition += topicIdPartition ->
             ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.INVALID_REQUEST, partition))).build()
+        } else if (requestTopicIdOpt.isDefined && !cachedTopicIdOpt.contains(requestTopicIdOpt.get)) {
+          debug(s"OffsetRequest with correlation id $correlationId from client $clientId on partition ${topicIdPartition} " +
+            s"failed because the provided topic ID ${requestTopicIdOpt.get} does not match the current topic ID $cachedTopicIdOpt.")
+          statusByPartition += topicIdPartition ->
+            ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.UNKNOWN_TOPIC_ID, partition))).build()
         } else if (isListOffsetsTimestampUnsupported(partition.timestamp(), version)) {
-          statusByPartition += topicPartition ->
+          statusByPartition += topicIdPartition ->
             ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.UNSUPPORTED_VERSION, partition))).build()
         } else {
           try {
@@ -1487,7 +1501,7 @@ class ReplicaManager(val config: KafkaConfig,
             else
               None
 
-            val resultHolder = fetchOffsetForTimestamp(topicPartition,
+            val resultHolder = fetchOffsetForTimestamp(topicIdPartition.topicPartition(),
               partition.timestamp,
               isolationLevelOpt,
               if (partition.currentLeaderEpoch == ListOffsetsResponse.UNKNOWN_EPOCH) Optional.empty() else Optional.of(partition.currentLeaderEpoch),
@@ -1527,33 +1541,34 @@ class ReplicaManager(val config: KafkaConfig,
                 throw new IllegalStateException(s"Unexpected result holder state $resultHolder")
               }
             }
-            statusByPartition += topicPartition -> status
+            statusByPartition += topicIdPartition -> status
           } catch {
             // NOTE: These exceptions are special cases since these error messages are typically transient or the client
             // would have received a clear exception and there is no value in logging the entire stack trace for the same
             case e @ (_ : UnknownTopicOrPartitionException |
+                      _ : UnknownTopicIdException |
                       _ : NotLeaderOrFollowerException |
                       _ : UnknownLeaderEpochException |
                       _ : FencedLeaderEpochException |
                       _ : KafkaStorageException |
                       _ : UnsupportedForMessageFormatException) =>
               debug(s"Offset request with correlation id $correlationId from client $clientId on " +
-                s"partition $topicPartition failed due to ${e.getMessage}")
-              statusByPartition += topicPartition ->
+                s"partition $topicIdPartition.topicPartition() failed due to ${e.getMessage}")
+              statusByPartition += topicIdPartition ->
                 ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.forException(e), partition))).build()
             // Only V5 and newer ListOffset calls should get OFFSET_NOT_AVAILABLE
             case e: OffsetNotAvailableException =>
               if (version >= 5) {
-                statusByPartition += topicPartition ->
+                statusByPartition += topicIdPartition ->
                   ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.forException(e), partition))).build()
               } else {
-                statusByPartition += topicPartition ->
+                statusByPartition += topicIdPartition ->
                   ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.LEADER_NOT_AVAILABLE, partition))).build()
               }
 
             case e: Throwable =>
               error("Error while responding to offset request", e)
-              statusByPartition += topicPartition ->
+              statusByPartition += topicIdPartition ->
                 ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.forException(e), partition))).build()
           }
         }
@@ -1578,7 +1593,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-  private def delayedRemoteListOffsetsRequired(responseByPartition: Map[TopicPartition, ListOffsetsPartitionStatus]): Boolean = {
+  private def delayedRemoteListOffsetsRequired(responseByPartition: Map[TopicIdPartition, ListOffsetsPartitionStatus]): Boolean = {
     responseByPartition.values.exists(status => status.futureHolderOpt.isPresent)
   }
 

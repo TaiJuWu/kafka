@@ -36,6 +36,8 @@ import org.apache.kafka.common.compress.Compression
 import org.apache.kafka.common.config.TopicConfig
 import org.apache.kafka.common.errors.InvalidPidMappingException
 import org.apache.kafka.common.internals.Topic
+import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
+import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
 import org.apache.kafka.common.message.{DeleteRecordsResponseData, FetchResponseData, ShareFetchResponseData}
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
 import org.apache.kafka.common.metadata.{PartitionChangeRecord, PartitionRecord, RemoveTopicRecord, TopicRecord}
@@ -4074,6 +4076,49 @@ class ReplicaManagerTest {
       })
       assertEquals(s"Topic ${topic}-0 exists, but its ID is ${topicId}, not ${invalidTopicId} as expected", exception2.getMessage)
 
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testFetchOffsetReturnsUnknownTopicIdOnMismatch(): Unit = {
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
+    try {
+      setupMetadataCacheWithTopicIds(topicIds, replicaManager.metadataCache)
+      val wrongTopicId = Uuid.randomUuid()
+      val partition = new ListOffsetsPartition()
+        .setPartitionIndex(0)
+        .setTimestamp(ListOffsetsRequest.LATEST_TIMESTAMP)
+      val topicRequest = new ListOffsetsTopic()
+        .setName(topic)
+        .setTopicId(wrongTopicId)
+        .setPartitions(util.List.of(partition))
+
+      var capturedResponses: util.Collection[ListOffsetsTopicResponse] = null
+      val callback = new Consumer[util.Collection[ListOffsetsTopicResponse]] {
+        override def accept(responses: util.Collection[ListOffsetsTopicResponse]): Unit = {
+          capturedResponses = responses
+        }
+      }
+
+      replicaManager.fetchOffset(
+        Seq(topicRequest),
+        Set.empty,
+        IsolationLevel.READ_UNCOMMITTED,
+        ListOffsetsRequest.CONSUMER_REPLICA_ID,
+        "client-id",
+        0,
+        ApiKeys.LIST_OFFSETS.latestVersion,
+        (error, listOffsetsPartition) =>
+          new ListOffsetsPartitionResponse()
+            .setPartitionIndex(listOffsetsPartition.partitionIndex())
+            .setErrorCode(error.code),
+        callback)
+
+      assertNotNull(capturedResponses)
+      val partitionResponse = capturedResponses.iterator().next().partitions().iterator().next()
+      assertEquals(Errors.UNKNOWN_TOPIC_ID.code, partitionResponse.errorCode)
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
