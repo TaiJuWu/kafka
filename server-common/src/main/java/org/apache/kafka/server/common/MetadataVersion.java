@@ -125,7 +125,10 @@ public enum MetadataVersion {
     IBP_4_2_IV0(28, "4.2", "IV0", false),
 
     // Enables "streams" groups by default for new clusters (KIP-1071).
-    IBP_4_2_IV1(29, "4.2", "IV1", false);
+    IBP_4_2_IV1(29, "4.2", "IV1", false),
+
+    // list offset support topic id
+    IBP_4_3_IV0(30, "4.3", "IV0", false);
 
     // NOTES when adding a new version:
     //   Update the default version in @ClusterTest annotation to point to the latest version
@@ -271,7 +274,9 @@ public enum MetadataVersion {
     }
 
     public short listOffsetRequestVersion() {
-        if (this.isAtLeast(IBP_4_2_IV1)) {
+        if (this.isAtLeast(IBP_4_3_IV0)) {
+            return 12;
+        } else if (this.isAtLeast(IBP_4_2_IV1)) {
             return 11;
         } else if (this.isAtLeast(IBP_4_0_IV3)) {
             return 10;

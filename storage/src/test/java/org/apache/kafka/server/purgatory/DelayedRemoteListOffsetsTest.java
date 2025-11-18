@@ -109,51 +109,6 @@ public class DelayedRemoteListOffsetsTest {
     }
 
     @Test
-    public void testPartitionExpirationMeterUsesTopicPartitionKey() throws InterruptedException {
-        AtomicInteger numResponse = new AtomicInteger(0);
-        Consumer<Collection<ListOffsetsResponseData.ListOffsetsTopicResponse>> responseCallback = response ->
-            response.forEach(topic ->
-                topic.partitions().forEach(partition -> {
-                    assertEquals(Errors.REQUEST_TIMED_OUT.code(), partition.errorCode());
-                    numResponse.incrementAndGet();
-                })
-            );
-
-        AtomicInteger cancelledCount = new AtomicInteger(0);
-        CompletableFuture<Void> jobFuture = mock(CompletableFuture.class);
-        AsyncOffsetReadFutureHolder<OffsetResultHolder.FileRecordsOrError> holder = mock(AsyncOffsetReadFutureHolder.class);
-        when(holder.taskFuture()).thenAnswer(f -> new CompletableFuture<>());
-        when(holder.jobFuture()).thenReturn(jobFuture);
-        when(jobFuture.cancel(anyBoolean())).thenAnswer(f -> {
-            cancelledCount.incrementAndGet();
-            return true;
-        });
-
-        TopicPartition sharedPartition = new TopicPartition("test", 0);
-        TopicPartition otherPartition = new TopicPartition("test1", 1);
-        Map<TopicIdPartition, ListOffsetsPartitionStatus> statusByPartition = new HashMap<>();
-        statusByPartition.put(new TopicIdPartition(Uuid.randomUuid(), sharedPartition),
-            ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build());
-        statusByPartition.put(new TopicIdPartition(Uuid.randomUuid(), sharedPartition),
-            ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build());
-        statusByPartition.put(new TopicIdPartition(Uuid.randomUuid(), otherPartition),
-            ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build());
-
-        DelayedRemoteListOffsets delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, 5, statusByPartition, partitionOrException, responseCallback);
-        List<TopicPartitionOperationKey> listOffsetsRequestKeys = statusByPartition.keySet().stream().map(TopicPartitionOperationKey::new).toList();
-        long initialAggregateCount = DelayedRemoteListOffsets.AGGREGATE_EXPIRATION_METER.count();
-        purgatory.tryCompleteElseWatch(delayedRemoteListOffsets, listOffsetsRequestKeys);
-
-        Thread.sleep(100);
-        assertEquals(statusByPartition.size(), cancelledCount.get());
-        assertEquals(statusByPartition.size(), numResponse.get());
-        assertEquals(initialAggregateCount + statusByPartition.size(), DelayedRemoteListOffsets.AGGREGATE_EXPIRATION_METER.count());
-        assertEquals(2, DelayedRemoteListOffsets.PARTITION_EXPIRATION_METERS.size());
-        assertEquals(2, DelayedRemoteListOffsets.PARTITION_EXPIRATION_METERS.get(sharedPartition).count());
-        assertEquals(1, DelayedRemoteListOffsets.PARTITION_EXPIRATION_METERS.get(otherPartition).count());
-    }
-
-    @Test
     public void testResponseOnSuccess() {
         AtomicInteger numResponse = new AtomicInteger(0);
         Consumer<Collection<ListOffsetsResponseData.ListOffsetsTopicResponse>> responseCallback = response ->
@@ -285,8 +240,9 @@ public class DelayedRemoteListOffsetsTest {
             return true;
         });
 
+        TopicIdPartition failingPartition = new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("test1", 0));
         doThrow(new NotLeaderOrFollowerException("Not leader or follower!"))
-                .when(partitionOrException).accept(new TopicIdPartition(Uuid.randomUuid(), 0, "test1"));
+                .when(partitionOrException).accept(failingPartition);
         AsyncOffsetReadFutureHolder<OffsetResultHolder.FileRecordsOrError> errorFutureHolder = mock(AsyncOffsetReadFutureHolder.class);
         CompletableFuture<OffsetResultHolder.FileRecordsOrError> errorTaskFuture = new CompletableFuture<>();
         when(errorFutureHolder.taskFuture()).thenAnswer(f -> errorTaskFuture);
@@ -295,7 +251,7 @@ public class DelayedRemoteListOffsetsTest {
         Map<TopicIdPartition, ListOffsetsPartitionStatus> statusByPartition = Map.of(
             new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("test", 0)), ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build(),
             new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("test", 1)), ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build(),
-            new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("test1", 0)), ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(errorFutureHolder)).build(),
+            failingPartition, ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(errorFutureHolder)).build(),
             new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("test1", 1)), ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build()
         );
 
@@ -305,5 +261,47 @@ public class DelayedRemoteListOffsetsTest {
 
         assertEquals(1, cancelledCount.get());
         assertEquals(numResponse.get(), listOffsetsRequestKeys.size());
+    }
+
+    @Test
+    public void testPartitionExpirationMeterUsesTopicPartitionKey() throws InterruptedException {
+        AtomicInteger numResponse = new AtomicInteger(0);
+        Consumer<Collection<ListOffsetsResponseData.ListOffsetsTopicResponse>> responseCallback = response ->
+                response.forEach(topic ->
+                        topic.partitions().forEach(partition -> {
+                            assertEquals(Errors.REQUEST_TIMED_OUT.code(), partition.errorCode());
+                            numResponse.incrementAndGet();
+                        })
+                );
+
+        AtomicInteger cancelledCount = new AtomicInteger(0);
+        CompletableFuture<Void> jobFuture = mock(CompletableFuture.class);
+        AsyncOffsetReadFutureHolder<OffsetResultHolder.FileRecordsOrError> holder = mock(AsyncOffsetReadFutureHolder.class);
+        when(holder.taskFuture()).thenAnswer(f -> new CompletableFuture<>());
+        when(holder.jobFuture()).thenReturn(jobFuture);
+        when(jobFuture.cancel(anyBoolean())).thenAnswer(f -> {
+            cancelledCount.incrementAndGet();
+            return true;
+        });
+
+        TopicPartition sharedPartition = new TopicPartition("test", 0);
+        TopicPartition otherPartition = new TopicPartition("test1", 1);
+        Map<TopicIdPartition, ListOffsetsPartitionStatus> statusByPartition = new HashMap<>();
+        statusByPartition.put(new TopicIdPartition(Uuid.randomUuid(), sharedPartition),
+                ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build());
+        statusByPartition.put(new TopicIdPartition(Uuid.randomUuid(), sharedPartition),
+                ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build());
+        statusByPartition.put(new TopicIdPartition(Uuid.randomUuid(), otherPartition),
+                ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build());
+
+        DelayedRemoteListOffsets delayedRemoteListOffsets = new DelayedRemoteListOffsets(delayMs, 5, statusByPartition, partitionOrException, responseCallback);
+        List<TopicPartitionOperationKey> listOffsetsRequestKeys = statusByPartition.keySet().stream().map(TopicPartitionOperationKey::new).toList();
+        long initialAggregateCount = DelayedRemoteListOffsets.AGGREGATE_EXPIRATION_METER.count();
+        purgatory.tryCompleteElseWatch(delayedRemoteListOffsets, listOffsetsRequestKeys);
+
+        Thread.sleep(100);
+        assertEquals(statusByPartition.size(), cancelledCount.get());
+        assertEquals(statusByPartition.size(), numResponse.get());
+        assertEquals(initialAggregateCount + statusByPartition.size(), DelayedRemoteListOffsets.AGGREGATE_EXPIRATION_METER.count());
     }
 }

@@ -32,6 +32,7 @@ public class PartitionLeaderCache {
     private final Map<TopicPartition, Integer> topicPartitionLeaderCache;
     private final Map<TopicIdPartition, Integer> topicIdPartitionLeaderCache;
     private final Map<String, Uuid> topicByName;
+    // topic id covert to topic name but Uuid.ZERO should not store here
     private final Map<Uuid, String> topicById;
 
 
@@ -64,7 +65,7 @@ public class PartitionLeaderCache {
 
     public String getTopicNameById(Uuid uuid) {
         if (uuid == null || uuid.equals(Uuid.ZERO_UUID)) {
-            throw new IllegalStateException("Uuid can't be null or Uuid.ZERO");
+            throw new IllegalArgumentException("Uuid can't be null or Uuid.ZERO");
         }
         return topicById.get(uuid);
     }
@@ -83,12 +84,6 @@ public class PartitionLeaderCache {
         }
     }
 
-    public void putAllByTopicId(Map<TopicIdPartition, Integer> brokerIdMapping) {
-        for (Map.Entry<TopicIdPartition, Integer> entry : brokerIdMapping.entrySet()) {
-            putByTopicId(entry.getKey(), entry.getValue());
-        }
-    }
-
     public void putByTopicName(TopicPartition tp, int brokerMapping) {
         Integer existingMapping = topicPartitionLeaderCache.get(tp);
         topicPartitionLeaderCache.put(tp, brokerMapping);
@@ -96,17 +91,6 @@ public class PartitionLeaderCache {
             log.trace("Cached leader {} for {}", brokerMapping, tp);
         } else {
             log.trace("Refreshed leader {} for {} with the same broker id", brokerMapping, tp);
-        }
-    }
-
-    public void putByTopicId(TopicIdPartition tip, int brokerMapping) {
-        Integer existingMapping = topicIdPartitionLeaderCache.get(tip);
-        updateTopicIdMapping(tip.topic(), tip.topicId());
-        topicIdPartitionLeaderCache.put(tip, brokerMapping);
-        if (existingMapping == null) {
-            log.trace("Cached leader {} for {}", brokerMapping, tip);
-        } else {
-            log.trace("Refreshed leader {} for {} with the same broker id", brokerMapping, tip);
         }
     }
 
@@ -135,8 +119,7 @@ public class PartitionLeaderCache {
     private void updateTopicIdMapping(String topic, Uuid uuid) {
         Uuid existingUuid = topicByName.get(topic);
         if (existingUuid != null && !existingUuid.equals(uuid)) {
-            topicById.remove(existingUuid);
-            log.trace("Topic {} remapped from {} to {}", topic, existingUuid, uuid);
+            throw new IllegalArgumentException("Can't remap from Uuid=" + existingUuid + " to new Uuid=" + uuid);
         }
         topicByName.put(topic, uuid);
 
@@ -155,7 +138,15 @@ public class PartitionLeaderCache {
         return topicPartitionLeaderCache;
     }
 
-    public Map<TopicIdPartition, Integer> getById() {
-        return topicIdPartitionLeaderCache;
+    // Visible for test
+    void putByTopicId(TopicIdPartition tip, int brokerMapping) {
+        Integer existingMapping = topicIdPartitionLeaderCache.get(tip);
+        updateTopicIdMapping(tip.topic(), tip.topicId());
+        topicIdPartitionLeaderCache.put(tip, brokerMapping);
+        if (existingMapping == null) {
+            log.trace("Cached leader {} for {}", brokerMapping, tip);
+        } else {
+            log.trace("Refreshed leader {} for {} with the same broker id", brokerMapping, tip);
+        }
     }
 }
