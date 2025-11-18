@@ -4262,7 +4262,7 @@ public class KafkaAdminClient extends AdminClient {
             ListOffsetsHandler.newFuture(topicPartitionOffsets.keySet(), partitionLeaderCache);
         Map<TopicPartition, Long> offsetQueriesByPartition = topicPartitionOffsets.entrySet().stream()
             .collect(Collectors.toMap(Map.Entry::getKey, e -> getOffsetFromSpec(e.getValue())));
-        ListOffsetsHandler handler = new ListOffsetsHandler(offsetQueriesByPartition, options, logContext, defaultApiTimeoutMs);
+        ListOffsetsHandler handler = new ListOffsetsHandler(offsetQueriesByPartition, metadataManager.cluster(), options, logContext, defaultApiTimeoutMs);
         invokeDriver(handler, future, options.timeoutMs);
         return new ListOffsetsResult(future.all());
     }

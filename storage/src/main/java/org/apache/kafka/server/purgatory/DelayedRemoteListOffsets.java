@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.server.purgatory;
 
+import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.message.ListOffsetsResponseData;
@@ -53,14 +54,14 @@ public class DelayedRemoteListOffsets extends DelayedOperation {
     static final Map<TopicPartition, Meter> PARTITION_EXPIRATION_METERS = new ConcurrentHashMap<>();
 
     private final int version;
-    private final Map<TopicPartition, ListOffsetsPartitionStatus> statusByPartition;
-    private final Consumer<TopicPartition> partitionOrException;
+    private final Map<TopicIdPartition, ListOffsetsPartitionStatus> statusByPartition;
+    private final Consumer<TopicIdPartition> partitionOrException;
     private final Consumer<Collection<ListOffsetsResponseData.ListOffsetsTopicResponse>> responseCallback;
 
     public DelayedRemoteListOffsets(long delayMs,
                                     int version,
-                                    Map<TopicPartition, ListOffsetsPartitionStatus> statusByPartition,
-                                    Consumer<TopicPartition> partitionOrException,
+                                    Map<TopicIdPartition, ListOffsetsPartitionStatus> statusByPartition,
+                                    Consumer<TopicIdPartition> partitionOrException,
                                     Consumer<Collection<ListOffsetsResponseData.ListOffsetsTopicResponse>> responseCallback) {
         super(delayMs);
         this.version = version;
@@ -69,12 +70,12 @@ public class DelayedRemoteListOffsets extends DelayedOperation {
         this.responseCallback = responseCallback;
         // Mark the status as completed, if there is no async task to track.
         // If there is a task to track, then build the response as REQUEST_TIMED_OUT by default.
-        statusByPartition.forEach((topicPartition, status) -> {
+        statusByPartition.forEach((topicIdPartition, status) -> {
             status.completed(status.futureHolderOpt().isEmpty());
             if (status.futureHolderOpt().isPresent()) {
-                status.responseOpt(Optional.of(buildErrorResponse(Errors.REQUEST_TIMED_OUT, topicPartition.partition())));
+                status.responseOpt(Optional.of(buildErrorResponse(Errors.REQUEST_TIMED_OUT, topicIdPartition.partition())));
             }
-            LOG.trace("Initial partition status for {} is {}", topicPartition, status);
+            LOG.trace("Initial partition status for {} is {}", topicIdPartition.partition(), status);
         });
     }
 
@@ -83,11 +84,11 @@ public class DelayedRemoteListOffsets extends DelayedOperation {
      */
     @Override
     public void onExpiration() {
-        statusByPartition.forEach((topicPartition, status) -> {
+        statusByPartition.forEach((topicIdPartition, status) -> {
             if (!status.completed()) {
-                LOG.debug("Expiring list offset request for partition {} with status {}", topicPartition, status);
+                LOG.debug("Expiring list offset request for partition {} with status {}", topicIdPartition, status);
                 status.futureHolderOpt().ifPresent(futureHolder -> futureHolder.jobFuture().cancel(true));
-                recordExpiration(topicPartition);
+                recordExpiration(topicIdPartition.topicPartition());
             }
         });
     }
@@ -99,9 +100,9 @@ public class DelayedRemoteListOffsets extends DelayedOperation {
     @Override
     public void onComplete() {
         Map<String, ListOffsetsResponseData.ListOffsetsTopicResponse> groupedByTopic = new HashMap<>();
-        statusByPartition.forEach((tp, status) -> {
-            ListOffsetsResponseData.ListOffsetsTopicResponse response = groupedByTopic.computeIfAbsent(tp.topic(), k ->
-                    new ListOffsetsResponseData.ListOffsetsTopicResponse().setName(tp.topic()));
+        statusByPartition.forEach((tip, status) -> {
+            ListOffsetsResponseData.ListOffsetsTopicResponse response = groupedByTopic.computeIfAbsent(tip.topic(), k ->
+                    new ListOffsetsResponseData.ListOffsetsTopicResponse().setName(tip.topic()).setTopicId(tip.topicId()));
             status.responseOpt().ifPresent(res -> response.partitions().add(res));
         });
         responseCallback.accept(groupedByTopic.values());

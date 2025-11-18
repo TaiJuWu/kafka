@@ -197,7 +197,7 @@ public class ClusterTestExtensionsTest {
 
     @ClusterTest
     public void testDefaults(ClusterInstance clusterInstance) {
-        assertEquals(MetadataVersion.latestTesting(), clusterInstance.config().metadataVersion());
+        assertEquals(MetadataVersion.IBP_4_2_IV1, clusterInstance.config().metadataVersion());
     }
 
     @ClusterTest(types = {Type.KRAFT, Type.CO_KRAFT})

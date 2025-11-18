@@ -318,6 +318,10 @@ public class AdminMetadataManager {
         }
     }
 
+    public Cluster cluster() {
+        return cluster;
+    }
+
     public void initiateRebootstrap() {
         this.metadataAttemptStartMs = Optional.of(0L);
     }

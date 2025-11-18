@@ -19,8 +19,10 @@ package org.apache.kafka.clients.admin.internals;
 import org.apache.kafka.clients.admin.ListOffsetsOptions;
 import org.apache.kafka.clients.admin.ListOffsetsResult.ListOffsetsResultInfo;
 import org.apache.kafka.clients.admin.internals.AdminApiHandler.Batched;
+import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
@@ -43,6 +45,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -50,6 +53,7 @@ import java.util.stream.Collectors;
 public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffsetsResultInfo> {
 
     private final Map<TopicPartition, Long> offsetTimestampsByPartition;
+    private final Cluster cluster;
     private final ListOffsetsOptions options;
     private final Logger log;
     private final AdminApiLookupStrategy<TopicPartition> lookupStrategy;
@@ -57,11 +61,13 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
 
     public ListOffsetsHandler(
         Map<TopicPartition, Long> offsetTimestampsByPartition,
+        Cluster cluster,
         ListOffsetsOptions options,
         LogContext logContext,
         int defaultApiTimeoutMs
     ) {
         this.offsetTimestampsByPartition = offsetTimestampsByPartition;
+        this.cluster = cluster;
         this.options = options;
         this.log = logContext.logger(ListOffsetsHandler.class);
         this.lookupStrategy = new PartitionLeaderStrategy(logContext, false);
@@ -82,7 +88,7 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
     ListOffsetsRequest.Builder buildBatchedRequest(int brokerId, Set<TopicPartition> keys) {
         Map<String, ListOffsetsTopic> topicsByName = CollectionUtils.groupPartitionsByTopic(
             keys,
-            topicName -> new ListOffsetsTopic().setName(topicName),
+            topicName -> new ListOffsetsTopic().setName(topicName).setTopicId(cluster.topicId(topicName)),
             (listOffsetsTopic, partitionId) -> {
                 TopicPartition topicPartition = new TopicPartition(listOffsetsTopic.name(), partitionId);
                 long offsetTimestamp = offsetTimestampsByPartition.get(topicPartition);
@@ -91,6 +97,12 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
                         .setPartitionIndex(partitionId)
                         .setTimestamp(offsetTimestamp));
             });
+
+        boolean supportsTopicIds = topicsByName.values().stream()
+                .filter(Objects::nonNull)
+                .map(ListOffsetsTopic::topicId)
+                .anyMatch(topicId -> topicId != null && !topicId.equals(Uuid.ZERO_UUID));
+
         boolean supportsMaxTimestamp = keys
             .stream()
             .anyMatch(key -> offsetTimestampsByPartition.get(key) == ListOffsetsRequest.MAX_TIMESTAMP);
@@ -110,6 +122,7 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
         int timeoutMs = options.timeoutMs() != null ? options.timeoutMs() : defaultApiTimeoutMs;
         return ListOffsetsRequest.Builder.forConsumer(true,
                         options.isolationLevel(),
+                        supportsTopicIds,
                         supportsMaxTimestamp,
                         requireEarliestLocalTimestamp,
                         requireTieredStorageTimestamp,
