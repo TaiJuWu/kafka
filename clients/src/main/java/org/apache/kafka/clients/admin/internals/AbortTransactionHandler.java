@@ -34,7 +34,6 @@ import org.apache.kafka.common.utils.LogContext;
 import org.slf4j.Logger;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import static java.util.Collections.singleton;
