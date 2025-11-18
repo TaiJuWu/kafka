@@ -19,15 +19,20 @@ package org.apache.kafka.clients.admin.internals;
 import org.apache.kafka.common.TopicIdPartition;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
 
 public class PartitionLeaderCache {
+    private static final Logger log = LoggerFactory.getLogger(PartitionLeaderCache.class);
+
     private final Map<TopicPartition, Integer> partitionLeaderCache;
     private final Map<TopicIdPartition, Integer> partitionIdLeaderCache;
     private final Map<String, Uuid> topicByName;
     private final Map<Uuid, String> topicById;
+
 
     public PartitionLeaderCache() {
         this.partitionLeaderCache = new HashMap<>();
@@ -79,34 +84,46 @@ public class PartitionLeaderCache {
     }
 
     public void putByTopicName(TopicPartition tp, int brokerMapping) {
-        if (partitionLeaderCache.containsKey(tp)) {
-            throw new IllegalStateException("Leader mapping already exists for " + tp);
-        }
-
+        Integer existingMapping = partitionLeaderCache.get(tp);
         if (!topicByName.containsKey(tp.topic())) {
             updateTopicIdMapping(tp.topic(), Uuid.ZERO_UUID);
         }
         partitionLeaderCache.put(tp, brokerMapping);
+        if (existingMapping == null) {
+            log.trace("Cached leader {} for {}", brokerMapping, tp);
+        } else {
+            log.trace("Refreshed leader {} for {} with the same broker id", brokerMapping, tp);
+        }
     }
 
     public void putByTopicId(TopicIdPartition tip, int brokerMapping) {
-        if (tip.topicId() == null || tip.topicId().equals(Uuid.ZERO_UUID)) {
-            throw new IllegalStateException("Uuid can't be null or Uuid.ZERO");
-        }
-        if (partitionIdLeaderCache.containsKey(tip)) {
+        Integer existingMapping = partitionIdLeaderCache.get(tip);
+        if (existingMapping != null && !existingMapping.equals(brokerMapping)) {
+            log.warn("Received conflicting leader mapping for {}. Existing leader {}, new leader {}", tip, existingMapping, brokerMapping);
             throw new IllegalStateException("Leader mapping already exists for " + tip);
         }
 
         updateTopicIdMapping(tip.topic(), tip.topicId());
         partitionIdLeaderCache.put(tip, brokerMapping);
+        if (existingMapping == null) {
+            log.trace("Cached leader {} for {}", brokerMapping, tip);
+        } else {
+            log.trace("Refreshed leader {} for {} with the same broker id", brokerMapping, tip);
+        }
     }
 
-    public int removeByName(TopicPartition tp) {
-        return partitionLeaderCache.remove(tp);
+    public void removeByName(TopicPartition tp) {
+        Integer removed = partitionLeaderCache.remove(tp);
+        if (removed != null) {
+            log.trace("Removed cached leader {} for {}", removed, tp);
+        }
     }
 
-    public int removeById(TopicIdPartition tp) {
-        return partitionIdLeaderCache.remove(tp);
+    public void removeById(TopicIdPartition tp) {
+        Integer removed = partitionIdLeaderCache.remove(tp);
+        if (removed != null) {
+            log.trace("Removed cached leader {} for {}", removed, tp);
+        }
     }
 
     public void recordTopicId(String topic, Uuid topicId) {
@@ -114,6 +131,7 @@ public class PartitionLeaderCache {
             return;
         }
         Uuid effective = topicId == null ? Uuid.ZERO_UUID : topicId;
+        log.trace("Recording topic id mapping {} -> {}", topic, effective);
         updateTopicIdMapping(topic, effective);
     }
 
@@ -136,6 +154,7 @@ public class PartitionLeaderCache {
                 throw new IllegalStateException("Uuid " + uuid + " is already mapped to topic " + existingTopic);
             }
             topicById.put(uuid, topic);
+            log.trace("Updated topic id mapping {} -> {}", topic, uuid);
         }
     }
 
