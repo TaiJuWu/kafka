@@ -134,7 +134,8 @@ public class PartitionLeaderCache {
     private void updateTopicIdMapping(String topic, Uuid uuid) {
         Uuid existingUuid = topicByName.get(topic);
         if (existingUuid != null && !existingUuid.equals(uuid)) {
-            throw new IllegalStateException("Topic " + topic + " is already mapped to " + existingUuid);
+            topicById.remove(existingUuid);
+            log.trace("Topic {} remapped from {} to {}", topic, existingUuid, uuid);
         }
         topicByName.put(topic, uuid);
 

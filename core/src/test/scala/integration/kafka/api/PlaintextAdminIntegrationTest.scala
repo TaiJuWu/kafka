@@ -1463,6 +1463,38 @@ class PlaintextAdminIntegrationTest extends BaseAdminIntegrationTest {
   }
 
   @Test
+  def testListOffsetsAfterTopicRecreation(): Unit = {
+    val listOffsetsTopic = "list-offsets-recreation"
+    createTopic(listOffsetsTopic, numPartitions = 1, replicationFactor = brokerCount)
+
+    client = createAdminClient
+    val tp = new TopicPartition(listOffsetsTopic, 0)
+
+    def latestOffset(): Long = {
+      client.listOffsets(util.Map.of(tp, OffsetSpec.latest())).partitionResult(tp).get.offset()
+    }
+
+    val producer = createProducer()
+    sendRecords(producer, 5, tp)
+    assertEquals(5L, latestOffset())
+
+    // We don't need to wait here because the topic id should change and
+    // listOffset RPC can distinguish
+    client.deleteTopics(util.List.of(listOffsetsTopic)).all.get()
+
+    client.createTopics(util.List.of(new NewTopic(listOffsetsTopic, 1, brokerCount.toShort))).all.get()
+    waitForTopics(client, List(listOffsetsTopic), List())
+
+    val newProducer = createProducer()
+    val recreatedPartition = new TopicPartition(listOffsetsTopic, 0)
+    sendRecords(newProducer, 3, recreatedPartition)
+
+    val recreatedOffset = client.listOffsets(util.Map.of(recreatedPartition, OffsetSpec.latest()))
+      .partitionResult(recreatedPartition).get.offset()
+    assertEquals(3L, recreatedOffset)
+  }
+
+  @Test
   def testReplicaCanFetchFromLogStartOffsetAfterDeleteRecords(): Unit = {
     val leaders = createTopic(topic, replicationFactor = brokerCount)
     val followerIndex = if (leaders(0) != brokers.head.config.brokerId) 0 else 1

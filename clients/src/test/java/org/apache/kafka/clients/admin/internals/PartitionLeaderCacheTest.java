@@ -82,11 +82,29 @@ public class PartitionLeaderCacheTest {
     @Test
     public void testConflictingTopicIdMappingThrows() {
         PartitionLeaderCache cache = new PartitionLeaderCache();
-        TopicPartition tp = new TopicPartition("foo", 0);
-        TopicIdPartition first = new TopicIdPartition(Uuid.randomUuid(), tp);
+        TopicPartition foo = new TopicPartition("foo", 0);
+        Uuid topicId = Uuid.randomUuid();
+        TopicIdPartition first = new TopicIdPartition(topicId, foo);
         cache.putByTopicId(first, 5);
 
-        TopicIdPartition conflict = new TopicIdPartition(Uuid.randomUuid(), tp);
+        TopicPartition bar = new TopicPartition("bar", 0);
+        TopicIdPartition conflict = new TopicIdPartition(topicId, bar);
         assertThrows(IllegalStateException.class, () -> cache.putByTopicId(conflict, 6));
+    }
+
+    @Test
+    public void testTopicIdUpdatedAfterRecreation() {
+        PartitionLeaderCache cache = new PartitionLeaderCache();
+        TopicPartition tp = new TopicPartition("foo", 0);
+        TopicIdPartition initial = new TopicIdPartition(Uuid.randomUuid(), tp);
+        cache.putByTopicId(initial, 1);
+
+        Uuid recreatedId = Uuid.randomUuid();
+        TopicIdPartition recreated = new TopicIdPartition(recreatedId, tp);
+        cache.putByTopicId(recreated, 2);
+
+        assertEquals(recreatedId, cache.getTopicIdByName("foo"));
+        assertEquals("foo", cache.getTopicNameById(recreatedId));
+        assertNull(cache.getTopicNameById(initial.topicId()));
     }
 }

@@ -144,6 +144,7 @@ import org.apache.kafka.common.message.ListConfigResourcesResponseData;
 import org.apache.kafka.common.message.ListGroupsResponseData;
 import org.apache.kafka.common.message.ListGroupsResponseData.ListedGroup;
 import org.apache.kafka.common.message.ListOffsetsResponseData;
+import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic;
 import org.apache.kafka.common.message.ListOffsetsResponseData.ListOffsetsTopicResponse;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData.OngoingPartitionReassignment;
@@ -8322,6 +8323,110 @@ public class KafkaAdminClientTest {
             assertEquals(offsets.get(tp2), result.partitionResult(tp2).get());
             assertEquals(offsets.get(tp3), result.partitionResult(tp3).get());
             assertThrows(IllegalArgumentException.class, () -> result.partitionResult(new TopicPartition("unknown", 0)).get());
+        }
+    }
+
+    @Test
+    public void testListOffsetsUsesZeroTopicIdWhenUnknown() throws Exception {
+        Node node = new Node(0, "localhost", 8120);
+        List<PartitionInfo> pInfos = new ArrayList<>();
+        pInfos.add(new PartitionInfo("foo", 0, node, new Node[]{node}, new Node[]{node}));
+        final Cluster cluster =
+            new Cluster(
+                "mockClusterId",
+                singletonList(node),
+                pInfos,
+                Collections.emptySet(),
+                Collections.emptySet(),
+                node);
+
+        final TopicPartition tp0 = new TopicPartition("foo", 0);
+        final Uuid topicIdFromResponse = Uuid.randomUuid();
+
+        try (AdminClientUnitTestEnv env = new AdminClientUnitTestEnv(cluster,
+            AdminClientConfig.RETRIES_CONFIG, "2")) {
+
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            env.kafkaClient().prepareResponse(prepareMetadataResponse(cluster, Errors.NONE));
+
+            ListOffsetsTopicResponse topicResponse =
+                ListOffsetsResponse.singletonListOffsetsTopicResponse(tp0, Errors.NONE, -1L, 111L, 5);
+            topicResponse.setTopicId(topicIdFromResponse);
+
+            env.kafkaClient().prepareResponse(
+                request -> {
+                    if (!(request instanceof ListOffsetsRequest)) {
+                        return false;
+                    }
+                    ListOffsetsRequest listOffsetsRequest = (ListOffsetsRequest) request;
+                    assertEquals(1, listOffsetsRequest.topics().size());
+                    ListOffsetsTopic topic = listOffsetsRequest.topics().get(0);
+                    assertEquals(tp0.topic(), topic.name());
+                    assertEquals(Uuid.ZERO_UUID, topic.topicId());
+                    return true;
+                },
+                new ListOffsetsResponse(new ListOffsetsResponseData()
+                    .setThrottleTimeMs(0)
+                    .setTopics(singletonList(topicResponse))));
+
+            ListOffsetsResult result = env.adminClient().listOffsets(Collections.singletonMap(tp0, OffsetSpec.latest()));
+            assertEquals(111L, result.partitionResult(tp0).get().offset());
+        }
+    }
+
+    @Test
+    public void testListOffsetsCachesTopicIdFromResponse() throws Exception {
+        Node node = new Node(0, "localhost", 8120);
+        List<PartitionInfo> pInfos = new ArrayList<>();
+        pInfos.add(new PartitionInfo("foo", 0, node, new Node[]{node}, new Node[]{node}));
+        final Cluster cluster =
+            new Cluster(
+                "mockClusterId",
+                singletonList(node),
+                pInfos,
+                Collections.emptySet(),
+                Collections.emptySet(),
+                node);
+
+        final TopicPartition tp0 = new TopicPartition("foo", 0);
+        final Uuid topicId = Uuid.randomUuid();
+
+        try (AdminClientUnitTestEnv env = new AdminClientUnitTestEnv(cluster,
+            AdminClientConfig.RETRIES_CONFIG, "2")) {
+
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            env.kafkaClient().prepareResponse(prepareMetadataResponse(cluster, Errors.NONE));
+
+            ListOffsetsTopicResponse initialResponse =
+                ListOffsetsResponse.singletonListOffsetsTopicResponse(tp0, Errors.NONE, -1L, 111L, 5);
+            initialResponse.setTopicId(topicId);
+            env.kafkaClient().prepareResponse(new ListOffsetsResponse(new ListOffsetsResponseData()
+                .setThrottleTimeMs(0)
+                .setTopics(singletonList(initialResponse))));
+
+            env.adminClient().listOffsets(Collections.singletonMap(tp0, OffsetSpec.latest())).all().get();
+
+            ListOffsetsTopicResponse subsequentResponse =
+                ListOffsetsResponse.singletonListOffsetsTopicResponse(tp0, Errors.NONE, -1L, 222L, 6);
+            subsequentResponse.setTopicId(topicId);
+
+            env.kafkaClient().prepareResponse(
+                request -> {
+                    if (!(request instanceof ListOffsetsRequest)) {
+                        return false;
+                    }
+                    ListOffsetsRequest listOffsetsRequest = (ListOffsetsRequest) request;
+                    assertEquals(1, listOffsetsRequest.topics().size());
+                    ListOffsetsTopic topic = listOffsetsRequest.topics().get(0);
+                    assertEquals(topicId, topic.topicId());
+                    return true;
+                },
+                new ListOffsetsResponse(new ListOffsetsResponseData()
+                    .setThrottleTimeMs(0)
+                    .setTopics(singletonList(subsequentResponse))));
+
+            ListOffsetsResult result = env.adminClient().listOffsets(Collections.singletonMap(tp0, OffsetSpec.latest()));
+            assertEquals(222L, result.partitionResult(tp0).get().offset());
         }
     }
 
