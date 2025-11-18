@@ -127,8 +127,8 @@ public enum MetadataVersion {
     // Enables "streams" groups by default for new clusters (KIP-1071).
     IBP_4_2_IV1(29, "4.2", "IV1", false),
 
-    // list offset support topic id
-    IBP_4_3_IV0(30, "4.3", "IV0", false);
+    // list offset RPC support topic id
+    IBP_4_3_IV0(30, "4.3", "IV0", true);
 
     // NOTES when adding a new version:
     //   Update the default version in @ClusterTest annotation to point to the latest version
