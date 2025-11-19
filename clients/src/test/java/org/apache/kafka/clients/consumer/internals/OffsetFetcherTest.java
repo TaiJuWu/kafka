@@ -798,6 +798,7 @@ public class OffsetFetcherTest {
                     List<ListOffsetsTopic> expectedTopics = Collections.singletonList(
                             new ListOffsetsTopic()
                                 .setName(tp0.topic())
+                                .setTopicId(topicId)
                                 .setPartitions(Arrays.asList(
                                         new ListOffsetsPartition()
                                             .setPartitionIndex(tp1.partition())

@@ -393,9 +393,38 @@ public class OffsetFetcher {
     private RequestFuture<ListOffsetResult> sendListOffsetRequest(final Node node,
                                                                   final Map<TopicPartition, ListOffsetsPartition> timestampsToSearch,
                                                                   boolean requireTimestamp) {
+        // Build topics with topic IDs from metadata
+        Map<String, org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic> topicsByName = new HashMap<>();
+        for (Map.Entry<TopicPartition, ListOffsetsPartition> entry : timestampsToSearch.entrySet()) {
+            TopicPartition tp = entry.getKey();
+            org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic topic = topicsByName.computeIfAbsent(
+                tp.topic(),
+                topicName -> {
+                    org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic t =
+                        new org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic()
+                        .setName(topicName);
+                    // Try to get topic ID from metadata
+                    org.apache.kafka.common.Uuid topicId = metadata.topicIds().get(topicName);
+                    if (topicId != null) {
+                        t.setTopicId(topicId);
+                    }
+                    return t;
+                }
+            );
+            topic.partitions().add(entry.getValue());
+        }
+
+        // Only allow topicId-based protocol (v12) if ALL topics have valid topicIds
+        // If any topic has ZERO_UUID or null, we must restrict to name-based protocol (v11 or lower)
+        boolean canUseTopicIds = !topicsByName.isEmpty() && topicsByName.values().stream()
+            .allMatch(topic -> {
+                org.apache.kafka.common.Uuid topicId = topic.topicId();
+                return topicId != null && !topicId.equals(org.apache.kafka.common.Uuid.ZERO_UUID);
+            });
+
         ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
-                .forConsumer(requireTimestamp, isolationLevel)
-                .setTargetTimes(ListOffsetsRequest.toListOffsetsTopics(timestampsToSearch))
+                .forConsumer(requireTimestamp, isolationLevel, false, false, false, false, canUseTopicIds)
+                .setTargetTimes(new java.util.ArrayList<>(topicsByName.values()))
                 .setTimeoutMs(requestTimeoutMs);
 
         log.debug("Sending ListOffsetRequest {} to broker {}", builder, node);

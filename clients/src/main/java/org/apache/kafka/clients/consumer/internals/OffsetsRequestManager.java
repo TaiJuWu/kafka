@@ -614,9 +614,37 @@ public final class OffsetsRequestManager implements RequestManager, ClusterResou
             Map<TopicPartition, ListOffsetsRequestData.ListOffsetsPartition> targetTimes,
             boolean requireTimestamps,
             List<NetworkClientDelegate.UnsentRequest> unsentRequests) {
+        // Build topics with topic IDs from metadata
+        Map<String, ListOffsetsRequestData.ListOffsetsTopic> topicsByName = new HashMap<>();
+        for (Map.Entry<TopicPartition, ListOffsetsRequestData.ListOffsetsPartition> entry : targetTimes.entrySet()) {
+            TopicPartition tp = entry.getKey();
+            ListOffsetsRequestData.ListOffsetsTopic topic = topicsByName.computeIfAbsent(
+                tp.topic(),
+                topicName -> {
+                    ListOffsetsRequestData.ListOffsetsTopic t = new ListOffsetsRequestData.ListOffsetsTopic()
+                        .setName(topicName);
+                    // Try to get topic ID from metadata
+                    org.apache.kafka.common.Uuid topicId = metadata.topicIds().get(topicName);
+                    if (topicId != null) {
+                        t.setTopicId(topicId);
+                    }
+                    return t;
+                }
+            );
+            topic.partitions().add(entry.getValue());
+        }
+
+        // Only allow topicId-based protocol (v12) if ALL topics have valid topicIds
+        // If any topic has ZERO_UUID or null, we must restrict to name-based protocol (v11 or lower)
+        boolean canUseTopicIds = !topicsByName.isEmpty() && topicsByName.values().stream()
+            .allMatch(topic -> {
+                org.apache.kafka.common.Uuid topicId = topic.topicId();
+                return topicId != null && !topicId.equals(org.apache.kafka.common.Uuid.ZERO_UUID);
+            });
+
         ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
-                .forConsumer(requireTimestamps, isolationLevel)
-                .setTargetTimes(ListOffsetsRequest.toListOffsetsTopics(targetTimes))
+                .forConsumer(requireTimestamps, isolationLevel, false, false, false, false, canUseTopicIds)
+                .setTargetTimes(new ArrayList<>(topicsByName.values()))
                 .setTimeoutMs(requestTimeoutMs);
 
         log.debug("Creating ListOffset request {} for broker {} to reset positions", builder,

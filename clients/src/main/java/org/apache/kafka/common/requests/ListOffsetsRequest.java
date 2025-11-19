@@ -60,7 +60,7 @@ public class ListOffsetsRequest extends AbstractRequest {
 
         public static Builder forConsumer(boolean requireTimestamp,
                                           IsolationLevel isolationLevel) {
-            return forConsumer(requireTimestamp, isolationLevel, false, false, false, false, true);
+            return forConsumer(requireTimestamp, isolationLevel, false, false, false, false, false);
         }
 
         public static Builder forConsumer(boolean requireTimestamp,
@@ -71,7 +71,7 @@ public class ListOffsetsRequest extends AbstractRequest {
                                           boolean requireEarliestPendingUploadTimestamp) {
             return forConsumer(requireTimestamp, isolationLevel, requireMaxTimestamp,
                               requireEarliestLocalTimestamp, requireTieredStorageTimestamp,
-                              requireEarliestPendingUploadTimestamp, true);
+                              requireEarliestPendingUploadTimestamp, false);
         }
 
         public static Builder forConsumer(boolean requireTimestamp,
@@ -82,7 +82,9 @@ public class ListOffsetsRequest extends AbstractRequest {
                                           boolean requireEarliestPendingUploadTimestamp,
                                           boolean canUseTopicIds) {
             short minVersion = ApiKeys.LIST_OFFSETS.oldestVersion();
-            if (requireEarliestPendingUploadTimestamp)
+            if (canUseTopicIds)
+                minVersion = 12;
+            else if (requireEarliestPendingUploadTimestamp)
                 minVersion = 11;
             else if (requireTieredStorageTimestamp)
                 minVersion = 9;
@@ -95,9 +97,7 @@ public class ListOffsetsRequest extends AbstractRequest {
             else if (requireTimestamp)
                 minVersion = 1;
 
-            // If not all topics have valid topicIds, restrict maxVersion to 11 to ensure name-based protocol is used
-            short maxVersion = canUseTopicIds ? ApiKeys.LIST_OFFSETS.latestVersion() : (short) 11;
-            return new Builder(minVersion, maxVersion, CONSUMER_REPLICA_ID, isolationLevel);
+            return new Builder(minVersion, ApiKeys.LIST_OFFSETS.latestVersion(), CONSUMER_REPLICA_ID, isolationLevel);
         }
 
         public static Builder forReplica(short allowedVersion, int replicaId) {
