@@ -4082,7 +4082,7 @@ class ReplicaManagerTest {
   }
 
   @Test
-  def testFetchOffsetReturnsUnknownTopicIdOnMismatch(): Unit = {
+  def testFetchOffsetReturnsInconsistentTopicIdOnMismatch(): Unit = {
     val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time))
     try {
       setupMetadataCacheWithTopicIds(topicIds, replicaManager.metadataCache)
@@ -4118,7 +4118,7 @@ class ReplicaManagerTest {
 
       assertNotNull(capturedResponses)
       val partitionResponse = capturedResponses.iterator().next().partitions().iterator().next()
-      assertEquals(Errors.UNKNOWN_TOPIC_ID.code, partitionResponse.errorCode)
+      assertEquals(Errors.INCONSISTENT_TOPIC_ID.code, partitionResponse.errorCode)
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }

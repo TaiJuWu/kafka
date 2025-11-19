@@ -1488,7 +1488,7 @@ class ReplicaManager(val config: KafkaConfig,
           debug(s"OffsetRequest with correlation id $correlationId from client $clientId on partition ${topicIdPartition} " +
             s"failed because the provided topic ID ${requestTopicIdOpt.get} does not match the current topic ID $cachedTopicIdOpt.")
           statusByPartition += topicIdPartition ->
-            ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.UNKNOWN_TOPIC_ID, partition))).build()
+            ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.INCONSISTENT_TOPIC_ID, partition))).build()
         } else if (isListOffsetsTimestampUnsupported(partition.timestamp(), version)) {
           statusByPartition += topicIdPartition ->
             ListOffsetsPartitionStatus.builder().responseOpt(Optional.of(buildErrorResponse(Errors.UNSUPPORTED_VERSION, partition))).build()
