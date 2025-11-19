@@ -51,9 +51,9 @@
       "about": "The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota." },
     { "name": "Topics", "type": "[]ListOffsetsTopicResponse", "versions": "0+",
       "about": "Each topic in the response.", "fields": [
-      { "name": "Name", "type": "string", "versions": "0+", "entityType": "topicName",
+      { "name": "Name", "type": "string", "versions": "0-11", "entityType": "topicName", "ignorable": true,
         "about": "The topic name." },
-      { "name": "TopicId", "type": "uuid", "versions": "12+", "default": null, "ignorable": true,
+      { "name": "TopicId", "type": "uuid", "versions": "12+", "ignorable": true,
         "about": "The unique topic ID."},
       { "name": "Partitions", "type": "[]ListOffsetsPartitionResponse", "versions": "0+",
         "about": "Each partition in the response.", "fields": [

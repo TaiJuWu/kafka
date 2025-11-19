@@ -126,20 +126,17 @@ public class ListOffsetsRequestTest {
         ListOffsetsRequest.Builder requestCommittedRequestBuilder = ListOffsetsRequest.Builder
             .forConsumer(false, IsolationLevel.READ_COMMITTED);
 
-        ListOffsetsRequest.Builder topicIdSupportBuilder = ListOffsetsRequest.Builder
-                .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, true, true, false, false, false);
-
         ListOffsetsRequest.Builder maxTimestampRequestBuilder = ListOffsetsRequest.Builder
-            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, true, false, false, false);
+            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, true, false, false, false);
 
         ListOffsetsRequest.Builder requireEarliestLocalTimestampRequestBuilder = ListOffsetsRequest.Builder
-            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, false, true, false, false);
+            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, true, false, false);
 
         ListOffsetsRequest.Builder requireTieredStorageTimestampRequestBuilder = ListOffsetsRequest.Builder
-            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, false, false, true, false);
+            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, false, true, false);
 
         ListOffsetsRequest.Builder requireEarliestPendingUploadTimestampRequestBuilder = ListOffsetsRequest.Builder
-            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, false, false, false, true);
+            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, false, false, true);
 
         assertEquals((short) 1, consumerRequestBuilder.oldestAllowedVersion());
         assertEquals((short) 1, requireTimestampRequestBuilder.oldestAllowedVersion());
@@ -148,6 +145,5 @@ public class ListOffsetsRequestTest {
         assertEquals((short) 8, requireEarliestLocalTimestampRequestBuilder.oldestAllowedVersion());
         assertEquals((short) 9, requireTieredStorageTimestampRequestBuilder.oldestAllowedVersion());
         assertEquals((short) 11, requireEarliestPendingUploadTimestampRequestBuilder.oldestAllowedVersion());
-        assertEquals((short) 12, topicIdSupportBuilder.oldestAllowedVersion());
     }
 }

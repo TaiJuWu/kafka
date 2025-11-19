@@ -35,7 +35,7 @@ import org.apache.kafka.common.message.AddPartitionsToTxnResponseData.{AddPartit
 import org.apache.kafka.common.message.DeleteRecordsResponseData.{DeleteRecordsPartitionResult, DeleteRecordsTopicResult}
 import org.apache.kafka.common.message.DeleteShareGroupOffsetsRequestData.DeleteShareGroupOffsetsRequestTopic
 import org.apache.kafka.common.message.DeleteShareGroupOffsetsResponseData.DeleteShareGroupOffsetsResponseTopic
-import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition
+import org.apache.kafka.common.message.ListOffsetsRequestData.{ListOffsetsPartition, ListOffsetsTopic}
 import org.apache.kafka.common.message.ListOffsetsResponseData.{ListOffsetsPartitionResponse, ListOffsetsTopicResponse}
 import org.apache.kafka.common.message.MetadataResponseData.{MetadataResponsePartition, MetadataResponseTopic}
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderTopic
@@ -784,8 +784,48 @@ class KafkaApis(val requestChannel: RequestChannel,
         .setOffset(ListOffsetsResponse.UNKNOWN_OFFSET)
     }
 
+    // Resolve topic IDs to names for version 12+
+    val topicNames =
+      if (version >= 12)
+        metadataCache.topicIdsToNames()
+      else
+        Collections.emptyMap[Uuid, String]()
+
+    // Separate topics with unknown topic IDs (for v12+)
+    val (knownTopics, unknownTopicIdResponses) = if (version >= 12) {
+      val known = new util.ArrayList[ListOffsetsTopic]()
+      val unknown = new util.ArrayList[ListOffsetsTopicResponse]()
+
+      offsetRequest.topics.asScala.foreach { topic =>
+        val topicName = if (topic.topicId() != null && topic.topicId() != Uuid.ZERO_UUID) {
+          topicNames.get(topic.topicId())
+        } else {
+          topic.name()
+        }
+
+        if (topicName == null) {
+          // Topic ID cannot be resolved to a name
+          unknown.add(new ListOffsetsTopicResponse()
+            .setName(topic.name())
+            .setTopicId(topic.topicId())
+            .setPartitions(topic.partitions.asScala.map(partition =>
+              buildErrorResponse(Errors.UNKNOWN_TOPIC_ID, partition)).asJava))
+        } else {
+          // Create a new topic with resolved name
+          val resolvedTopic = new ListOffsetsTopic()
+            .setName(topicName)
+            .setTopicId(topic.topicId())
+            .setPartitions(topic.partitions())
+          known.add(resolvedTopic)
+        }
+      }
+      (known, unknown)
+    } else {
+      (offsetRequest.topics(), new util.ArrayList[ListOffsetsTopicResponse]())
+    }
+
     val (authorizedRequestInfo, unauthorizedRequestInfo) = authHelper.partitionSeqByAuthorized(request.context,
-        DESCRIBE, TOPIC, offsetRequest.topics.asScala.toSeq)(_.name)
+        DESCRIBE, TOPIC, knownTopics.asScala.toSeq)(_.name)
 
     val unauthorizedResponseStatus = unauthorizedRequestInfo.map(topic =>
       new ListOffsetsTopicResponse()
@@ -797,6 +837,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     def sendResponseCallback(response: util.Collection[ListOffsetsTopicResponse]): Void = {
       val mergedResponses = new util.ArrayList(response)
       mergedResponses.addAll(unauthorizedResponseStatus)
+      mergedResponses.addAll(unknownTopicIdResponses)
       requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
         new ListOffsetsResponse(new ListOffsetsResponseData()
           .setThrottleTimeMs(requestThrottleMs)
@@ -804,7 +845,9 @@ class KafkaApis(val requestChannel: RequestChannel,
       null
     }
 
-    if (authorizedRequestInfo.isEmpty) {
+    if (authorizedRequestInfo.isEmpty && unknownTopicIdResponses.isEmpty) {
+      sendResponseCallback(util.List.of)
+    } else if (authorizedRequestInfo.isEmpty) {
       sendResponseCallback(util.List.of)
     } else {
       replicaManager.fetchOffset(authorizedRequestInfo, offsetRequest.duplicatePartitions().asScala,

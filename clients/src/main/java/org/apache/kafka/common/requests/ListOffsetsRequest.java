@@ -60,20 +60,29 @@ public class ListOffsetsRequest extends AbstractRequest {
 
         public static Builder forConsumer(boolean requireTimestamp,
                                           IsolationLevel isolationLevel) {
-            return forConsumer(requireTimestamp, isolationLevel, false, false, false, false, false);
+            return forConsumer(requireTimestamp, isolationLevel, false, false, false, false, true);
         }
 
         public static Builder forConsumer(boolean requireTimestamp,
                                           IsolationLevel isolationLevel,
-                                          boolean supportsTopicIds,
                                           boolean requireMaxTimestamp,
                                           boolean requireEarliestLocalTimestamp,
                                           boolean requireTieredStorageTimestamp,
                                           boolean requireEarliestPendingUploadTimestamp) {
+            return forConsumer(requireTimestamp, isolationLevel, requireMaxTimestamp,
+                              requireEarliestLocalTimestamp, requireTieredStorageTimestamp,
+                              requireEarliestPendingUploadTimestamp, true);
+        }
+
+        public static Builder forConsumer(boolean requireTimestamp,
+                                          IsolationLevel isolationLevel,
+                                          boolean requireMaxTimestamp,
+                                          boolean requireEarliestLocalTimestamp,
+                                          boolean requireTieredStorageTimestamp,
+                                          boolean requireEarliestPendingUploadTimestamp,
+                                          boolean canUseTopicIds) {
             short minVersion = ApiKeys.LIST_OFFSETS.oldestVersion();
-            if (supportsTopicIds)
-                minVersion = 12;
-            else if (requireEarliestPendingUploadTimestamp)
+            if (requireEarliestPendingUploadTimestamp)
                 minVersion = 11;
             else if (requireTieredStorageTimestamp)
                 minVersion = 9;
@@ -85,7 +94,10 @@ public class ListOffsetsRequest extends AbstractRequest {
                 minVersion = 2;
             else if (requireTimestamp)
                 minVersion = 1;
-            return new Builder(minVersion, ApiKeys.LIST_OFFSETS.latestVersion(), CONSUMER_REPLICA_ID, isolationLevel);
+
+            // If not all topics have valid topicIds, restrict maxVersion to 11 to ensure name-based protocol is used
+            short maxVersion = canUseTopicIds ? ApiKeys.LIST_OFFSETS.latestVersion() : (short) 11;
+            return new Builder(minVersion, maxVersion, CONSUMER_REPLICA_ID, isolationLevel);
         }
 
         public static Builder forReplica(short allowedVersion, int replicaId) {
@@ -147,7 +159,9 @@ public class ListOffsetsRequest extends AbstractRequest {
 
         List<ListOffsetsTopicResponse> responses = new ArrayList<>();
         for (ListOffsetsTopic topic : data.topics()) {
-            ListOffsetsTopicResponse topicResponse = new ListOffsetsTopicResponse().setName(topic.name());
+            ListOffsetsTopicResponse topicResponse = new ListOffsetsTopicResponse()
+                    .setName(topic.name())
+                    .setTopicId(topic.topicId());
             List<ListOffsetsPartitionResponse> partitions = new ArrayList<>();
             for (ListOffsetsPartition partition : topic.partitions()) {
                 ListOffsetsPartitionResponse partitionResponse = new ListOffsetsPartitionResponse()

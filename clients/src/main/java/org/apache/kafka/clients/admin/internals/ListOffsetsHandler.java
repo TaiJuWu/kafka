@@ -98,10 +98,12 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
                         .setTimestamp(offsetTimestamp));
             });
 
-        boolean supportsTopicIds = topicsByName.values().stream()
+        // Only allow topicId-based protocol (v12) if ALL topics have valid topicIds
+        // If any topic has ZERO_UUID, we must restrict to name-based protocol (v11 or lower)
+        boolean canUseTopicIds = !topicsByName.isEmpty() && topicsByName.values().stream()
                 .filter(Objects::nonNull)
                 .map(ListOffsetsTopic::topicId)
-                .anyMatch(topicId -> topicId != null && !topicId.equals(Uuid.ZERO_UUID));
+                .allMatch(topicId -> topicId != null && !topicId.equals(Uuid.ZERO_UUID));
 
         boolean supportsMaxTimestamp = keys
             .stream()
@@ -122,11 +124,11 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
         int timeoutMs = options.timeoutMs() != null ? options.timeoutMs() : defaultApiTimeoutMs;
         return ListOffsetsRequest.Builder.forConsumer(true,
                         options.isolationLevel(),
-                        supportsTopicIds,
                         supportsMaxTimestamp,
                         requireEarliestLocalTimestamp,
                         requireTieredStorageTimestamp,
-                        requireEarliestPendingUploadTimestamp)
+                        requireEarliestPendingUploadTimestamp,
+                        canUseTopicIds)
                 .setTargetTimes(new ArrayList<>(topicsByName.values()))
                 .setTimeoutMs(timeoutMs);
     }
@@ -145,7 +147,13 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
 
         for (ListOffsetsTopicResponse topic : response.topics()) {
             for (ListOffsetsPartitionResponse partition : topic.partitions()) {
-                TopicPartition topicPartition = new TopicPartition(topic.name(), partition.partitionIndex());
+                // For version 12+, response uses topicId instead of name
+                String topicName = topic.name();
+                if (topicName == null || topicName.isEmpty()) {
+                    // If name is not present, look up by topicId
+                    topicName = cluster.topicName(topic.topicId());
+                }
+                TopicPartition topicPartition = new TopicPartition(topicName, partition.partitionIndex());
                 Errors error = Errors.forCode(partition.errorCode());
                 if (!offsetTimestampsByPartition.containsKey(topicPartition)) {
                     log.warn("ListOffsets response includes unknown topic partition {}", topicPartition);
