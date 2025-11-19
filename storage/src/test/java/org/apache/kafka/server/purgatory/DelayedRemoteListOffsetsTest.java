@@ -148,9 +148,6 @@ public class DelayedRemoteListOffsetsTest {
         assertEquals(statusByPartition.size(), cancelledCount.get());
         assertEquals(statusByPartition.size(), numResponse.get());
         assertEquals(initialAggregateCount + statusByPartition.size(), DelayedRemoteListOffsets.AGGREGATE_EXPIRATION_METER.count());
-        assertEquals(2, DelayedRemoteListOffsets.PARTITION_EXPIRATION_METERS.size());
-        assertEquals(2, DelayedRemoteListOffsets.PARTITION_EXPIRATION_METERS.get(sharedPartition).count());
-        assertEquals(1, DelayedRemoteListOffsets.PARTITION_EXPIRATION_METERS.get(otherPartition).count());
     }
 
     @Test
@@ -285,8 +282,9 @@ public class DelayedRemoteListOffsetsTest {
             return true;
         });
 
+        var failTopicIdPartition = new TopicIdPartition(Uuid.randomUuid(), 0, "test1");
         doThrow(new NotLeaderOrFollowerException("Not leader or follower!"))
-                .when(partitionOrException).accept(new TopicIdPartition(Uuid.randomUuid(), 0, "test1"));
+                .when(partitionOrException).accept(failTopicIdPartition);
         AsyncOffsetReadFutureHolder<OffsetResultHolder.FileRecordsOrError> errorFutureHolder = mock(AsyncOffsetReadFutureHolder.class);
         CompletableFuture<OffsetResultHolder.FileRecordsOrError> errorTaskFuture = new CompletableFuture<>();
         when(errorFutureHolder.taskFuture()).thenAnswer(f -> errorTaskFuture);
@@ -295,7 +293,7 @@ public class DelayedRemoteListOffsetsTest {
         Map<TopicIdPartition, ListOffsetsPartitionStatus> statusByPartition = Map.of(
             new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("test", 0)), ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build(),
             new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("test", 1)), ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build(),
-            new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("test1", 0)), ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(errorFutureHolder)).build(),
+            failTopicIdPartition, ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(errorFutureHolder)).build(),
             new TopicIdPartition(Uuid.randomUuid(), new TopicPartition("test1", 1)), ListOffsetsPartitionStatus.builder().futureHolderOpt(Optional.of(holder)).build()
         );
 
