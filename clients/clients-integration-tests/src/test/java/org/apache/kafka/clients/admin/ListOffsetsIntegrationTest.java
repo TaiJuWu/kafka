@@ -24,6 +24,7 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.record.CompressionType;
 import org.apache.kafka.common.requests.ListOffsetsResponse;
@@ -293,5 +294,158 @@ public class ListOffsetsIntegrationTest {
 
     private void createTopicWithConfig(String topic, Map<String, String> props) throws InterruptedException {
         clusterInstance.createTopic(topic, PARTITION, REPLICAS, props);
+    }
+
+    @ClusterTest
+    public void testListOffsetsWithTopicIds() throws InterruptedException, ExecutionException {
+        // In KRaft mode, all topics should have topicIds
+        String topicWithId = "topic-with-id";
+        clusterInstance.createTopic(topicWithId, 1, REPLICAS);
+
+        // Verify topic has a valid topicId
+        Uuid topicId = adminClient.describeTopics(List.of(topicWithId))
+            .allTopicNames()
+            .get()
+            .get(topicWithId)
+            .topicId();
+
+        assertEquals(false, topicId.equals(Uuid.ZERO_UUID), "Topic should have a valid topicId in KRaft mode");
+
+        // Produce some messages
+        try (Producer<byte[], byte[]> producer = clusterInstance.producer()) {
+            producer.send(new ProducerRecord<>(topicWithId, 0, 100L, null, new byte[10])).get();
+            producer.send(new ProducerRecord<>(topicWithId, 0, 200L, null, new byte[10])).get();
+            producer.send(new ProducerRecord<>(topicWithId, 0, 300L, null, new byte[10])).get();
+        }
+
+        // Test listOffsets with topics that have topicIds
+        TopicPartition tp = new TopicPartition(topicWithId, 0);
+
+        ListOffsetsResultInfo earliestOffset = adminClient.listOffsets(
+            Map.of(tp, OffsetSpec.earliest())).all().get().get(tp);
+        assertEquals(0, earliestOffset.offset());
+
+        ListOffsetsResultInfo latestOffset = adminClient.listOffsets(
+            Map.of(tp, OffsetSpec.latest())).all().get().get(tp);
+        assertEquals(3, latestOffset.offset());
+
+        ListOffsetsResultInfo maxTimestampOffset = adminClient.listOffsets(
+            Map.of(tp, OffsetSpec.maxTimestamp())).all().get().get(tp);
+        // The message with timestamp 300L is at offset 2
+        assertEquals(2, maxTimestampOffset.offset());
+        assertEquals(300L, maxTimestampOffset.timestamp());
+    }
+
+    @ClusterTest
+    public void testListOffsetsWithMultipleTopicsHavingIds() throws InterruptedException, ExecutionException {
+        // Create multiple topics - all should have topicIds in KRaft mode
+        String topic1 = "multi-topic-1";
+        String topic2 = "multi-topic-2";
+        clusterInstance.createTopic(topic1, 1, REPLICAS);
+        clusterInstance.createTopic(topic2, 1, REPLICAS);
+
+        // Verify both topics have valid topicIds
+        Map<String, TopicDescription> descriptions = adminClient.describeTopics(List.of(topic1, topic2))
+            .allTopicNames()
+            .get();
+
+        Uuid topicId1 = descriptions.get(topic1).topicId();
+        Uuid topicId2 = descriptions.get(topic2).topicId();
+
+        assertEquals(false, topicId1.equals(Uuid.ZERO_UUID),
+            "Topic1 should have a valid topicId");
+        assertEquals(false, topicId2.equals(Uuid.ZERO_UUID),
+            "Topic2 should have a valid topicId");
+
+        // Produce messages to both topics
+        try (Producer<byte[], byte[]> producer = clusterInstance.producer()) {
+            producer.send(new ProducerRecord<>(topic1, 0, 100L, null, new byte[10])).get();
+            producer.send(new ProducerRecord<>(topic2, 0, 200L, null, new byte[10])).get();
+        }
+
+        // Query offsets for both topics in a single request
+        TopicPartition tp1 = new TopicPartition(topic1, 0);
+        TopicPartition tp2 = new TopicPartition(topic2, 0);
+
+        Map<TopicPartition, ListOffsetsResultInfo> results = adminClient.listOffsets(
+            Map.of(
+                tp1, OffsetSpec.latest(),
+                tp2, OffsetSpec.latest()
+            )
+        ).all().get();
+
+        // When all topics have topicIds, the request should use version 12 (topicId-based)
+        // and successfully return results for both topics
+        assertEquals(1, results.get(tp1).offset());
+        assertEquals(1, results.get(tp2).offset());
+    }
+
+    @ClusterTest
+    public void testListOffsetsBackwardsCompatibilityWithIdBasedProtocol() throws InterruptedException, ExecutionException {
+        // Test that the handler correctly processes responses even when older protocol versions are used
+        String topic = "backwards-compat-topic";
+        clusterInstance.createTopic(topic, 1, REPLICAS);
+
+        // Produce messages
+        try (Producer<byte[], byte[]> producer = clusterInstance.producer()) {
+            producer.send(new ProducerRecord<>(topic, 0, 100L, null, new byte[10])).get();
+            producer.send(new ProducerRecord<>(topic, 0, 200L, null, new byte[10])).get();
+            producer.send(new ProducerRecord<>(topic, 0, 300L, null, new byte[10])).get();
+        }
+
+        TopicPartition tp = new TopicPartition(topic, 0);
+
+        // Even though the broker supports version 12 (topicId), the admin client should be able
+        // to handle responses correctly regardless of the negotiated version
+        ListOffsetsResultInfo result = adminClient.listOffsets(
+            Map.of(tp, OffsetSpec.earliest())
+        ).all().get().get(tp);
+
+        assertEquals(0, result.offset());
+
+        // Test with maxTimestamp which requires version 7+
+        ListOffsetsResultInfo maxResult = adminClient.listOffsets(
+            Map.of(tp, OffsetSpec.maxTimestamp())
+        ).all().get().get(tp);
+
+        assertEquals(2, maxResult.offset());
+        assertEquals(300L, maxResult.timestamp());
+    }
+
+    @ClusterTest
+    public void testListOffsetsTopicIdConsistency() throws InterruptedException, ExecutionException {
+        // Verify that using topicIds in the request produces consistent results
+        // with using topic names
+        String topic = "consistency-test-topic";
+        clusterInstance.createTopic(topic, 1, REPLICAS);
+
+        // Produce messages with different timestamps
+        try (Producer<byte[], byte[]> producer = clusterInstance.producer()) {
+            producer.send(new ProducerRecord<>(topic, 0, 100L, null, new byte[10])).get();
+            producer.send(new ProducerRecord<>(topic, 0, 500L, null, new byte[10])).get();
+            producer.send(new ProducerRecord<>(topic, 0, 300L, null, new byte[10])).get();
+        }
+
+        TopicPartition tp = new TopicPartition(topic, 0);
+
+        // Get offsets using the standard listOffsets API
+        // (which will use topicIds if available in KRaft mode)
+        ListOffsetsResultInfo earliestResult = adminClient.listOffsets(
+            Map.of(tp, OffsetSpec.earliest())
+        ).all().get().get(tp);
+
+        ListOffsetsResultInfo latestResult = adminClient.listOffsets(
+            Map.of(tp, OffsetSpec.latest())
+        ).all().get().get(tp);
+
+        ListOffsetsResultInfo maxTimestampResult = adminClient.listOffsets(
+            Map.of(tp, OffsetSpec.maxTimestamp())
+        ).all().get().get(tp);
+
+        // Verify results are correct
+        assertEquals(0, earliestResult.offset(), "Earliest offset should be 0");
+        assertEquals(3, latestResult.offset(), "Latest offset should be 3");
+        assertEquals(1, maxTimestampResult.offset(), "Max timestamp offset should be 1 (timestamp 500L)");
+        assertEquals(500L, maxTimestampResult.timestamp(), "Max timestamp should be 500L");
     }
 }

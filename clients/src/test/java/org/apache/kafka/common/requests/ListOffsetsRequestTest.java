@@ -146,4 +146,90 @@ public class ListOffsetsRequestTest {
         assertEquals((short) 9, requireTieredStorageTimestampRequestBuilder.oldestAllowedVersion());
         assertEquals((short) 11, requireEarliestPendingUploadTimestampRequestBuilder.oldestAllowedVersion());
     }
+
+    @Test
+    public void testCanUseTopicIdsTrue() {
+        // When canUseTopicIds = true, should allow up to latest version (12)
+        ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
+            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, false, false, false, true);
+
+        assertEquals((short) 1, builder.oldestAllowedVersion());
+        assertEquals(ApiKeys.LIST_OFFSETS.latestVersion(), builder.latestAllowedVersion());
+    }
+
+    @Test
+    public void testCanUseTopicIdsFalse() {
+        // When canUseTopicIds = false, should restrict to version 11
+        ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
+            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, false, false, false, false);
+
+        assertEquals((short) 1, builder.oldestAllowedVersion());
+        assertEquals((short) 11, builder.latestAllowedVersion());
+    }
+
+    @Test
+    public void testCanUseTopicIdsTrueWithMaxTimestamp() {
+        // canUseTopicIds = true with requireMaxTimestamp = true
+        // Should have minVersion = 7, maxVersion = 12
+        ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
+            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, true, false, false, false, true);
+
+        assertEquals((short) 7, builder.oldestAllowedVersion());
+        assertEquals(ApiKeys.LIST_OFFSETS.latestVersion(), builder.latestAllowedVersion());
+    }
+
+    @Test
+    public void testCanUseTopicIdsFalseWithMaxTimestamp() {
+        // canUseTopicIds = false with requireMaxTimestamp = true
+        // Should have minVersion = 7, maxVersion = 11 (restricted)
+        ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
+            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, true, false, false, false, false);
+
+        assertEquals((short) 7, builder.oldestAllowedVersion());
+        assertEquals((short) 11, builder.latestAllowedVersion());
+    }
+
+    @Test
+    public void testCanUseTopicIdsFalseWithEarliestPendingUpload() {
+        // canUseTopicIds = false with requireEarliestPendingUploadTimestamp = true
+        // Should have minVersion = 11, maxVersion = 11 (same)
+        ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
+            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, false, false, true, false);
+
+        assertEquals((short) 11, builder.oldestAllowedVersion());
+        assertEquals((short) 11, builder.latestAllowedVersion());
+    }
+
+    @Test
+    public void testCanUseTopicIdsTrueWithEarliestPendingUpload() {
+        // canUseTopicIds = true with requireEarliestPendingUploadTimestamp = true
+        // Should have minVersion = 11, maxVersion = 12
+        ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
+            .forConsumer(false, IsolationLevel.READ_UNCOMMITTED, false, false, false, true, true);
+
+        assertEquals((short) 11, builder.oldestAllowedVersion());
+        assertEquals(ApiKeys.LIST_OFFSETS.latestVersion(), builder.latestAllowedVersion());
+    }
+
+    @Test
+    public void testCanUseTopicIdsTrueWithReadCommitted() {
+        // canUseTopicIds = true with IsolationLevel.READ_COMMITTED
+        // Should have minVersion = 2, maxVersion = 12
+        ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
+            .forConsumer(false, IsolationLevel.READ_COMMITTED, false, false, false, false, true);
+
+        assertEquals((short) 2, builder.oldestAllowedVersion());
+        assertEquals(ApiKeys.LIST_OFFSETS.latestVersion(), builder.latestAllowedVersion());
+    }
+
+    @Test
+    public void testCanUseTopicIdsFalseWithReadCommitted() {
+        // canUseTopicIds = false with IsolationLevel.READ_COMMITTED
+        // Should have minVersion = 2, maxVersion = 11 (restricted)
+        ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
+            .forConsumer(false, IsolationLevel.READ_COMMITTED, false, false, false, false, false);
+
+        assertEquals((short) 2, builder.oldestAllowedVersion());
+        assertEquals((short) 11, builder.latestAllowedVersion());
+    }
 }

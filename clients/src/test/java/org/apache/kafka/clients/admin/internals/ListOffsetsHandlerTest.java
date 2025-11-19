@@ -23,13 +23,16 @@ import org.apache.kafka.clients.admin.internals.AdminApiHandler.ApiResult;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic;
 import org.apache.kafka.common.message.ListOffsetsResponseData;
 import org.apache.kafka.common.message.ListOffsetsResponseData.ListOffsetsPartitionResponse;
 import org.apache.kafka.common.message.ListOffsetsResponseData.ListOffsetsTopicResponse;
+import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.ListOffsetsRequest;
 import org.apache.kafka.common.requests.ListOffsetsResponse;
@@ -333,12 +336,144 @@ public final class ListOffsetsHandlerTest {
         return 2 * base + 1;
     }
 
+    @Test
+    public void testCanUseTopicIdsWhenAllTopicsHaveIds() {
+        // Create a cluster where all topics have valid topicIds
+        Map<String, Uuid> topicIds = new HashMap<>();
+        topicIds.put("t0", Uuid.randomUuid());
+        topicIds.put("t1", Uuid.randomUuid());
+
+        List<PartitionInfo> partitions = new ArrayList<>();
+        partitions.add(new PartitionInfo("t0", 0, node, new Node[]{node}, new Node[]{node}));
+        partitions.add(new PartitionInfo("t0", 1, node, new Node[]{node}, new Node[]{node}));
+        partitions.add(new PartitionInfo("t1", 0, node, new Node[]{node}, new Node[]{node}));
+
+        Cluster cluster = new Cluster(
+            "cluster",
+            List.of(node),
+            partitions,
+            emptySet(),
+            emptySet(),
+            emptySet(),
+            node,
+            topicIds
+        );
+
+        ListOffsetsHandler handler = newHandlerWithCluster(new ListOffsetsOptions(), cluster);
+        ListOffsetsRequest.Builder builder = handler.buildBatchedRequest(node.id(), Set.of(t0p0, t0p1, t1p0));
+
+        // When all topics have valid topicIds, should allow version 12
+        assertEquals((short) 1, builder.oldestAllowedVersion());
+        assertEquals(ApiKeys.LIST_OFFSETS.latestVersion(), builder.latestAllowedVersion());
+    }
+
+    @Test
+    public void testCannotUseTopicIdsWhenSomeTopicsMissingIds() {
+        // Create a cluster where only t0 has a topicId, t1 doesn't
+        Map<String, Uuid> topicIds = new HashMap<>();
+        topicIds.put("t0", Uuid.randomUuid());
+
+        // t1 intentionally missing, will return ZERO_UUID
+        List<PartitionInfo> partitions = new ArrayList<>();
+        partitions.add(new PartitionInfo("t0", 0, node, new Node[]{node}, new Node[]{node}));
+        partitions.add(new PartitionInfo("t0", 1, node, new Node[]{node}, new Node[]{node}));
+        partitions.add(new PartitionInfo("t1", 0, node, new Node[]{node}, new Node[]{node}));
+
+        Cluster cluster = new Cluster(
+            "cluster",
+            List.of(node),
+            partitions,
+            emptySet(),
+            emptySet(),
+            emptySet(),
+            node,
+            topicIds
+        );
+
+        ListOffsetsHandler handler = newHandlerWithCluster(new ListOffsetsOptions(), cluster);
+        ListOffsetsRequest.Builder builder = handler.buildBatchedRequest(node.id(), Set.of(t0p0, t0p1, t1p0));
+
+        // When some topics don't have topicIds, should restrict to version 11
+        assertEquals((short) 1, builder.oldestAllowedVersion());
+        assertEquals((short) 11, builder.latestAllowedVersion());
+    }
+
+    @Test
+    public void testCanUseTopicIdsWithMaxTimestamp() {
+        // Create a cluster where all topics have valid topicIds
+        Map<String, Uuid> topicIds = new HashMap<>();
+        topicIds.put("t1", Uuid.randomUuid());
+
+        List<PartitionInfo> partitions = new ArrayList<>();
+        partitions.add(new PartitionInfo("t1", 1, node, new Node[]{node}, new Node[]{node}));
+
+        Cluster cluster = new Cluster(
+            "cluster",
+            List.of(node),
+            partitions,
+            emptySet(),
+            emptySet(),
+            emptySet(),
+            node,
+            topicIds
+        );
+
+        ListOffsetsHandler handler = newHandlerWithCluster(new ListOffsetsOptions(), cluster);
+        // t1p1 has MAX_TIMESTAMP
+        ListOffsetsRequest.Builder builder = handler.buildBatchedRequest(node.id(), Set.of(t1p1));
+
+        // When all topics have topicIds and MAX_TIMESTAMP is required
+        // Should have minVersion = 7, maxVersion = 12
+        assertEquals((short) 7, builder.oldestAllowedVersion());
+        assertEquals(ApiKeys.LIST_OFFSETS.latestVersion(), builder.latestAllowedVersion());
+    }
+
+    @Test
+    public void testCannotUseTopicIdsWithMaxTimestampWhenTopicMissingId() {
+        // Create a cluster where t1 doesn't have a topicId
+        Map<String, Uuid> topicIds = new HashMap<>();
+
+        // t1 intentionally missing
+        List<PartitionInfo> partitions = new ArrayList<>();
+        partitions.add(new PartitionInfo("t1", 1, node, new Node[]{node}, new Node[]{node}));
+
+        Cluster cluster = new Cluster(
+            "cluster",
+            List.of(node),
+            partitions,
+            emptySet(),
+            emptySet(),
+            emptySet(),
+            node,
+            topicIds
+        );
+
+        ListOffsetsHandler handler = newHandlerWithCluster(new ListOffsetsOptions(), cluster);
+        // t1p1 has MAX_TIMESTAMP
+        ListOffsetsRequest.Builder builder = handler.buildBatchedRequest(node.id(), Set.of(t1p1));
+
+        // When topic doesn't have topicId and MAX_TIMESTAMP is required
+        // Should have minVersion = 7, maxVersion = 11 (restricted)
+        assertEquals((short) 7, builder.oldestAllowedVersion());
+        assertEquals((short) 11, builder.latestAllowedVersion());
+    }
+
     private ListOffsetsHandler newHandler(ListOffsetsOptions options) {
         return new ListOffsetsHandler(
-            new HashMap<>(offsetTimestampsByPartition),
-            mock(Cluster.class),
-            options,
-            logContext,
-            defaultApiTimeoutMs);
+                new HashMap<>(offsetTimestampsByPartition),
+                mock(Cluster.class),
+                options,
+                logContext,
+                defaultApiTimeoutMs);
     }
+
+    private ListOffsetsHandler newHandlerWithCluster(ListOffsetsOptions options, Cluster cluster) {
+        return new ListOffsetsHandler(
+                new HashMap<>(offsetTimestampsByPartition),
+                cluster,
+                options,
+                logContext,
+                defaultApiTimeoutMs);
+    }
+
 }
