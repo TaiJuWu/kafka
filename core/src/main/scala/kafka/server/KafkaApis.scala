@@ -122,8 +122,12 @@ class KafkaApis(val requestChannel: RequestChannel,
   val describeTopicPartitionsRequestHandler = new DescribeTopicPartitionsRequestHandler(
     metadataCache, authHelper, config)
 
+  // Producer liveness tracker for producer heartbeat
+  val producerLivenessTracker = new kafka.coordinator.producer.ProducerLivenessTracker(time)
+
   def close(): Unit = {
     aclApis.close()
+    producerLivenessTracker.shutdown()
     info("Shutdown complete.")
   }
 
@@ -175,6 +179,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.FIND_COORDINATOR => handleFindCoordinatorRequest(request)
         case ApiKeys.JOIN_GROUP => handleJoinGroupRequest(request, requestLocal).exceptionally(handleError)
         case ApiKeys.HEARTBEAT => handleHeartbeatRequest(request).exceptionally(handleError)
+        case ApiKeys.PRODUCER_HEARTBEAT => handleProducerHeartbeatRequest(request)
         case ApiKeys.LEAVE_GROUP => handleLeaveGroupRequest(request).exceptionally(handleError)
         case ApiKeys.SYNC_GROUP => handleSyncGroupRequest(request, requestLocal).exceptionally(handleError)
         case ApiKeys.DESCRIBE_GROUPS => handleDescribeGroupsRequest(request).exceptionally(handleError)

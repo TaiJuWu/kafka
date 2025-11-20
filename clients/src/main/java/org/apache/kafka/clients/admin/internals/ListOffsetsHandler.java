@@ -147,13 +147,7 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
 
         for (ListOffsetsTopicResponse topic : response.topics()) {
             for (ListOffsetsPartitionResponse partition : topic.partitions()) {
-                // For version 12+, response uses topicId instead of name
-                String topicName = topic.name();
-                if (topicName == null || topicName.isEmpty()) {
-                    // If name is not present, look up by topicId
-                    topicName = cluster.topicName(topic.topicId());
-                }
-                TopicPartition topicPartition = new TopicPartition(topicName, partition.partitionIndex());
+                TopicPartition topicPartition = new TopicPartition(topic.name(), partition.partitionIndex());
                 Errors error = Errors.forCode(partition.errorCode());
                 if (!offsetTimestampsByPartition.containsKey(topicPartition)) {
                     log.warn("ListOffsets response includes unknown topic partition {}", topicPartition);

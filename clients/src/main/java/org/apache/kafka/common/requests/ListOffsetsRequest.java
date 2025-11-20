@@ -97,7 +97,9 @@ public class ListOffsetsRequest extends AbstractRequest {
             else if (requireTimestamp)
                 minVersion = 1;
 
-            return new Builder(minVersion, ApiKeys.LIST_OFFSETS.latestVersion(), CONSUMER_REPLICA_ID, isolationLevel);
+            // When canUseTopicIds is false, limit maxVersion to 11 to use name-based protocol
+            short maxVersion = canUseTopicIds ? ApiKeys.LIST_OFFSETS.latestVersion() : (short) 11;
+            return new Builder(minVersion, maxVersion, CONSUMER_REPLICA_ID, isolationLevel);
         }
 
         public static Builder forReplica(short allowedVersion, int replicaId) {
