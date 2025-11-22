@@ -29,8 +29,10 @@ import org.apache.kafka.clients.consumer.internals.SubscriptionState.FetchPositi
 import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.errors.TimeoutException;
+import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition;
 import org.apache.kafka.common.requests.ListOffsetsRequest;
 import org.apache.kafka.common.requests.ListOffsetsResponse;
@@ -40,6 +42,7 @@ import org.apache.kafka.common.utils.Timer;
 
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -394,17 +397,17 @@ public class OffsetFetcher {
                                                                   final Map<TopicPartition, ListOffsetsPartition> timestampsToSearch,
                                                                   boolean requireTimestamp) {
         // Build topics with topic IDs from metadata
-        Map<String, org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic> topicsByName = new HashMap<>();
+        Map<String, ListOffsetsRequestData.ListOffsetsTopic> topicsByName = new HashMap<>();
         for (Map.Entry<TopicPartition, ListOffsetsPartition> entry : timestampsToSearch.entrySet()) {
             TopicPartition tp = entry.getKey();
-            org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic topic = topicsByName.computeIfAbsent(
+            ListOffsetsRequestData.ListOffsetsTopic topic = topicsByName.computeIfAbsent(
                 tp.topic(),
                 topicName -> {
-                    org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic t =
-                        new org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic()
+                    ListOffsetsRequestData.ListOffsetsTopic t =
+                        new ListOffsetsRequestData.ListOffsetsTopic()
                         .setName(topicName);
                     // Try to get topic ID from metadata
-                    org.apache.kafka.common.Uuid topicId = metadata.topicIds().get(topicName);
+                    Uuid topicId = metadata.topicIds().get(topicName);
                     if (topicId != null) {
                         t.setTopicId(topicId);
                     }
@@ -418,13 +421,13 @@ public class OffsetFetcher {
         // If any topic has ZERO_UUID or null, we must restrict to name-based protocol (v11 or lower)
         boolean canUseTopicIds = !topicsByName.isEmpty() && topicsByName.values().stream()
             .allMatch(topic -> {
-                org.apache.kafka.common.Uuid topicId = topic.topicId();
-                return topicId != null && !topicId.equals(org.apache.kafka.common.Uuid.ZERO_UUID);
+                Uuid topicId = topic.topicId();
+                return topicId != null && !topicId.equals(Uuid.ZERO_UUID);
             });
 
         ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
                 .forConsumer(requireTimestamp, isolationLevel, false, false, false, false, canUseTopicIds)
-                .setTargetTimes(new java.util.ArrayList<>(topicsByName.values()))
+                .setTargetTimes(new ArrayList<>(topicsByName.values()))
                 .setTimeoutMs(requestTimeoutMs);
 
         log.debug("Sending ListOffsetRequest {} to broker {}", builder, node);
