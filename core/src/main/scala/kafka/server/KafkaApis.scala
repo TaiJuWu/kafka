@@ -771,12 +771,10 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (fetchRequest.isFromFollower) quotas.leader else UNBOUNDED_QUOTA
 
   def handleListOffsetRequest(request: RequestChannel.Request): Unit = {
-    System.err.println("handleListOffsetRequest-1")
     val correlationId = request.header.correlationId
     val clientId = request.header.clientId
     val offsetRequest = request.body[ListOffsetsRequest]
     val version = request.header.apiVersion
-    System.err.println("offsetRequest=" + offsetRequest)
     def buildErrorResponse(e: Errors, partition: ListOffsetsPartition): ListOffsetsPartitionResponse = {
       new ListOffsetsPartitionResponse()
         .setPartitionIndex(partition.partitionIndex)
@@ -789,7 +787,6 @@ class KafkaApis(val requestChannel: RequestChannel,
     val (knownTopics, unknownTopicIdResponses) = if (ListOffsetsResponse.useTopicIds(version)) {
       val known = new util.ArrayList[ListOffsetsTopic]()
       val unknown = new util.ArrayList[ListOffsetsTopicResponse]()
-      System.err.println("handleListOffsetRequest-2")
       offsetRequest.topics.asScala.foreach { topic =>
         val topicName = if (topic.topicId() != null && topic.topicId() != Uuid.ZERO_UUID) {
           metadataCache.getTopicName(topic.topicId()).orElse(null)
@@ -813,16 +810,11 @@ class KafkaApis(val requestChannel: RequestChannel,
           known.add(resolvedTopic)
         }
       }
-      System.err.println("ZZZ inside version>=12: known=" + known + " unknown=" + unknown)
-      System.err.flush()
       (known, unknown)
     } else {
       // version < 12, use topic names directly
       (offsetRequest.topics(), new util.ArrayList[ListOffsetsTopicResponse]())
     }
-
-    System.err.println("ZZZ after resolving: knownTopics=" + knownTopics + " unknownTopicIdResponses=" + unknownTopicIdResponses)
-    System.err.flush()
 
     val (authorizedRequestInfo, unauthorizedRequestInfo) = authHelper.partitionSeqByAuthorized(request.context,
         DESCRIBE, TOPIC, knownTopics.asScala.toSeq)(_.name)
