@@ -53,7 +53,7 @@ import java.util.stream.Collectors;
 public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffsetsResultInfo> {
 
     private final Map<TopicPartition, Long> offsetTimestampsByPartition;
-    private final Cluster cluster;
+    private final java.util.function.Supplier<Cluster> clusterSupplier;
     private final ListOffsetsOptions options;
     private final Logger log;
     private final AdminApiLookupStrategy<TopicPartition> lookupStrategy;
@@ -61,13 +61,13 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
 
     public ListOffsetsHandler(
         Map<TopicPartition, Long> offsetTimestampsByPartition,
-        Cluster cluster,
+        java.util.function.Supplier<Cluster> clusterSupplier,
         ListOffsetsOptions options,
         LogContext logContext,
         int defaultApiTimeoutMs
     ) {
         this.offsetTimestampsByPartition = offsetTimestampsByPartition;
-        this.cluster = cluster;
+        this.clusterSupplier = clusterSupplier;
         this.options = options;
         this.log = logContext.logger(ListOffsetsHandler.class);
         this.lookupStrategy = new PartitionLeaderStrategy(logContext, false);
@@ -86,9 +86,17 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
 
     @Override
     ListOffsetsRequest.Builder buildBatchedRequest(int brokerId, Set<TopicPartition> keys) {
+        // Get fresh cluster metadata right before building the request
+        Cluster cluster = clusterSupplier.get();
+
         Map<String, ListOffsetsTopic> topicsByName = CollectionUtils.groupPartitionsByTopic(
             keys,
-            topicName -> new ListOffsetsTopic().setName(topicName).setTopicId(cluster.topicId(topicName)),
+            topicName -> {
+                Uuid topicId = cluster.topicId(topicName);
+                System.err.println("ZZZ Admin: topic=" + topicName + " topicId=" + topicId + " cluster.topicIds()=" + cluster.topicIds());
+                System.err.flush();
+                return new ListOffsetsTopic().setName(topicName).setTopicId(topicId);
+            },
             (listOffsetsTopic, partitionId) -> {
                 TopicPartition topicPartition = new TopicPartition(listOffsetsTopic.name(), partitionId);
                 long offsetTimestamp = offsetTimestampsByPartition.get(topicPartition);
@@ -103,7 +111,7 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
         boolean canUseTopicIds = !topicsByName.isEmpty() && topicsByName.values().stream()
                 .filter(Objects::nonNull)
                 .map(ListOffsetsTopic::topicId)
-                .allMatch(topicId -> topicId != null && !topicId.equals(Uuid.ZERO_UUID));
+                .anyMatch(topicId -> topicId != null && !topicId.equals(Uuid.ZERO_UUID));
 
         boolean supportsMaxTimestamp = keys
             .stream()

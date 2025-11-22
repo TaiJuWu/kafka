@@ -459,9 +459,10 @@ public final class ListOffsetsHandlerTest {
     }
 
     private ListOffsetsHandler newHandler(ListOffsetsOptions options) {
+        Cluster mockCluster = mock(Cluster.class);
         return new ListOffsetsHandler(
                 new HashMap<>(offsetTimestampsByPartition),
-                mock(Cluster.class),
+                () -> mockCluster,
                 options,
                 logContext,
                 defaultApiTimeoutMs);
@@ -470,7 +471,7 @@ public final class ListOffsetsHandlerTest {
     private ListOffsetsHandler newHandlerWithCluster(ListOffsetsOptions options, Cluster cluster) {
         return new ListOffsetsHandler(
                 new HashMap<>(offsetTimestampsByPartition),
-                cluster,
+                () -> cluster,
                 options,
                 logContext,
                 defaultApiTimeoutMs);
