@@ -18,6 +18,8 @@ package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsPartition;
 import org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic;
@@ -82,9 +84,7 @@ public class ListOffsetsRequest extends AbstractRequest {
                                           boolean requireEarliestPendingUploadTimestamp,
                                           boolean canUseTopicIds) {
             short minVersion = ApiKeys.LIST_OFFSETS.oldestVersion();
-            if (canUseTopicIds)
-                minVersion = 12;
-            else if (requireEarliestPendingUploadTimestamp)
+            if (requireEarliestPendingUploadTimestamp)
                 minVersion = 11;
             else if (requireTieredStorageTimestamp)
                 minVersion = 9;
@@ -128,6 +128,22 @@ public class ListOffsetsRequest extends AbstractRequest {
 
         @Override
         public ListOffsetsRequest build(short version) {
+            if (version >= 12) {
+                data.topics().forEach(topic -> {
+                    if (topic.topicId() == null || topic.topicId().equals(Uuid.ZERO_UUID)) {
+                        throw new UnsupportedVersionException("The broker offset commit api version " +
+                                version + " does require usage of topic ids.");
+                    }
+                });
+            } else {
+                data.topics().forEach(topic -> {
+                    if (topic.name() == null || topic.name().isEmpty()) {
+                        throw new UnsupportedVersionException("The broker offset commit api version " +
+                                version + " does require usage of topic names.");
+                    }
+                });
+            }
+
             return new ListOffsetsRequest(data, version);
         }
 

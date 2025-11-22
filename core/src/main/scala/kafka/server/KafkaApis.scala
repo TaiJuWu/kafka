@@ -122,12 +122,8 @@ class KafkaApis(val requestChannel: RequestChannel,
   val describeTopicPartitionsRequestHandler = new DescribeTopicPartitionsRequestHandler(
     metadataCache, authHelper, config)
 
-  // Producer liveness tracker for producer heartbeat
-  val producerLivenessTracker = new kafka.coordinator.producer.ProducerLivenessTracker(time)
-
   def close(): Unit = {
     aclApis.close()
-    producerLivenessTracker.shutdown()
     info("Shutdown complete.")
   }
 
@@ -179,7 +175,6 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.FIND_COORDINATOR => handleFindCoordinatorRequest(request)
         case ApiKeys.JOIN_GROUP => handleJoinGroupRequest(request, requestLocal).exceptionally(handleError)
         case ApiKeys.HEARTBEAT => handleHeartbeatRequest(request).exceptionally(handleError)
-        case ApiKeys.PRODUCER_HEARTBEAT => handleProducerHeartbeatRequest(request)
         case ApiKeys.LEAVE_GROUP => handleLeaveGroupRequest(request).exceptionally(handleError)
         case ApiKeys.SYNC_GROUP => handleSyncGroupRequest(request, requestLocal).exceptionally(handleError)
         case ApiKeys.DESCRIBE_GROUPS => handleDescribeGroupsRequest(request).exceptionally(handleError)
@@ -789,21 +784,14 @@ class KafkaApis(val requestChannel: RequestChannel,
         .setOffset(ListOffsetsResponse.UNKNOWN_OFFSET)
     }
 
-    // Resolve topic IDs to names for version 12+
-    val topicNames =
-      if (version >= 12)
-        metadataCache.topicIdsToNames()
-      else
-        Collections.emptyMap[Uuid, String]()
-
-    // Separate topics with unknown topic IDs (for v12+)
+    // For version >= 12, resolve topic IDs to names and handle unknown topic IDs
     val (knownTopics, unknownTopicIdResponses) = if (version >= 12) {
       val known = new util.ArrayList[ListOffsetsTopic]()
       val unknown = new util.ArrayList[ListOffsetsTopicResponse]()
 
       offsetRequest.topics.asScala.foreach { topic =>
         val topicName = if (topic.topicId() != null && topic.topicId() != Uuid.ZERO_UUID) {
-          topicNames.get(topic.topicId())
+          metadataCache.getTopicName(topic.topicId()).orElse(null)
         } else {
           topic.name()
         }
@@ -816,7 +804,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             .setPartitions(topic.partitions.asScala.map(partition =>
               buildErrorResponse(Errors.UNKNOWN_TOPIC_ID, partition)).asJava))
         } else {
-          // Create a new topic with resolved name
+          // Topic ID successfully resolved, create topic with resolved name
           val resolvedTopic = new ListOffsetsTopic()
             .setName(topicName)
             .setTopicId(topic.topicId())
@@ -826,6 +814,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
       (known, unknown)
     } else {
+      // version < 12, use topic names directly
       (offsetRequest.topics(), new util.ArrayList[ListOffsetsTopicResponse]())
     }
 
@@ -835,6 +824,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     val unauthorizedResponseStatus = unauthorizedRequestInfo.map(topic =>
       new ListOffsetsTopicResponse()
         .setName(topic.name)
+        .setTopicId(topic.topicId)
         .setPartitions(topic.partitions.asScala.map(partition =>
           buildErrorResponse(Errors.TOPIC_AUTHORIZATION_FAILED, partition)).asJava)
     ).asJava
@@ -850,9 +840,10 @@ class KafkaApis(val requestChannel: RequestChannel,
       null
     }
 
-    if (authorizedRequestInfo.isEmpty && unknownTopicIdResponses.isEmpty) {
+    if (authorizedRequestInfo.isEmpty && knownTopics.isEmpty) {
       sendResponseCallback(util.List.of)
     } else if (authorizedRequestInfo.isEmpty) {
+      // Only have unknown topic IDs or unauthorized topics, send response immediately
       sendResponseCallback(util.List.of)
     } else {
       replicaManager.fetchOffset(authorizedRequestInfo, offsetRequest.duplicatePartitions().asScala,

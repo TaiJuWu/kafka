@@ -1585,9 +1585,12 @@ class ReplicaManager(val config: KafkaConfig,
       delayedRemoteListOffsetsPurgatory.tryCompleteElseWatch(delayedRemoteListOffsets, listOffsetsRequestKeys.asJava)
     } else {
       // we can respond immediately
-      val responseTopics = statusByPartition.groupBy(e => e._1.topic()).map {
-        case (topic, status) =>
-          new ListOffsetsTopicResponse().setName(topic).setPartitions(status.values.flatMap(s => Some(s.responseOpt.get())).toList.asJava)
+      val responseTopics = statusByPartition.groupBy(e => (e._1.topic(), e._1.topicId())).map {
+        case ((topicName, topicId), statuses) =>
+          new ListOffsetsTopicResponse()
+            .setName(topicName)
+            .setTopicId(topicId)
+            .setPartitions(statuses.values.flatMap(s => Some(s.responseOpt.get())).toList.asJava)
       }.toList
       responseCallback.accept(responseTopics.asJava)
     }
