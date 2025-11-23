@@ -382,6 +382,59 @@ public class OffsetFetcher {
         return offsetFetcherUtils.regroupPartitionMapByNode(partitionDataMap);
     }
 
+    private static class TopicsWithIds {
+        final java.util.List<org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic> topics;
+        final boolean canUseTopicIds;
+
+        TopicsWithIds(java.util.List<org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic> topics, boolean canUseTopicIds) {
+            this.topics = topics;
+            this.canUseTopicIds = canUseTopicIds;
+        }
+    }
+
+    /**
+     * Build ListOffsetsTopic list with topicId support. This will populate topicId for each topic
+     * from the cluster metadata to enable v12+ protocol support.
+     */
+    private TopicsWithIds buildListOffsetsTopicsWithIds(
+            Map<TopicPartition, ListOffsetsPartition> targetTimes) {
+        Map<String, org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic> topicsByName = new HashMap<>();
+
+        for (Map.Entry<TopicPartition, ListOffsetsPartition> entry : targetTimes.entrySet()) {
+            TopicPartition tp = entry.getKey();
+            String topicName = tp.topic();
+
+            org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic topic = topicsByName.computeIfAbsent(topicName, name -> {
+                // Get topicId from cluster metadata
+                org.apache.kafka.common.Uuid topicId = org.apache.kafka.common.Uuid.ZERO_UUID;
+                if (metadata.fetchMetadataSnapshot() != null) {
+                    topicId = metadata.fetchMetadataSnapshot().topicId(name);
+                }
+                return new org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic()
+                        .setName(name)
+                        .setTopicId(topicId);
+            });
+
+            topic.partitions().add(entry.getValue());
+        }
+
+        // Only include topicIds if ALL topics have valid (non-ZERO) topicIds
+        // If any topic has ZERO_UUID, we must restrict to name-based protocol
+        boolean canUseTopicIds = !topicsByName.isEmpty() && topicsByName.values().stream()
+                .filter(java.util.Objects::nonNull)
+                .map(org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic::topicId)
+                .allMatch(topicId -> topicId != null && !topicId.equals(org.apache.kafka.common.Uuid.ZERO_UUID));
+
+        if (!canUseTopicIds) {
+            // Clear topicIds if we can't use them for all topics
+            for (org.apache.kafka.common.message.ListOffsetsRequestData.ListOffsetsTopic topic : topicsByName.values()) {
+                topic.setTopicId(org.apache.kafka.common.Uuid.ZERO_UUID);
+            }
+        }
+
+        return new TopicsWithIds(new java.util.ArrayList<>(topicsByName.values()), canUseTopicIds);
+    }
+
     /**
      * Send the ListOffsetRequest to a specific broker for the partitions and target timestamps.
      *
@@ -393,9 +446,11 @@ public class OffsetFetcher {
     private RequestFuture<ListOffsetResult> sendListOffsetRequest(final Node node,
                                                                   final Map<TopicPartition, ListOffsetsPartition> timestampsToSearch,
                                                                   boolean requireTimestamp) {
+        // Build request with topicId support
+        TopicsWithIds topicsWithIds = buildListOffsetsTopicsWithIds(timestampsToSearch);
         ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
-                .forConsumer(requireTimestamp, isolationLevel)
-                .setTargetTimes(ListOffsetsRequest.toListOffsetsTopics(timestampsToSearch))
+                .forConsumer(requireTimestamp, isolationLevel, false, false, false, false, topicsWithIds.canUseTopicIds)
+                .setTargetTimes(topicsWithIds.topics)
                 .setTimeoutMs(requestTimeoutMs);
 
         log.debug("Sending ListOffsetRequest {} to broker {}", builder, node);

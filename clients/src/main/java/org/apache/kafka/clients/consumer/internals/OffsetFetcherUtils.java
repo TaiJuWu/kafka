@@ -25,6 +25,7 @@ import org.apache.kafka.clients.consumer.OffsetAndTimestamp;
 import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
 import org.apache.kafka.common.message.ApiVersionsResponseData;
@@ -107,7 +108,18 @@ class OffsetFetcherUtils {
 
         for (ListOffsetsResponseData.ListOffsetsTopicResponse topic : listOffsetsResponse.topics()) {
             for (ListOffsetsResponseData.ListOffsetsPartitionResponse partition : topic.partitions()) {
-                TopicPartition topicPartition = new TopicPartition(topic.name(), partition.partitionIndex());
+                // Determine topic name based on response version:
+                // Version 12+: uses topicId (name will be null/empty)
+                // Version < 12: uses name (topicId will be null or ZERO_UUID)
+                TopicPartition topicPartition;
+                if (topic.topicId() != null && !topic.topicId().equals(Uuid.ZERO_UUID)) {
+                    // Version 12+: resolve topicName from topicId
+                    String topicName = metadata.fetch().topicName(topic.topicId());
+                    topicPartition = new TopicPartition(topicName, partition.partitionIndex());
+                } else {
+                    // Version < 12: use topicName directly
+                    topicPartition = new TopicPartition(topic.name(), partition.partitionIndex());
+                }
                 Errors error = Errors.forCode(partition.errorCode());
                 switch (error) {
                     case NONE:

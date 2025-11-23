@@ -67,6 +67,12 @@ public class ListOffsetsRequest extends AbstractRequest {
 
         public static Builder forConsumer(boolean requireTimestamp,
                                           IsolationLevel isolationLevel,
+                                          boolean canUseTopicIds) {
+            return forConsumer(requireTimestamp, isolationLevel, false, false, false, false, canUseTopicIds);
+        }
+
+        public static Builder forConsumer(boolean requireTimestamp,
+                                          IsolationLevel isolationLevel,
                                           boolean requireMaxTimestamp,
                                           boolean requireEarliestLocalTimestamp,
                                           boolean requireTieredStorageTimestamp,
@@ -143,6 +149,8 @@ public class ListOffsetsRequest extends AbstractRequest {
                     }
                 });
             }
+
+            System.err.println("ZZZ ListOffsetBuilder=" + data + " version=" + version);
 
             return new ListOffsetsRequest(data, version);
         }

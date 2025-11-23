@@ -31,6 +31,7 @@ import org.apache.kafka.common.ClusterResourceListener;
 import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.message.ListOffsetsRequestData;
 import org.apache.kafka.common.requests.AbstractRequest;
@@ -614,9 +615,12 @@ public final class OffsetsRequestManager implements RequestManager, ClusterResou
             Map<TopicPartition, ListOffsetsRequestData.ListOffsetsPartition> targetTimes,
             boolean requireTimestamps,
             List<NetworkClientDelegate.UnsentRequest> unsentRequests) {
+        // Build request with topicId support
+        TopicsWithIds topicsWithIds = buildListOffsetsTopicsWithIds(targetTimes);
+
         ListOffsetsRequest.Builder builder = ListOffsetsRequest.Builder
-                .forConsumer(requireTimestamps, isolationLevel)
-                .setTargetTimes(ListOffsetsRequest.toListOffsetsTopics(targetTimes))
+                .forConsumer(requireTimestamps, isolationLevel, false, false, false, false, topicsWithIds.canUseTopicIds)
+                .setTargetTimes(topicsWithIds.topics)
                 .setTimeoutMs(requestTimeoutMs);
 
         log.debug("Creating ListOffset request {} for broker {} to reset positions", builder,
@@ -888,6 +892,59 @@ public final class OffsetsRequestManager implements RequestManager, ClusterResou
      *                                request cannot be performed due to unknown leader (need
      *                                metadata update).
      */
+    private static class TopicsWithIds {
+        final List<ListOffsetsRequestData.ListOffsetsTopic> topics;
+        final boolean canUseTopicIds;
+
+        TopicsWithIds(List<ListOffsetsRequestData.ListOffsetsTopic> topics, boolean canUseTopicIds) {
+            this.topics = topics;
+            this.canUseTopicIds = canUseTopicIds;
+        }
+    }
+
+    /**
+     * Build ListOffsetsTopic list with topicId support. This will populate topicId for each topic
+     * from the cluster metadata to enable v12+ protocol support.
+     */
+    private TopicsWithIds buildListOffsetsTopicsWithIds(
+            Map<TopicPartition, ListOffsetsRequestData.ListOffsetsPartition> targetTimes) {
+        Map<String, ListOffsetsRequestData.ListOffsetsTopic> topicsByName = new HashMap<>();
+
+        for (Map.Entry<TopicPartition, ListOffsetsRequestData.ListOffsetsPartition> entry : targetTimes.entrySet()) {
+            TopicPartition tp = entry.getKey();
+            String topicName = tp.topic();
+
+            ListOffsetsRequestData.ListOffsetsTopic topic = topicsByName.computeIfAbsent(topicName, name -> {
+                // Get topicId from cluster metadata
+                Uuid topicId = Uuid.ZERO_UUID;
+                if (metadata.fetchMetadataSnapshot() != null) {
+                    topicId = metadata.fetchMetadataSnapshot().topicId(name);
+                }
+                return new ListOffsetsRequestData.ListOffsetsTopic()
+                        .setName(name)
+                        .setTopicId(topicId);
+            });
+
+            topic.partitions().add(entry.getValue());
+        }
+
+        // Only include topicIds if ALL topics have valid (non-ZERO) topicIds
+        // If any topic has ZERO_UUID, we must restrict to name-based protocol
+        boolean canUseTopicIds = !topicsByName.isEmpty() && topicsByName.values().stream()
+                .filter(Objects::nonNull)
+                .map(ListOffsetsRequestData.ListOffsetsTopic::topicId)
+                .allMatch(topicId -> topicId != null && !topicId.equals(Uuid.ZERO_UUID));
+
+        if (!canUseTopicIds) {
+            // Clear topicIds if we can't use them for all topics
+            for (ListOffsetsRequestData.ListOffsetsTopic topic : topicsByName.values()) {
+                topic.setTopicId(Uuid.ZERO_UUID);
+            }
+        }
+
+        return new TopicsWithIds(new ArrayList<>(topicsByName.values()), canUseTopicIds);
+    }
+
     private Map<Node, Map<TopicPartition, ListOffsetsRequestData.ListOffsetsPartition>> groupListOffsetRequests(
             final Map<TopicPartition, Long> timestampsToSearch,
             final Optional<ListOffsetsRequestState> listOffsetsRequestState) {

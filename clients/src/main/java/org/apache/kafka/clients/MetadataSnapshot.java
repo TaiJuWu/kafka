@@ -109,6 +109,14 @@ public class MetadataSnapshot {
         return topicIds;
     }
 
+    public Uuid topicId(String name) {
+        return topicIds.getOrDefault(name, Uuid.ZERO_UUID);
+    }
+
+    public String topicName(Uuid uuid) {
+        return topicNames.get(uuid);
+    }
+
     Map<Uuid, String> topicNames() {
         return topicNames;
     }
