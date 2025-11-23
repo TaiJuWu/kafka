@@ -1017,11 +1017,12 @@ public class OffsetsRequestManagerTest {
         assertInstanceOf(OffsetsForLeaderEpochRequest.class, abstractRequest);
         OffsetsForLeaderEpochRequest offsetsForLeaderEpochRequest = (OffsetsForLeaderEpochRequest) abstractRequest;
         OffsetForLeaderEpochResponseData data = new OffsetForLeaderEpochResponseData();
+        Map<String, OffsetForLeaderEpochResponseData.OffsetForLeaderTopicResult> topicMap = new HashMap<>();
         partitions.forEach(tp -> {
-            OffsetForLeaderEpochResponseData.OffsetForLeaderTopicResult topic = data.topics().find(tp.topic());
+            OffsetForLeaderEpochResponseData.OffsetForLeaderTopicResult topic = topicMap.get(tp.topic());
             if (topic == null) {
                 topic = new OffsetForLeaderEpochResponseData.OffsetForLeaderTopicResult().setTopic(tp.topic());
-                data.topics().add(topic);
+                topicMap.put(tp.topic(), topic);
             }
             topic.partitions().add(new OffsetForLeaderEpochResponseData.EpochEndOffset()
                     .setPartition(tp.partition())
@@ -1029,6 +1030,7 @@ public class OffsetsRequestManagerTest {
                     .setLeaderEpoch(3)
                     .setEndOffset(endOffset));
         });
+        data.topics().addAll(topicMap.values());
 
         OffsetsForLeaderEpochResponse response = new OffsetsForLeaderEpochResponse(data);
         return new ClientResponse(
@@ -1052,16 +1054,18 @@ public class OffsetsRequestManagerTest {
         assertInstanceOf(OffsetsForLeaderEpochRequest.class, abstractRequest);
         OffsetsForLeaderEpochRequest offsetsForLeaderEpochRequest = (OffsetsForLeaderEpochRequest) abstractRequest;
         OffsetForLeaderEpochResponseData data = new OffsetForLeaderEpochResponseData();
+        Map<String, OffsetForLeaderEpochResponseData.OffsetForLeaderTopicResult> topicMap = new HashMap<>();
         partitionErrors.keySet().forEach(tp -> {
-            OffsetForLeaderEpochResponseData.OffsetForLeaderTopicResult topic = data.topics().find(tp.topic());
+            OffsetForLeaderEpochResponseData.OffsetForLeaderTopicResult topic = topicMap.get(tp.topic());
             if (topic == null) {
                 topic = new OffsetForLeaderEpochResponseData.OffsetForLeaderTopicResult().setTopic(tp.topic());
-                data.topics().add(topic);
+                topicMap.put(tp.topic(), topic);
             }
             topic.partitions().add(new OffsetForLeaderEpochResponseData.EpochEndOffset()
                     .setPartition(tp.partition())
                     .setErrorCode(partitionErrors.get(tp).code()));
         });
+        data.topics().addAll(topicMap.values());
 
         OffsetsForLeaderEpochResponse response = new OffsetsForLeaderEpochResponse(data);
         return new ClientResponse(

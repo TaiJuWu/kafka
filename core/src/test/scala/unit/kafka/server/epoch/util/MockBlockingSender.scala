@@ -96,15 +96,17 @@ class MockBlockingSender(offsets: java.util.Map[TopicPartition, EpochEndOffset],
         lastUsedOffsetForLeaderEpochVersion = requestBuilder.latestAllowedVersion()
 
         val data = new OffsetForLeaderEpochResponseData()
+        val topicMap = new java.util.HashMap[String, OffsetForLeaderTopicResult]()
         currentOffsets.forEach((tp, offsetForLeaderPartition) => {
-          var topic = data.topics.find(tp.topic)
+          var topic = topicMap.get(tp.topic)
           if (topic == null) {
             topic = new OffsetForLeaderTopicResult()
               .setTopic(tp.topic)
-            data.topics.add(topic)
+            topicMap.put(tp.topic, topic)
           }
           topic.partitions.add(offsetForLeaderPartition)
         })
+        data.topics.addAll(topicMap.values)
 
         new OffsetsForLeaderEpochResponse(data)
 

@@ -141,7 +141,7 @@ class AuthorizerIntegrationTest extends AbstractAuthorizerIntegrationTest {
     ApiKeys.DELETE_RECORDS -> ((resp: requests.DeleteRecordsResponse) => Errors.forCode(
       resp.data.topics.find(tp.topic).partitions.find(tp.partition).errorCode)),
     ApiKeys.OFFSET_FOR_LEADER_EPOCH -> ((resp: OffsetsForLeaderEpochResponse) => Errors.forCode(
-      resp.data.topics.find(tp.topic).partitions.asScala.find(_.partition == tp.partition).get.errorCode)),
+      resp.data.topics.asScala.find(_.topic == tp.topic).get.partitions.asScala.find(_.partition == tp.partition).get.errorCode)),
     ApiKeys.DESCRIBE_CONFIGS -> ((resp: DescribeConfigsResponse) => {
       val resourceError = resp.resultMap.get(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic))
       if (resourceError == null)

@@ -2269,40 +2269,73 @@ class ReplicaManager(val config: KafkaConfig,
     requestedEpochInfo: Seq[OffsetForLeaderTopic]
   ): Seq[OffsetForLeaderTopicResult] = {
     requestedEpochInfo.map { offsetForLeaderTopic =>
-      val partitions = offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
-        val tp = new TopicPartition(offsetForLeaderTopic.topic, offsetForLeaderPartition.partition)
-        getPartition(tp) match {
-          case HostedPartition.Online(partition) =>
-            val currentLeaderEpochOpt =
-              if (offsetForLeaderPartition.currentLeaderEpoch == RecordBatch.NO_PARTITION_LEADER_EPOCH)
-                Optional.empty[Integer]
-              else
-                Optional.of[Integer](offsetForLeaderPartition.currentLeaderEpoch)
+      val topicId = Option(offsetForLeaderTopic.topicId).getOrElse(Uuid.ZERO_UUID)
+      val topicName = Option(offsetForLeaderTopic.topic).filter(_.nonEmpty)
+        .orElse(metadataCache.getTopicName(topicId).toScala)
+      val topicIdMismatchError = topicName.flatMap { name =>
+        val knownTopicId = metadataCache.getTopicId(name)
+        if (topicId != Uuid.ZERO_UUID && knownTopicId != Uuid.ZERO_UUID && knownTopicId != topicId)
+          Some(Errors.UNKNOWN_TOPIC_ID)
+        else
+          None
+      }
 
-            partition.lastOffsetForLeaderEpoch(
-              currentLeaderEpochOpt,
-              offsetForLeaderPartition.leaderEpoch,
-              fetchOnlyFromLeader = true)
-
-          case HostedPartition.Offline(_) =>
+      val partitions = topicName match {
+        case None if topicId != Uuid.ZERO_UUID =>
+          offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
             new EpochEndOffset()
               .setPartition(offsetForLeaderPartition.partition)
-              .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code)
-
-          case HostedPartition.None if metadataCache.contains(tp) =>
-            new EpochEndOffset()
-              .setPartition(offsetForLeaderPartition.partition)
-              .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
-
-          case HostedPartition.None =>
+              .setErrorCode(Errors.UNKNOWN_TOPIC_ID.code)
+          }
+        case None =>
+          offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
             new EpochEndOffset()
               .setPartition(offsetForLeaderPartition.partition)
               .setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
-        }
+          }
+        case Some(name) if topicIdMismatchError.isDefined =>
+          offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
+            new EpochEndOffset()
+              .setPartition(offsetForLeaderPartition.partition)
+              .setErrorCode(topicIdMismatchError.get.code)
+          }
+        case Some(name) =>
+          offsetForLeaderTopic.partitions.asScala.map { offsetForLeaderPartition =>
+            val tp = new TopicPartition(name, offsetForLeaderPartition.partition)
+            getPartition(tp) match {
+              case HostedPartition.Online(partition) =>
+                val currentLeaderEpochOpt =
+                  if (offsetForLeaderPartition.currentLeaderEpoch == RecordBatch.NO_PARTITION_LEADER_EPOCH)
+                    Optional.empty[Integer]
+                  else
+                    Optional.of[Integer](offsetForLeaderPartition.currentLeaderEpoch)
+
+                partition.lastOffsetForLeaderEpoch(
+                  currentLeaderEpochOpt,
+                  offsetForLeaderPartition.leaderEpoch,
+                  fetchOnlyFromLeader = true)
+
+              case HostedPartition.Offline(_) =>
+                new EpochEndOffset()
+                  .setPartition(offsetForLeaderPartition.partition)
+                  .setErrorCode(Errors.KAFKA_STORAGE_ERROR.code)
+
+              case HostedPartition.None if metadataCache.contains(tp) =>
+                new EpochEndOffset()
+                  .setPartition(offsetForLeaderPartition.partition)
+                  .setErrorCode(Errors.NOT_LEADER_OR_FOLLOWER.code)
+
+              case HostedPartition.None =>
+                new EpochEndOffset()
+                  .setPartition(offsetForLeaderPartition.partition)
+                  .setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
+            }
+          }
       }
 
       new OffsetForLeaderTopicResult()
-        .setTopic(offsetForLeaderTopic.topic)
+        .setTopicId(topicId)
+        .setTopic(topicName.orNull)
         .setPartitions(partitions.toList.asJava)
     }
   }

@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.common.requests;
 
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData;
 import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.OffsetForLeaderTopicCollection;
@@ -65,10 +66,30 @@ public class OffsetsForLeaderEpochRequest extends AbstractRequest {
             return new Builder((short) 4, (short) 4, data);
         }
 
+        public static boolean canUseTopicIds(short version) {
+            return version >= 5;
+        }
+
         @Override
         public OffsetsForLeaderEpochRequest build(short version) {
             if (version < oldestAllowedVersion() || version > latestAllowedVersion())
                 throw new UnsupportedVersionException("Cannot build " + this + " with version " + version);
+
+            if (canUseTopicIds(version)) {
+                data.topics().forEach(topic -> {
+                    if (topic.topicId() == null || topic.topicId().equals(Uuid.ZERO_UUID)) {
+                        throw new UnsupportedVersionException("The broker offset commit api version " +
+                                version + " does require usage of topic ids.");
+                    }
+                });
+            } else {
+                data.topics().forEach(topic -> {
+                    if (topic.topic() == null || topic.topic().isEmpty()) {
+                        throw new UnsupportedVersionException("The broker offset commit api version " +
+                                version + " does require usage of topic names.");
+                    }
+                });
+            }
 
             return new OffsetsForLeaderEpochRequest(data, version);
         }
@@ -104,6 +125,7 @@ public class OffsetsForLeaderEpochRequest extends AbstractRequest {
         OffsetForLeaderEpochResponseData responseData = new OffsetForLeaderEpochResponseData();
         data.topics().forEach(topic -> {
             OffsetForLeaderTopicResult topicData = new OffsetForLeaderTopicResult()
+                .setTopicId(topic.topicId())
                 .setTopic(topic.topic());
             topic.partitions().forEach(partition ->
                 topicData.partitions().add(new EpochEndOffset()

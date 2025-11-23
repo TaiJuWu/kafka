@@ -134,15 +134,18 @@ class RemoteLeaderEndPoint(logPrefix: String,
       return java.util.Map.of()
     }
 
-    val topics = new OffsetForLeaderTopicCollection(partitions.size)
+    val topicMap = new java.util.HashMap[String, OffsetForLeaderTopic]()
     partitions.forEach { (topicPartition, epochData) =>
-      var topic = topics.find(topicPartition.topic)
+      var topic = topicMap.get(topicPartition.topic)
       if (topic == null) {
         topic = new OffsetForLeaderTopic().setTopic(topicPartition.topic)
-        topics.add(topic)
+        topicMap.put(topicPartition.topic, topic)
       }
       topic.partitions.add(epochData)
     }
+
+    val topics = new OffsetForLeaderTopicCollection(topicMap.size)
+    topics.addAll(topicMap.values)
 
     val epochRequest = OffsetsForLeaderEpochRequest.Builder.forFollower(topics, brokerConfig.brokerId)
     debug(s"Sending offset for leader epoch request $epochRequest")

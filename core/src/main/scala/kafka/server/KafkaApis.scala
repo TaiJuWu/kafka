@@ -2114,16 +2114,52 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleOffsetForLeaderEpochRequest(request: RequestChannel.Request): Unit = {
+    val useTopicIds = OffsetsForLeaderEpochRequest.Builder.canUseTopicIds(request.header.apiVersion())
     val offsetForLeaderEpoch = request.body[OffsetsForLeaderEpochRequest]
     val topics = offsetForLeaderEpoch.data.topics.asScala.toSeq
+
+    val (topicsWithNames, unknownTopicIdErrors) = if (useTopicIds) {
+      val known = new util.ArrayList[OffsetForLeaderTopic]()
+      val unknown = new util.ArrayList[OffsetForLeaderTopicResult]()
+
+      topics.foreach { topic =>
+        val topicName = if (topic.topicId() != null && topic.topicId() != Uuid.ZERO_UUID) {
+          metadataCache.getTopicName(topic.topicId()).orElse(null)
+        } else {
+          topic.topic()
+        }
+
+        if (topicName == null) {
+          // Topic ID cannot be resolved to a name
+          val partitions = topic.partitions.asScala.map { offsetForLeaderPartition =>
+            new EpochEndOffset()
+              .setPartition(offsetForLeaderPartition.partition)
+              .setErrorCode(Errors.UNKNOWN_TOPIC_ID.code)
+          }
+          unknown.add(new OffsetForLeaderTopicResult()
+            .setTopicId(topic.topicId())
+            .setPartitions(partitions.toList.asJava))
+        } else {
+          // Topic ID successfully resolved, create topic with resolved name
+          val resolvedTopic = new OffsetForLeaderTopic()
+            .setTopic(topicName)
+            .setTopicId(topic.topicId())
+            .setPartitions(topic.partitions())
+          known.add(resolvedTopic)
+        }
+      }
+      (known.asScala.toSeq, unknown.asScala.toSeq)
+    } else {
+      (topics, Seq.empty[OffsetForLeaderTopicResult])
+    }
 
     // The OffsetsForLeaderEpoch API was initially only used for inter-broker communication and required
     // cluster permission. With KIP-320, the consumer now also uses this API to check for log truncation
     // following a leader change, so we also allow topic describe permission.
     val (authorizedTopics, unauthorizedTopics) =
       if (authHelper.authorize(request.context, CLUSTER_ACTION, CLUSTER, CLUSTER_NAME, logIfDenied = false))
-        (topics, Seq.empty[OffsetForLeaderTopic])
-      else authHelper.partitionSeqByAuthorized(request.context, DESCRIBE, TOPIC, topics)(_.topic)
+        (topicsWithNames, Seq.empty[OffsetForLeaderTopic])
+      else authHelper.partitionSeqByAuthorized(request.context, DESCRIBE, TOPIC, topicsWithNames)(_.topic)
 
     val endOffsetsForAuthorizedPartitions = replicaManager.lastOffsetForLeaderEpoch(authorizedTopics)
     val endOffsetsForUnauthorizedPartitions = unauthorizedTopics.map { offsetForLeaderTopic =>
@@ -2134,12 +2170,13 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
 
       new OffsetForLeaderTopicResult()
+        .setTopicId(offsetForLeaderTopic.topicId)
         .setTopic(offsetForLeaderTopic.topic)
         .setPartitions(partitions.toList.asJava)
     }
 
     val endOffsetsForAllTopics = new OffsetForLeaderTopicResultCollection(
-      (endOffsetsForAuthorizedPartitions ++ endOffsetsForUnauthorizedPartitions).asJava.iterator
+      (endOffsetsForAuthorizedPartitions ++ endOffsetsForUnauthorizedPartitions ++ unknownTopicIdErrors).asJava.iterator
     )
 
     requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>

@@ -1144,11 +1144,12 @@ public class OffsetFetcherTest {
             allRequestedPartitions.addAll(expectedPartitions);
 
             OffsetForLeaderEpochResponseData data = new OffsetForLeaderEpochResponseData();
+            Map<String, OffsetForLeaderTopicResult> topicMap = new HashMap<>();
             expectedPartitions.forEach(tp -> {
-                OffsetForLeaderTopicResult topic = data.topics().find(tp.topic());
+                OffsetForLeaderTopicResult topic = topicMap.get(tp.topic());
                 if (topic == null) {
                     topic = new OffsetForLeaderTopicResult().setTopic(tp.topic());
-                    data.topics().add(topic);
+                    topicMap.put(tp.topic(), topic);
                 }
                 topic.partitions().add(new EpochEndOffset()
                     .setPartition(tp.partition())
@@ -1156,6 +1157,7 @@ public class OffsetFetcherTest {
                     .setLeaderEpoch(4)
                     .setEndOffset(0));
             });
+            data.topics().addAll(topicMap.values());
 
             OffsetsForLeaderEpochResponse response = new OffsetsForLeaderEpochResponse(data);
             client.prepareResponseFrom(body -> {
