@@ -94,10 +94,6 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
             keys,
             topicName -> {
                 Uuid topicId = cluster.topicId(topicName);
-                // Use ZERO_UUID if topicId is null to avoid NPE
-                if (topicId == null) {
-                    topicId = Uuid.ZERO_UUID;
-                }
                 return new ListOffsetsTopic().setName(topicName).setTopicId(topicId);
             },
             (listOffsetsTopic, partitionId) -> {
@@ -159,13 +155,16 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
 
         for (ListOffsetsTopicResponse topic : response.topics()) {
             for (ListOffsetsPartitionResponse partition : topic.partitions()) {
-
-                // for version 12, we drop the topic name and only return topicId
-                // if there is topicIds, we use it first.
+                // Determine topic name based on response version:
+                // Version 12+: uses topicId (name will be null/empty)
+                // Version < 12: uses name (topicId will be null or ZERO_UUID)
                 TopicPartition topicPartition;
-                if (topic.topicId() != null || !topic.topicId().equals(Uuid.ZERO_UUID)) {
-                    topicPartition = new TopicPartition(clusterSupplier.get().topicName(topic.topicId()), partition.partitionIndex());
+                if (topic.topicId() != null && !topic.topicId().equals(Uuid.ZERO_UUID)) {
+                    // Version 12+: resolve topicName from topicId
+                    String topicName = clusterSupplier.get().topicName(topic.topicId());
+                    topicPartition = new TopicPartition(topicName, partition.partitionIndex());
                 } else {
+                    // Version < 12: use topicName directly
                     topicPartition = new TopicPartition(topic.name(), partition.partitionIndex());
                 }
 
