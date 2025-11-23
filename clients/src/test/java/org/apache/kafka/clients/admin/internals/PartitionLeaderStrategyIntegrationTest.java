@@ -70,7 +70,8 @@ public class PartitionLeaderStrategyIntegrationTest {
             time.milliseconds() + TIMEOUT_MS,
             RETRY_BACKOFF_MS,
             RETRY_BACKOFF_MS,
-            logContext
+            logContext,
+            null
         );
     }
 

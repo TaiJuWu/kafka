@@ -21,6 +21,8 @@ import org.apache.kafka.clients.MetadataUpdater;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
@@ -31,8 +33,12 @@ import org.apache.kafka.common.utils.LogContext;
 
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -314,6 +320,32 @@ public class AdminMetadataManager {
         this.metadataAttemptStartMs = Optional.empty();
 
         if (!cluster.nodes().isEmpty()) {
+            // Merge topicIds from the new cluster with existing topicIds
+            // This is necessary because global metadata requests don't include topic info,
+            // but lookup requests do. We want to preserve topicId information from lookups.
+            Map<String, Uuid> mergedTopicIds = new HashMap<>(this.cluster.topicIds());
+            mergedTopicIds.putAll(cluster.topicIds());
+
+            // Create a new cluster with merged topicIds
+            if (!mergedTopicIds.equals(cluster.topicIds())) {
+                // Collect all partitions from the cluster
+                Collection<PartitionInfo> allPartitions = new ArrayList<>();
+                for (String topic : cluster.topics()) {
+                    allPartitions.addAll(cluster.partitionsForTopic(topic));
+                }
+
+                cluster = new Cluster(
+                    cluster.clusterResource().clusterId(),
+                    cluster.nodes(),
+                    allPartitions,
+                    cluster.unauthorizedTopics(),
+                    cluster.invalidTopics(),
+                    cluster.internalTopics(),
+                    cluster.controller(),
+                    mergedTopicIds
+                );
+            }
+
             this.cluster = cluster;
         }
     }

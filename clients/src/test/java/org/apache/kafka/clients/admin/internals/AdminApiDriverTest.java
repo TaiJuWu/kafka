@@ -407,7 +407,8 @@ class AdminApiDriverTest {
             time.milliseconds() + API_TIMEOUT_MS,
             RETRY_BACKOFF_MS,
             RETRY_BACKOFF_MAX_MS,
-            new LogContext()
+            new LogContext(),
+            null
         );
 
         assertTrue(((CoordinatorStrategy) handler.lookupStrategy()).batch);
@@ -655,7 +656,8 @@ class AdminApiDriverTest {
                 time.milliseconds() + API_TIMEOUT_MS,
                 RETRY_BACKOFF_MS,
                 RETRY_BACKOFF_MAX_MS,
-                new LogContext()
+                new LogContext(),
+                null
             );
 
             staticKeys.forEach((key, brokerId) ->

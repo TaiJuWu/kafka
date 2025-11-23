@@ -5088,7 +5088,8 @@ public class KafkaAdminClient extends AdminClient {
             deadlineMs,
             retryBackoffMs,
             retryBackoffMaxMs,
-            logContext
+            logContext,
+            metadataManager
         );
 
         maybeSendRequests(driver, currentTimeMs);

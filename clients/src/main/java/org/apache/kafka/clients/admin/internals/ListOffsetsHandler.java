@@ -48,6 +48,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffsetsResultInfo> {
@@ -61,7 +62,7 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
 
     public ListOffsetsHandler(
         Map<TopicPartition, Long> offsetTimestampsByPartition,
-        java.util.function.Supplier<Cluster> clusterSupplier,
+        Supplier<Cluster> clusterSupplier,
         ListOffsetsOptions options,
         LogContext logContext,
         int defaultApiTimeoutMs
@@ -93,8 +94,10 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
             keys,
             topicName -> {
                 Uuid topicId = cluster.topicId(topicName);
-                System.err.println("ZZZ Admin: topic=" + topicName + " topicId=" + topicId + " cluster.topicIds()=" + cluster.topicIds());
-                System.err.flush();
+                // Use ZERO_UUID if topicId is null to avoid NPE
+                if (topicId == null) {
+                    topicId = Uuid.ZERO_UUID;
+                }
                 return new ListOffsetsTopic().setName(topicName).setTopicId(topicId);
             },
             (listOffsetsTopic, partitionId) -> {
@@ -108,10 +111,11 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
 
         // Only allow topicId-based protocol (v12) if ALL topics have valid topicIds
         // If any topic has ZERO_UUID, we must restrict to name-based protocol (v11 or lower)
+        // This is because in a given protocol version, we can only use topicId OR topicName, not both
         boolean canUseTopicIds = !topicsByName.isEmpty() && topicsByName.values().stream()
                 .filter(Objects::nonNull)
                 .map(ListOffsetsTopic::topicId)
-                .anyMatch(topicId -> topicId != null && !topicId.equals(Uuid.ZERO_UUID));
+                .allMatch(topicId -> topicId != null && !topicId.equals(Uuid.ZERO_UUID));
 
         boolean supportsMaxTimestamp = keys
             .stream()
@@ -155,7 +159,16 @@ public final class ListOffsetsHandler extends Batched<TopicPartition, ListOffset
 
         for (ListOffsetsTopicResponse topic : response.topics()) {
             for (ListOffsetsPartitionResponse partition : topic.partitions()) {
-                TopicPartition topicPartition = new TopicPartition(topic.name(), partition.partitionIndex());
+
+                // for version 12, we drop the topic name and only return topicId
+                // if there is topicIds, we use it first.
+                TopicPartition topicPartition;
+                if (topic.topicId() != null || !topic.topicId().equals(Uuid.ZERO_UUID)) {
+                    topicPartition = new TopicPartition(clusterSupplier.get().topicName(topic.topicId()), partition.partitionIndex());
+                } else {
+                    topicPartition = new TopicPartition(topic.name(), partition.partitionIndex());
+                }
+
                 Errors error = Errors.forCode(partition.errorCode());
                 if (!offsetTimestampsByPartition.containsKey(topicPartition)) {
                     log.warn("ListOffsets response includes unknown topic partition {}", topicPartition);

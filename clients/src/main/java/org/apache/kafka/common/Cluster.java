@@ -355,8 +355,12 @@ public final class Cluster {
         return controller;
     }
 
-    public Collection<Uuid> topicIds() {
-        return topicIds.values();
+    public Map<String, Uuid> topicIds() {
+        return topicIds;
+    }
+
+    public Map<Uuid, String> topicNames() {
+        return topicNames;
     }
 
     public Uuid topicId(String topic) {

@@ -23,6 +23,7 @@ import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.AbstractResponse;
 import org.apache.kafka.common.requests.FindCoordinatorRequest.NoBatchedFindCoordinatorsException;
+import org.apache.kafka.common.requests.MetadataResponse;
 import org.apache.kafka.common.requests.OffsetFetchRequest.NoBatchedOffsetFetchRequestException;
 import org.apache.kafka.common.utils.ExponentialBackoff;
 import org.apache.kafka.common.utils.LogContext;
@@ -88,6 +89,7 @@ public class AdminApiDriver<K, V> {
     private final long deadlineMs;
     private final AdminApiHandler<K, V> handler;
     private final AdminApiFuture<K, V> future;
+    private final AdminMetadataManager metadataManager;
 
     private final BiMultimap<ApiRequestScope, K> lookupMap = new BiMultimap<>();
     private final BiMultimap<FulfillmentScope, K> fulfillmentMap = new BiMultimap<>();
@@ -99,11 +101,13 @@ public class AdminApiDriver<K, V> {
         long deadlineMs,
         long retryBackoffMs,
         long retryBackoffMaxMs,
-        LogContext logContext
+        LogContext logContext,
+        AdminMetadataManager metadataManager
     ) {
         this.handler = handler;
         this.future = future;
         this.deadlineMs = deadlineMs;
+        this.metadataManager = metadataManager;
         this.retryBackoff = new ExponentialBackoff(
             retryBackoffMs,
             CommonClientConfigs.RETRY_BACKOFF_EXP_BASE,
@@ -237,6 +241,13 @@ public class AdminApiDriver<K, V> {
             completeExceptionally(result.failedKeys);
             retryLookup(result.unmappedKeys);
         } else {
+            // Update AdminMetadataManager if this is a MetadataResponse from lookup stage
+            if (metadataManager != null && response instanceof MetadataResponse) {
+                MetadataResponse metadataResponse = (MetadataResponse) response;
+                log.debug("Received MetadataResponse in lookup stage, updating AdminMetadataManager");
+                metadataManager.update(metadataResponse.buildCluster(), currentTimeMs);
+            }
+
             AdminApiLookupStrategy.LookupResult<K> result = handler.lookupStrategy().handleResponse(
                 spec.keys,
                 response

@@ -962,7 +962,7 @@ public class MetadataTest {
         assertEquals(cluster.topics(), Set.of("oldValidTopic", "keepValidTopic"));
         assertEquals(2, cluster.partitionsForTopic("oldValidTopic").size());
         assertEquals(3, cluster.partitionsForTopic("keepValidTopic").size());
-        assertEquals(new HashSet<>(cluster.topicIds()), new HashSet<>(topicIds.values()));
+        assertEquals(new HashSet<>(cluster.topicIds().values()), new HashSet<>(topicIds.values()));
 
         String newClusterId = "newClusterId";
         int newNodes = oldNodes + 1;
@@ -997,7 +997,7 @@ public class MetadataTest {
         assertEquals(cluster.topics(), Set.of("keepValidTopic", "newValidTopic"));
         assertEquals(2, cluster.partitionsForTopic("keepValidTopic").size());
         assertEquals(4, cluster.partitionsForTopic("newValidTopic").size());
-        assertEquals(new HashSet<>(cluster.topicIds()), new HashSet<>(topicIds.values()));
+        assertEquals(new HashSet<>(cluster.topicIds().values()), new HashSet<>(topicIds.values()));
 
         // Perform another metadata update, but this time all topic metadata should be cleared.
         retainTopics.set(Collections.emptySet());
@@ -1059,7 +1059,7 @@ public class MetadataTest {
         // We still have the topic, but it just doesn't have an ID.
         assertEquals(Set.of("validTopic1", "validTopic2"), cluster.topics());
         assertEquals(2, cluster.partitionsForTopic("validTopic1").size());
-        assertEquals(new HashSet<>(topicIds.values()), new HashSet<>(cluster.topicIds()));
+        assertEquals(new HashSet<>(topicIds.values()), new HashSet<>(cluster.topicIds().values()));
         assertEquals(Uuid.ZERO_UUID, cluster.topicId("validTopic1"));
     }
 

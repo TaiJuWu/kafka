@@ -394,6 +394,7 @@ public final class ListOffsetsHandlerTest {
         ListOffsetsRequest.Builder builder = handler.buildBatchedRequest(node.id(), Set.of(t0p0, t0p1, t1p0));
 
         // When some topics don't have topicIds, should restrict to version 11
+        // because protocol version can only use topicId OR topicName, not both
         assertEquals((short) 1, builder.oldestAllowedVersion());
         assertEquals((short) 11, builder.latestAllowedVersion());
     }
