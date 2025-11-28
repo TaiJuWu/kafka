@@ -28,11 +28,16 @@ import org.apache.kafka.coordinator.group.api.assignor.SubscriptionType;
 import org.apache.kafka.coordinator.group.modern.MemberAssignmentImpl;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * A range assignor assigns contiguous partition ranges to members of a consumer group such that:
@@ -56,6 +61,14 @@ import java.util.Set;
  * <li<code>    M0: [T1P0, T1P1, T2P0, T2P1]    </code></li>
  * <li><code>   M1: [T1P2, T2P2]                </code></li>
  * </ul>
+ *
+ * <p>Rack-aware assignment is used if both consumer and partition replica racks are available and
+ * some partitions have replicas only on a subset of racks. We attempt to match consumer racks with
+ * partition replica racks on a best-effort basis, prioritizing balanced assignment over rack alignment.
+ * Topics with equal partition count and same set of subscribers guarantee co-partitioning by prioritizing
+ * co-partitioning over rack alignment. In this case, aligning partition replicas of these topics on the
+ * same racks will improve locality for consumers.
+ *
  *
  * Since the introduction of static membership, we could leverage <code>member.instance.id</code> to make the
  * assignment behavior more sticky.
@@ -100,6 +113,8 @@ public class RangeAssignor implements ConsumerGroupPartitionAssignor {
         private int minQuota = -1;
         private int extraPartitions = -1;
         private int nextRange = 0;
+        Map<Integer, Set<String>> partitionRacks;
+        Set<Integer> unassignedPartitions;
 
         /**
          * Constructs a new TopicMetadata instance.
@@ -108,10 +123,15 @@ public class RangeAssignor implements ConsumerGroupPartitionAssignor {
          * @param numPartitions     The number of partitions.
          * @param numMembers        The number of subscribed members.
          */
-        private TopicMetadata(Uuid topicId, int numPartitions, int numMembers) {
+        private TopicMetadata(Uuid topicId, int numPartitions, int numMembers, Map<Integer, Set<String>> partitionRacks) {
             this.topicId = topicId;
             this.numPartitions = numPartitions;
             this.numMembers = numMembers;
+            this.partitionRacks = partitionRacks;
+            this.unassignedPartitions = new LinkedHashSet<>();
+            for (int i = 0; i < numPartitions; i++) {
+                unassignedPartitions.add(i);
+            }
         }
 
         /**
@@ -127,11 +147,45 @@ public class RangeAssignor implements ConsumerGroupPartitionAssignor {
             extraPartitions = numPartitions % numMembers;
         }
 
+        /**
+         * Checks if the given partition's replicas match the member's rack.
+         *
+         * @param partition     The partition number.
+         * @param memberRack    The rack Id of the member.
+         * @return true if the member has no rack or the partition has a replica on the member's rack.
+         */
+        boolean racksMatch(int partition, Optional<String> memberRack) {
+            if (memberRack.isEmpty()) {
+                return true;
+            }
+            Set<String> replicaRacks = partitionRacks.get(partition);
+            return replicaRacks != null && replicaRacks.contains(memberRack.get());
+        }
+
+        /**
+         * Marks a partition as assigned.
+         *
+         * @param partition     The partition number to mark as assigned.
+         */
+        void markAssigned(int partition) {
+            unassignedPartitions.remove(partition);
+        }
+
+        /**
+         * Gets the set of unassigned partitions.
+         *
+         * @return The set of unassigned partition numbers.
+         */
+        Set<Integer> getUnassignedPartitions() {
+            return unassignedPartitions;
+        }
+
         @Override
         public String toString() {
             return "TopicMetadata(topicId=" + topicId +
                 ", numPartitions=" + numPartitions +
                 ", numMembers=" + numMembers +
+                ", partitionRacks=" + partitionRacks +
                 ", minQuota=" + minQuota +
                 ", extraPartitions=" + extraPartitions +
                 ", nextRange=" + nextRange +
@@ -151,26 +205,131 @@ public class RangeAssignor implements ConsumerGroupPartitionAssignor {
         int numMembers = groupSpec.memberIds().size();
 
         MemberSubscription subs = groupSpec.memberSubscription(memberIds.get(0));
-        List<TopicMetadata> topics = new ArrayList<>(subs.subscribedTopicIds().size());
 
-        for (Uuid topicId : subs.subscribedTopicIds()) {
+        // Collect member racks
+        Map<String, Optional<String>> memberRacks = collectMemberRacks(groupSpec, memberIds);
+
+        // Build topic metadata with partition rack information
+        List<TopicMetadata> topics = buildTopicMetadata(
+            subs.subscribedTopicIds(),
+            numMembers,
+            subscribedTopicDescriber
+        );
+
+        // Initialize assignments
+        Map<String, Map<Uuid, Set<Integer>>> memberAssignments = initializeMemberAssignments(
+            memberIds,
+            topics.size()
+        );
+
+        // Compute quotas
+        for (TopicMetadata topicMetadata : topics) {
+            topicMetadata.maybeComputeQuota();
+        }
+
+        // Perform rack-aware assignment if applicable
+        performRackAwareAssignment(topics, memberIds, memberRacks, memberAssignments);
+
+        // Assign remaining partitions using standard range assignment
+        return completeAssignment(groupSpec, memberIds, topics, memberAssignments);
+    }
+
+    /**
+     * Collects rack information for all members.
+     */
+    private Map<String, Optional<String>> collectMemberRacks(
+            GroupSpec groupSpec,
+            List<String> memberIds
+    ) {
+        Map<String, Optional<String>> memberRacks = new LinkedHashMap<>();
+        for (String memberId : memberIds) {
+            memberRacks.put(memberId, groupSpec.memberSubscription(memberId).rackId());
+        }
+        return memberRacks;
+    }
+
+    /**
+     * Builds topic metadata for all subscribed topics.
+     */
+    private List<TopicMetadata> buildTopicMetadata(
+        Set<Uuid> subscribedTopicIds,
+        int numMembers,
+        SubscribedTopicDescriber subscribedTopicDescriber
+    ) throws PartitionAssignorException {
+        List<TopicMetadata> topics = new ArrayList<>(subscribedTopicIds.size());
+
+        for (Uuid topicId : subscribedTopicIds) {
             int numPartitions = subscribedTopicDescriber.numPartitions(topicId);
             if (numPartitions == -1) {
                 throw new PartitionAssignorException("Member is subscribed to a non-existent topic");
             }
-            TopicMetadata m = new TopicMetadata(
-                topicId,
-                numPartitions,
-                numMembers
-            );
-            topics.add(m);
+
+            Map<Integer, Set<String>> partitionRacks = new HashMap<>();
+            for (int partition = 0; partition < numPartitions; partition++) {
+                Set<String> racks = subscribedTopicDescriber.racksForPartition(topicId, partition);
+                if (!racks.isEmpty()) {
+                    partitionRacks.put(partition, racks);
+                }
+            }
+
+            topics.add(new TopicMetadata(topicId, numPartitions, numMembers, partitionRacks));
         }
 
-        Map<String, MemberAssignment> assignments = new HashMap<>((int) ((groupSpec.memberIds().size() / 0.75f) + 1));
-        int memberAssignmentInitialCapacity = (int) ((topics.size() / 0.75f) + 1);
+        return topics;
+    }
+
+    /**
+     * Initializes empty assignment maps for all members.
+     */
+    private Map<String, Map<Uuid, Set<Integer>>> initializeMemberAssignments(
+        List<String> memberIds,
+        int numTopics
+    ) {
+        Map<String, Map<Uuid, Set<Integer>>> memberAssignments = new HashMap<>();
+        int memberAssignmentInitialCapacity = (int) ((numTopics / 0.75f) + 1);
+        for (String memberId : memberIds) {
+            memberAssignments.put(memberId, new HashMap<>(memberAssignmentInitialCapacity));
+        }
+        return memberAssignments;
+    }
+
+    /**
+     * Performs rack-aware assignment if conditions are met.
+     */
+    private void performRackAwareAssignment(
+        List<TopicMetadata> topics,
+        List<String> memberIds,
+        Map<String, Optional<String>> memberRacks,
+        Map<String, Map<Uuid, Set<Integer>>> memberAssignments
+    ) {
+        boolean useRackAware = shouldUseRackAwareAssignment(memberRacks, topics);
+
+        if (useRackAware) {
+            if (topics.size() > 1 && areTopicsCoPartitioned(topics)) {
+                assignCoPartitionedWithRackMatching(topics, memberIds, memberRacks, memberAssignments);
+            } else {
+                for (TopicMetadata topic : topics) {
+                    assignTopicWithRackMatching(topic, memberIds, memberRacks, memberAssignments);
+                }
+            }
+        }
+    }
+
+    /**
+     * Completes the assignment by assigning remaining partitions and building the final GroupAssignment.
+     */
+    private GroupAssignment completeAssignment(
+        GroupSpec groupSpec,
+        List<String> memberIds,
+        List<TopicMetadata> topics,
+        Map<String, Map<Uuid, Set<Integer>>> memberAssignments
+    ) {
+        Map<String, MemberAssignment> assignments = new HashMap<>(
+            (int) ((groupSpec.memberIds().size() / 0.75f) + 1)
+        );
 
         for (String memberId : memberIds) {
-            Map<Uuid, Set<Integer>> assignment = new HashMap<>(memberAssignmentInitialCapacity);
+            Map<Uuid, Set<Integer>> assignment = memberAssignments.get(memberId);
             for (TopicMetadata topicMetadata : topics) {
                 topicMetadata.maybeComputeQuota();
                 addPartitionsToAssignment(topicMetadata, assignment);
@@ -179,6 +338,149 @@ public class RangeAssignor implements ConsumerGroupPartitionAssignor {
         }
 
         return new GroupAssignment(assignments);
+    }
+
+    /**
+     * Determines if rack-aware assignment should be used.
+     */
+    private boolean shouldUseRackAwareAssignment(
+            Map<String, Optional<String>> memberRacks,
+            List<TopicMetadata> topics
+    ) {
+        // Check if any members have rack information
+        Set<String> consumerRacks = memberRacks.values().stream()
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .collect(Collectors.toSet());
+
+        if (consumerRacks.isEmpty()) {
+            return false;
+        }
+
+        // Check if any topics have partition rack information
+        Set<String> allPartitionRacks = new HashSet<>();
+        for (TopicMetadata topic : topics) {
+            for (Set<String> racks : topic.partitionRacks.values()) {
+                allPartitionRacks.addAll(racks);
+            }
+        }
+
+        if (allPartitionRacks.isEmpty() || Collections.disjoint(consumerRacks, allPartitionRacks)) {
+            return false;
+        }
+
+        // Check if some partitions have replicas only on a subset of racks
+        // If all partitions have the same set of racks, rack-aware assignment doesn't help
+        Set<Set<String>> uniqueRackSets = topics.stream()
+                .flatMap(t -> t.partitionRacks.values().stream())
+                .collect(Collectors.toSet());
+
+        return uniqueRackSets.size() > 1;
+    }
+
+    /**
+     * Checks if topics are co-partitioned (same number of partitions).
+     */
+    private boolean areTopicsCoPartitioned(List<TopicMetadata> topics) {
+        if (topics.isEmpty()) {
+            return false;
+        }
+        int numPartitions = topics.get(0).numPartitions;
+        return topics.stream().allMatch(t -> t.numPartitions == numPartitions);
+    }
+
+    /**
+     * Assigns co-partitioned topics with rack matching.
+     * Attempts to assign the same partition number from all topics to the same member,
+     * preferring members whose rack matches the partition replicas.
+     */
+    private void assignCoPartitionedWithRackMatching(
+        List<TopicMetadata> topics,
+        List<String> memberIds,
+        Map<String, Optional<String>> memberRacks,
+        Map<String, Map<Uuid, Set<Integer>>> memberAssignments
+    ) {
+        int numPartitions = topics.get(0).numPartitions;
+        Set<String> remainingMembers = new LinkedHashSet<>(memberIds);
+        Map<String, Integer> assignedCounts = new HashMap<>();
+        for (String memberId : memberIds) {
+            assignedCounts.put(memberId, 0);
+        }
+
+        // Try to assign each partition number to a member with rack match
+        for (int partition = 0; partition < numPartitions; partition++) {
+            final int p = partition;
+
+            // Find a member whose rack matches all topics for this partition
+            // and who still has capacity
+            Optional<String> matchingMember = remainingMembers.stream()
+                .filter(memberId -> {
+                    // Check if member has capacity
+                    TopicMetadata firstTopic = topics.get(0);
+                    if (assignedCounts.get(memberId) < firstTopic.minQuota + (firstTopic.extraPartitions > 0 ? 1 : 0)) {
+                        // Check if rack matches for all topics
+                        return topics.stream().allMatch(t -> t.racksMatch(p, memberRacks.get(memberId)));
+                    }
+                    return false;
+                })
+                .findFirst();
+
+            if (matchingMember.isPresent()) {
+                String memberId = matchingMember.get();
+                Map<Uuid, Set<Integer>> assignment = memberAssignments.get(memberId);
+
+                // Assign this partition from all topics to this member
+                for (TopicMetadata topic : topics) {
+                    assignment.computeIfAbsent(topic.topicId, k -> new HashSet<>()).add(p);
+                    topic.markAssigned(p);
+                }
+
+                // Update assigned count
+                assignedCounts.put(memberId, assignedCounts.get(memberId) + 1);
+
+                // Check if member reached capacity
+                TopicMetadata firstTopic = topics.get(0);
+                int memberQuota = firstTopic.minQuota + (assignedCounts.get(memberId) <= firstTopic.extraPartitions ? 1 : 0);
+                if (assignedCounts.get(memberId) >= memberQuota) {
+                    remainingMembers.remove(memberId);
+                    if (remainingMembers.isEmpty()) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Assigns a single topic with rack matching.
+     */
+    private void assignTopicWithRackMatching(
+        TopicMetadata topic,
+        List<String> memberIds,
+        Map<String, Optional<String>> memberRacks,
+        Map<String, Map<Uuid, Set<Integer>>> memberAssignments
+    ) {
+        Map<String, Integer> assignedCounts = new HashMap<>();
+        for (String memberId : memberIds) {
+            assignedCounts.put(memberId, 0);
+        }
+
+        // Try to assign partitions to members with matching racks
+        for (int partition : new ArrayList<>(topic.unassignedPartitions)) {
+            Optional<String> matchingMember = memberIds.stream()
+                .filter(memberId -> {
+                    int quota = topic.minQuota + (assignedCounts.get(memberId) < topic.extraPartitions ? 1 : 0);
+                    return assignedCounts.get(memberId) < quota && topic.racksMatch(partition, memberRacks.get(memberId));
+                })
+                .findFirst();
+
+            if (matchingMember.isPresent()) {
+                String memberId = matchingMember.get();
+                memberAssignments.get(memberId).computeIfAbsent(topic.topicId, k -> new HashSet<>()).add(partition);
+                topic.markAssigned(partition);
+                assignedCounts.put(memberId, assignedCounts.get(memberId) + 1);
+            }
+        }
     }
 
     /**
@@ -204,7 +506,8 @@ public class RangeAssignor implements ConsumerGroupPartitionAssignor {
                     return new TopicMetadata(
                         topicId,
                         numPartitions,
-                        0
+                        0,
+                        new HashMap<>()
                     );
                 });
                 topicMetadata.numMembers++;
@@ -263,6 +566,7 @@ public class RangeAssignor implements ConsumerGroupPartitionAssignor {
 
     /**
      * Assigns a range of partitions to the specified topic based on the provided metadata.
+     * This method assigns remaining unassigned partitions using the standard range assignment logic.
      *
      * @param topicMetadata         Metadata containing the topic details, including the number of partitions,
      *                              the next range to assign, minQuota, and extra partitions.
@@ -272,17 +576,42 @@ public class RangeAssignor implements ConsumerGroupPartitionAssignor {
         TopicMetadata topicMetadata,
         Map<Uuid, Set<Integer>> memberAssignment
     ) {
-        int start = topicMetadata.nextRange;
-        int quota = topicMetadata.minQuota;
+        Set<Integer> currentAssignment = memberAssignment.get(topicMetadata.topicId);
+        int alreadyAssigned = currentAssignment != null ? currentAssignment.size() : 0;
 
+        int quota = topicMetadata.minQuota;
         // Adjust quota to account for extra partitions if available.
         if (topicMetadata.extraPartitions > 0) {
             quota++;
             topicMetadata.extraPartitions--;
         }
 
-        // Calculate the end using the quota.
-        int end = Math.min(start + quota, topicMetadata.numPartitions);
+        int neededPartitions = quota - alreadyAssigned;
+        if (neededPartitions <= 0) {
+            return;
+        }
+
+        // Assign remaining unassigned partitions if any
+        Set<Integer> unassigned = topicMetadata.unassignedPartitions;
+        if (!unassigned.isEmpty()) {
+            List<Integer> partitionsToAssign = unassigned.stream()
+                .limit(neededPartitions)
+                .collect(Collectors.toList());
+
+            if (!partitionsToAssign.isEmpty()) {
+                Set<Integer> assignment = memberAssignment.computeIfAbsent(
+                    topicMetadata.topicId,
+                    k -> new HashSet<>()
+                );
+                assignment.addAll(partitionsToAssign);
+                partitionsToAssign.forEach(topicMetadata::markAssigned);
+                return;
+            }
+        }
+
+        // Fallback to range-based assignment for remaining partitions
+        int start = topicMetadata.nextRange;
+        int end = Math.min(start + neededPartitions, topicMetadata.numPartitions);
 
         topicMetadata.nextRange = end;
 
