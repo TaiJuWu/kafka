@@ -1,5 +1,5 @@
 org.apache.kafka.common.test.KafkaClusterTestKitTest:
-- testCreateClusterFormatAndCloseWithMultipleLogDirs
+- testCreateClusterAndCloseWithMultipleLogDirs
 - testCreateClusterWithBadNumDisksThrows
 - testCreateClusterWithBadNumOfBrokers
 - testCreateClusterWithBadNumOfControllers

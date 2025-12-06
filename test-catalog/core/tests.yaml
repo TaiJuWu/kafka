@@ -2962,12 +2962,6 @@ kafka.server.share.ShareCoordinatorMetadataCacheHelperImplTest:
 kafka.server.share.ShareFetchUtilsTest:
 - FileRecords
 - MemoryRecords
-- testAccumulateAcquiredRecords
-- testAccumulateAcquiredRecordsAllBatches
-- testAccumulateAcquiredRecordsEmptyList
-- testAccumulateAcquiredRecordsNoMerging
-- testAccumulateAcquiredRecordsSingleRecord
-- testAccumulateAcquiredRecordsWithRanges
 - testProcessFetchResponse
 - testProcessFetchResponseWhenNoRecordsAreAcquired
 - testProcessFetchResponseWithEmptyRecords

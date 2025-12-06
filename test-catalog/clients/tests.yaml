@@ -2370,7 +2370,6 @@ org.apache.kafka.clients.consumer.internals.ShareMembershipManagerTest:
 - testUpdateStateFailsOnResponsesWithErrors
 org.apache.kafka.clients.consumer.internals.ShareSessionHandlerTest:
 - testAddNewIdAfterTopicRemovedFromSession
-- testCanSkipIfRequestEmpty
 - testForgottenPartitions
 - testNextAcknowledgementsClearedOnInvalidRequest
 - testPartitionForgottenOnAcknowledgeOnly
