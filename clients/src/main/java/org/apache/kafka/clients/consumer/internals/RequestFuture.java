@@ -21,7 +21,6 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Timer;
 
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 
 /**
  * Result of an asynchronous request from {@link ConsumerNetworkClient}. Use {@link ConsumerNetworkClient#poll(Timer)}
@@ -106,16 +105,20 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
             throw new IllegalStateException("Attempt to retrieve exception from future which hasn't failed");
 
         try {
-            completableFuture.getNow(null);
+            completableFuture.join();
             // Should not reach here since we checked failed()
             throw new IllegalStateException("Future is marked as failed but no exception found");
-        } catch (Exception e) {
-            Throwable cause = (e instanceof ExecutionException) ? e.getCause() : e;
+        } catch (java.util.concurrent.CompletionException e) {
+            // CompletionException wraps the actual exception
+            Throwable cause = e.getCause();
             if (cause instanceof RuntimeException) {
                 return (RuntimeException) cause;
             } else {
                 return new RuntimeException(cause);
             }
+        } catch (RuntimeException e) {
+            // Direct RuntimeException (shouldn't happen with completeExceptionally, but handle it)
+            return e;
         }
     }
 
@@ -163,7 +166,10 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
     public void addListener(RequestFutureListener<T> listener) {
         completableFuture.whenComplete((value, exception) -> {
             if (exception != null) {
-                Throwable cause = (exception instanceof ExecutionException) ? exception.getCause() : exception;
+                // whenComplete receives CompletionException wrapping the actual exception
+                Throwable cause = (exception instanceof java.util.concurrent.CompletionException && exception.getCause() != null)
+                    ? exception.getCause()
+                    : exception;
                 RuntimeException runtimeException = (cause instanceof RuntimeException)
                     ? (RuntimeException) cause
                     : new RuntimeException(cause);
