@@ -20,10 +20,8 @@ import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Timer;
 
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Result of an asynchronous request from {@link ConsumerNetworkClient}. Use {@link ConsumerNetworkClient#poll(Timer)}
@@ -46,33 +44,30 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
 
-    private static final Object INCOMPLETE_SENTINEL = new Object();
-    private final AtomicReference<Object> result = new AtomicReference<>(INCOMPLETE_SENTINEL);
-    private final ConcurrentLinkedQueue<RequestFutureListener<T>> listeners = new ConcurrentLinkedQueue<>();
-    private final CountDownLatch completedLatch = new CountDownLatch(1);
+    private final CompletableFuture<T> completableFuture = new CompletableFuture<>();
 
     /**
      * Check whether the response is ready to be handled
      * @return true if the response is ready, false otherwise
      */
     public boolean isDone() {
-        return result.get() != INCOMPLETE_SENTINEL;
-    }
-
-    public boolean awaitDone(long timeout, TimeUnit unit) throws InterruptedException {
-        return completedLatch.await(timeout, unit);
+        return completableFuture.isDone();
     }
 
     /**
      * Get the value corresponding to this request (only available if the request succeeded)
-     * @return the value set in {@link #complete(Object)}
+     * @return the value if the future completed successfully
      * @throws IllegalStateException if the future is not complete or failed
      */
-    @SuppressWarnings("unchecked")
     public T value() {
         if (!succeeded())
             throw new IllegalStateException("Attempt to retrieve value from future which hasn't successfully completed");
-        return (T) result.get();
+        try {
+            return completableFuture.getNow(null);
+        } catch (Exception e) {
+            // This should not happen since we checked succeeded()
+            throw new IllegalStateException("Unexpected exception retrieving value", e);
+        }
     }
 
     /**
@@ -80,7 +75,7 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
      * @return true if the request completed and was successful
      */
     public boolean succeeded() {
-        return isDone() && !failed();
+        return completableFuture.isDone() && !completableFuture.isCompletedExceptionally() && !completableFuture.isCancelled();
     }
 
     /**
@@ -88,7 +83,7 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
      * @return true if the request completed with a failure
      */
     public boolean failed() {
-        return result.get() instanceof RuntimeException;
+        return completableFuture.isCompletedExceptionally();
     }
 
     /**
@@ -109,7 +104,19 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
     public RuntimeException exception() {
         if (!failed())
             throw new IllegalStateException("Attempt to retrieve exception from future which hasn't failed");
-        return (RuntimeException) result.get();
+
+        try {
+            completableFuture.getNow(null);
+            // Should not reach here since we checked failed()
+            throw new IllegalStateException("Future is marked as failed but no exception found");
+        } catch (Exception e) {
+            Throwable cause = (e instanceof ExecutionException) ? e.getCause() : e;
+            if (cause instanceof RuntimeException) {
+                return (RuntimeException) cause;
+            } else {
+                return new RuntimeException(cause);
+            }
+        }
     }
 
     /**
@@ -120,16 +127,11 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
      * @throws IllegalArgumentException if the argument is an instance of {@link RuntimeException}
      */
     public void complete(T value) {
-        try {
-            if (value instanceof RuntimeException)
-                throw new IllegalArgumentException("The argument to complete can not be an instance of RuntimeException");
+        if (value instanceof RuntimeException)
+            throw new IllegalArgumentException("The argument to complete can not be an instance of RuntimeException");
 
-            if (!result.compareAndSet(INCOMPLETE_SENTINEL, value))
-                throw new IllegalStateException("Invalid attempt to complete a request future which is already complete");
-            fireSuccess();
-        } finally {
-            completedLatch.countDown();
-        }
+        if (!completableFuture.complete(value))
+            throw new IllegalStateException("Invalid attempt to complete a request future which is already complete");
     }
 
     /**
@@ -139,17 +141,11 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
      * @throws IllegalStateException if the future has already been completed
      */
     public void raise(RuntimeException e) {
-        try {
-            if (e == null)
-                throw new IllegalArgumentException("The exception passed to raise must not be null");
+        if (e == null)
+            throw new IllegalArgumentException("The exception passed to raise must not be null");
 
-            if (!result.compareAndSet(INCOMPLETE_SENTINEL, e))
-                throw new IllegalStateException("Invalid attempt to complete a request future which is already complete");
-
-            fireFailure();
-        } finally {
-            completedLatch.countDown();
-        }
+        if (!completableFuture.completeExceptionally(e))
+            throw new IllegalStateException("Invalid attempt to complete a request future which is already complete");
     }
 
     /**
@@ -160,36 +156,22 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
         raise(error.exception());
     }
 
-    private void fireSuccess() {
-        T value = value();
-        while (true) {
-            RequestFutureListener<T> listener = listeners.poll();
-            if (listener == null)
-                break;
-            listener.onSuccess(value);
-        }
-    }
-
-    private void fireFailure() {
-        RuntimeException exception = exception();
-        while (true) {
-            RequestFutureListener<T> listener = listeners.poll();
-            if (listener == null)
-                break;
-            listener.onFailure(exception);
-        }
-    }
-
     /**
      * Add a listener which will be notified when the future completes
      * @param listener non-null listener to add
      */
     public void addListener(RequestFutureListener<T> listener) {
-        this.listeners.add(listener);
-        if (failed())
-            fireFailure();
-        else if (succeeded())
-            fireSuccess();
+        completableFuture.whenComplete((value, exception) -> {
+            if (exception != null) {
+                Throwable cause = (exception instanceof ExecutionException) ? exception.getCause() : exception;
+                RuntimeException runtimeException = (cause instanceof RuntimeException)
+                    ? (RuntimeException) cause
+                    : new RuntimeException(cause);
+                listener.onFailure(runtimeException);
+            } else {
+                listener.onSuccess(value);
+            }
+        });
     }
 
     /**
@@ -214,6 +196,11 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
         return adapted;
     }
 
+    /**
+     * Chain this future to another future. When this future completes, the chained future
+     * will be completed with the same result.
+     * @param future the future to chain to
+     */
     public void chain(final RequestFuture<T> future) {
         addListener(new RequestFutureListener<>() {
             @Override
@@ -228,22 +215,42 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
         });
     }
 
+    /**
+     * Create a future that is already completed with a failure
+     * @param e the exception
+     * @param <T> the type parameter
+     * @return a failed future
+     */
     public static <T> RequestFuture<T> failure(RuntimeException e) {
         RequestFuture<T> future = new RequestFuture<>();
         future.raise(e);
         return future;
     }
 
+    /**
+     * Create a future that is already completed successfully with a void value
+     * @return a successful void future
+     */
     public static RequestFuture<Void> voidSuccess() {
         RequestFuture<Void> future = new RequestFuture<>();
         future.complete(null);
         return future;
     }
 
+    /**
+     * Create a future that failed with COORDINATOR_NOT_AVAILABLE error
+     * @param <T> the type parameter
+     * @return a failed future
+     */
     public static <T> RequestFuture<T> coordinatorNotAvailable() {
         return failure(Errors.COORDINATOR_NOT_AVAILABLE.exception());
     }
 
+    /**
+     * Create a future that failed with no brokers available error
+     * @param <T> the type parameter
+     * @return a failed future
+     */
     public static <T> RequestFuture<T> noBrokersAvailable() {
         return failure(new NoAvailableBrokersException());
     }
@@ -251,5 +258,13 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
     @Override
     public boolean shouldBlock() {
         return !isDone();
+    }
+
+    /**
+     * Get the underlying CompletableFuture for advanced usage
+     * @return the CompletableFuture backing this RequestFuture
+     */
+    public CompletableFuture<T> toCompletableFuture() {
+        return completableFuture;
     }
 }
