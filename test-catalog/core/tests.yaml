@@ -2962,6 +2962,12 @@ kafka.server.share.ShareCoordinatorMetadataCacheHelperImplTest:
 kafka.server.share.ShareFetchUtilsTest:
 - FileRecords
 - MemoryRecords
+- testAccumulateAcquiredRecords
+- testAccumulateAcquiredRecordsAllBatches
+- testAccumulateAcquiredRecordsEmptyList
+- testAccumulateAcquiredRecordsNoMerging
+- testAccumulateAcquiredRecordsSingleRecord
+- testAccumulateAcquiredRecordsWithRanges
 - testProcessFetchResponse
 - testProcessFetchResponseWhenNoRecordsAreAcquired
 - testProcessFetchResponseWithEmptyRecords
@@ -3248,7 +3254,7 @@ kafka.server.share.SharePartitionTest:
 - testReleaseAcquiredRecordsBatchesPostStartOffsetMovement
 - testReleaseAcquiredRecordsBatchesPostStartOffsetMovementToMiddleOfBatch
 - testReleaseAcquiredRecordsBatchesPostStartOffsetMovementToStartOfBatch
-- testReleaseAcquiredRecordsDecreaseDeliveryCount
+- testReleaseAcquiredRecordsDoNotDecreaseDeliveryCount
 - testReleaseAcquiredRecordsForEmptyCachedData
 - testReleaseAcquiredRecordsPerOffsetWithDifferentMemberId
 - testReleaseAcquiredRecordsSubsetWithAnotherMember
