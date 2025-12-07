@@ -21,6 +21,8 @@ import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.Timer;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Result of an asynchronous request from {@link ConsumerNetworkClient}. Use {@link ConsumerNetworkClient#poll(Timer)}
@@ -44,6 +46,7 @@ import java.util.concurrent.CompletableFuture;
 public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
 
     private final CompletableFuture<T> completableFuture = new CompletableFuture<>();
+    private final ConcurrentLinkedQueue<RequestFutureListener<T>> listeners = new ConcurrentLinkedQueue<>();
 
     /**
      * Check whether the response is ready to be handled
@@ -51,6 +54,25 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
      */
     public boolean isDone() {
         return completableFuture.isDone();
+    }
+
+    /**
+     * Await completion of the request
+     * @param timeout maximum time to wait
+     * @param unit time unit of timeout
+     * @return true if completed within timeout, false otherwise
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public boolean awaitDone(long timeout, TimeUnit unit) throws InterruptedException {
+        try {
+            completableFuture.get(timeout, unit);
+            return true;
+        } catch (java.util.concurrent.TimeoutException e) {
+            return false;
+        } catch (java.util.concurrent.ExecutionException e) {
+            // Future completed exceptionally, which still means it's done
+            return true;
+        }
     }
 
     /**
@@ -135,6 +157,15 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
 
         if (!completableFuture.complete(value))
             throw new IllegalStateException("Invalid attempt to complete a request future which is already complete");
+
+        fireSuccess();
+    }
+
+    private void fireSuccess() {
+        T value = value();
+        for (RequestFutureListener<T> listener : listeners) {
+            listener.onSuccess(value);
+        }
     }
 
     /**
@@ -149,6 +180,15 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
 
         if (!completableFuture.completeExceptionally(e))
             throw new IllegalStateException("Invalid attempt to complete a request future which is already complete");
+
+        fireFailure();
+    }
+
+    private void fireFailure() {
+        RuntimeException exception = exception();
+        for (RequestFutureListener<T> listener : listeners) {
+            listener.onFailure(exception);
+        }
     }
 
     /**
@@ -164,20 +204,12 @@ public class RequestFuture<T> implements ConsumerNetworkClient.PollCondition {
      * @param listener non-null listener to add
      */
     public void addListener(RequestFutureListener<T> listener) {
-        completableFuture.whenComplete((value, exception) -> {
-            if (exception != null) {
-                // whenComplete receives CompletionException wrapping the actual exception
-                Throwable cause = (exception instanceof java.util.concurrent.CompletionException && exception.getCause() != null)
-                    ? exception.getCause()
-                    : exception;
-                RuntimeException runtimeException = (cause instanceof RuntimeException)
-                    ? (RuntimeException) cause
-                    : new RuntimeException(cause);
-                listener.onFailure(runtimeException);
-            } else {
-                listener.onSuccess(value);
-            }
-        });
+        listeners.add(listener);
+        if (failed()) {
+            listener.onFailure(exception());
+        } else if (succeeded()) {
+            listener.onSuccess(value());
+        }
     }
 
     /**
