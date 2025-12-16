@@ -2430,6 +2430,13 @@ org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testConsumerPollWhenSubscriptionNotUpdated
 - testForDuplicateRegistrationOfSameStateListener
 - testIgnoreLeaveResponseWhenNotLeavingGroup
+- testIsGroupReadyChangeWhenTasksAreNull
+- testIsGroupReadyWithAssignmentDelayedStatus
+- testIsGroupReadyWithIncorrectlyPartitionedTopicsStatus
+- testIsGroupReadyWithMissingInternalTopicsStatus
+- testIsGroupReadyWithMissingSourceTopicsStatus
+- testIsGroupReadyWithNoStatuses
+- testIsGroupReadyWithOtherStatuses
 - testJoining
 - testLeaveGroupOnCloseWhenInGroupWithAssignment
 - testLeaveGroupOnCloseWhenNotInGroup
@@ -5245,6 +5252,7 @@ org.apache.kafka.common.utils.ByteUtilsTest:
 - testWriteUnsignedIntLEToArray
 - testWriteUnsignedIntLEToOutputStream
 org.apache.kafka.common.utils.BytesTest:
+- testBytesLexicographicCases
 - testIncrement
 - testIncrementUpperBoundary
 - testIncrementWithSubmap

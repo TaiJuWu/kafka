@@ -445,6 +445,8 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testReplaceStaticMemberInStableStateWithUpdatedProtocolTriggersRebalance
 - testReplayConsumerGroupCurrentMemberAssignment
 - testReplayConsumerGroupCurrentMemberAssignmentTombstone
+- testReplayConsumerGroupCurrentMemberAssignmentUnownedTopicWithCompaction
+- testReplayConsumerGroupCurrentMemberAssignmentWithCompaction
 - testReplayConsumerGroupMemberMetadata
 - testReplayConsumerGroupMemberMetadataTombstone
 - testReplayConsumerGroupMetadata
@@ -462,6 +464,8 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testReplayStreamsGroupCurrentMemberAssignment
 - testReplayStreamsGroupCurrentMemberAssignmentTombstoneExisting
 - testReplayStreamsGroupCurrentMemberAssignmentTombstoneNotExisting
+- testReplayStreamsGroupCurrentMemberAssignmentUnownedTopologyWithCompaction
+- testReplayStreamsGroupCurrentMemberAssignmentWithCompaction
 - testReplayStreamsGroupEpochTombstoneExisting
 - testReplayStreamsGroupEpochTombstoneNotExisting
 - testReplayStreamsGroupMemberMetadata
@@ -1032,6 +1036,10 @@ org.apache.kafka.coordinator.group.modern.consumer.CurrentAssignmentBuilderTest:
 org.apache.kafka.coordinator.group.modern.consumer.ResolvedRegularExpressionTest:
 - testConstructor
 - testEquals
+org.apache.kafka.coordinator.group.modern.consumer.TopicRegexResolverTest:
+- testAuthorizationFiltering
+- testBasicMatching
+- testInvalidRegexIgnored
 org.apache.kafka.coordinator.group.modern.share.ShareGroupAssignmentBuilderTest:
 - testStableToStable
 - testStableToStableWithAssignmentTopicsNoLongerInSubscription

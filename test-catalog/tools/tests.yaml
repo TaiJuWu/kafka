@@ -64,6 +64,7 @@ org.apache.kafka.tools.ConfigCommandIntegrationTest:
 - testAddConfigKeyValuesUsingCommand
 - testAlterReadOnlyConfigInKRaftThenShouldFail
 - testAlterStreamsGroupNumOfStandbyReplicas
+- testBrokerLoggerConfigUpdate
 - testClientMetricsConfigUpdate
 - testDescribeGroupWithoutDynamicConfigs
 - testDescribeNonExistentConfigResource
@@ -511,6 +512,11 @@ org.apache.kafka.tools.ShareConsumerPerformanceTest:
 org.apache.kafka.tools.StreamsResetterTest:
 - shouldDeleteTopic
 - shouldDetermineInternalTopicBasedOnTopicName1
+- shouldFailAfterTooManyRetries
+- shouldFailIfThereAreMembersAndNotForce
+- shouldIgnoreGroupIdNotFoundException
+- shouldRemoveIfThereAreMembersAndForce
+- shouldRetryToRemoveMembersOnUnknownMemberIdExceptionAndForce
 - shouldSeekToEndOffset
 - testResetOffsetToSpecificOffsetWhenAfterEndOffset
 - testResetToDatetimeWhenPartitionIsEmptyResetsToLatestOffset
