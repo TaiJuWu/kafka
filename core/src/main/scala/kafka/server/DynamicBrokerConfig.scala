@@ -46,7 +46,7 @@ import org.apache.kafka.server.{DynamicThreadPool, ProcessRole}
 import org.apache.kafka.server.common.ApiMessageAndVersion
 import org.apache.kafka.server.config.{DynamicProducerStateManagerConfig, ReplicationConfigs, ServerConfigs, ServerLogConfigs, ServerTopicConfigSynonyms}
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
-import org.apache.kafka.server.metrics.{ClientTelemetryExporterPlugin, MetricConfigs}
+import org.apache.kafka.server.metrics.{ClientTelemetryExporterPlugin, KafkaMetricsGroup, MetricConfigs}
 import org.apache.kafka.server.telemetry.{ClientTelemetry, ClientTelemetryExporterProvider}
 import org.apache.kafka.snapshot.RecordsSnapshotReader
 import org.apache.kafka.storage.internals.log.{LogCleaner, LogConfig}
@@ -254,10 +254,17 @@ object DynamicBrokerConfig {
 
 class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging {
 
+  warn(s"[DEBUG] ★★★ DynamicBrokerConfig instance created! Thread: ${Thread.currentThread().getName}")
+
   private[server] val staticBrokerConfigs = ConfigDef.convertToStringMapWithPasswordValues(kafkaConfig.originalsFromThisConfig).asScala
   private[server] val staticDefaultConfigs = ConfigDef.convertToStringMapWithPasswordValues(KafkaConfig.defaultValues.asJava).asScala
   private val dynamicBrokerConfigs = mutable.Map[String, String]()
   private val dynamicDefaultConfigs = mutable.Map[String, String]()
+
+  // Metrics group and counters - will be set via initialize()
+  private var metricsGroupOpt: Option[KafkaMetricsGroup] = None
+  @volatile private var invalidBrokerConfigCount = 0
+  @volatile private var invalidDefaultConfigCount = 0
 
   // Use COWArrayList to prevent concurrent modification exception when an item is added by one thread to these
   // collections, while another thread is iterating over them.
@@ -267,9 +274,21 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   private var telemetryExporterPluginOpt: Option[ClientTelemetryExporterPlugin] = _
   private var currentConfig: KafkaConfig = _
 
-  private[server] def initialize(clientTelemetryExporterPluginOpt: Option[ClientTelemetryExporterPlugin]): Unit = {
+  private[server] def initialize(clientTelemetryExporterPluginOpt: Option[ClientTelemetryExporterPlugin],
+                                  metricsGroupOpt: Option[KafkaMetricsGroup] = None): Unit = {
     currentConfig = new KafkaConfig(kafkaConfig.props, false)
     telemetryExporterPluginOpt = clientTelemetryExporterPluginOpt
+
+    // Initialize metrics group if provided (only register gauge once)
+    if (this.metricsGroupOpt.isEmpty) {
+      this.metricsGroupOpt = metricsGroupOpt
+      this.metricsGroupOpt.foreach { metricsGroup =>
+        metricsGroup.newGauge("InvalidDynamicBrokerConfigCount", () => {
+          invalidBrokerConfigCount + invalidDefaultConfigCount
+        })
+        warn(s"[DEBUG] ★★★ Metrics registered for DynamicBrokerConfig")
+      }
+    }
   }
 
   /**
@@ -433,19 +452,26 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
                                           perBrokerConfig: Boolean): Properties = {
     val props = persistentProps.clone().asInstanceOf[Properties]
 
+    var invalidCount = 0
     // Remove all invalid configs from `props`
-    removeInvalidConfigs(props, perBrokerConfig)
-    def removeInvalidProps(invalidPropNames: Set[String], errorMessage: String): Unit = {
+    val invalidConfigsFromValidation = removeInvalidConfigs(props, perBrokerConfig)
+    warn(s"[DEBUG] removeInvalidConfigs returned: $invalidConfigsFromValidation, perBrokerConfig=$perBrokerConfig")
+    invalidCount += invalidConfigsFromValidation
+    def removeInvalidProps(invalidPropNames: Set[String], errorMessage: String): Int = {
       if (invalidPropNames.nonEmpty) {
         invalidPropNames.foreach(props.remove)
         error(s"$errorMessage: $invalidPropNames")
       }
+      invalidPropNames.size
     }
-    removeInvalidProps(nonDynamicConfigs(props), "Non-dynamic configs will be ignored")
-    removeInvalidProps(securityConfigsWithoutListenerPrefix(props),
+    invalidCount += removeInvalidProps(nonDynamicConfigs(props), "Non-dynamic configs will be ignored")
+    invalidCount += removeInvalidProps(securityConfigsWithoutListenerPrefix(props),
       "Security configs can be dynamically updated only using listener prefix, base configs will be ignored")
     if (!perBrokerConfig)
-      removeInvalidProps(perBrokerConfigs(props), "Per-broker configs defined at default cluster level will be ignored")
+      invalidCount += removeInvalidProps(perBrokerConfigs(props), "Per-broker configs defined at default cluster level will be ignored")
+    warn(s"[DEBUG] About to call updateInvalidConfigCount with perBrokerConfig=$perBrokerConfig, invalidCount=$invalidCount")
+    updateInvalidConfigCount(perBrokerConfig, invalidCount)
+    warn(s"[DEBUG] After updateInvalidConfigCount, invalidBrokerConfigCount=$invalidBrokerConfigCount, invalidDefaultConfigCount=$invalidDefaultConfigCount")
 
     props
   }
@@ -476,10 +502,11 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     processReconfiguration(newProps, validateOnly = true)
   }
 
-  private def removeInvalidConfigs(props: Properties, perBrokerConfig: Boolean): Unit = {
+  private def removeInvalidConfigs(props: Properties, perBrokerConfig: Boolean): Int = {
     try {
       validateConfigTypes(props)
       props.asScala
+      0
     } catch {
       case e: Exception =>
         val invalidProps = props.asScala.filter { case (k, v) =>
@@ -495,6 +522,17 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
         invalidProps.keys.foreach(props.remove)
         val configSource = if (perBrokerConfig) "broker" else "default cluster"
         error(s"Dynamic $configSource config contains invalid values in: ${invalidProps.keys}, these configs will be ignored", e)
+        invalidProps.size
+    }
+  }
+
+  private def updateInvalidConfigCount(perBrokerConfig: Boolean, invalidCount: Int): Unit = {
+    if (perBrokerConfig) {
+      warn("update invalidBrokerConfigCount to " + invalidCount)
+      invalidBrokerConfigCount = invalidCount
+    } else {
+      warn("update invalidDefaultConfigCount to " + invalidCount)
+      invalidDefaultConfigCount = invalidCount
     }
   }
 

@@ -130,7 +130,11 @@ class ControllerServer(
     try {
       this.logIdent = logContext.logPrefix()
       info("Starting controller")
-      config.dynamicConfig.initialize(clientTelemetryExporterPluginOpt = None)
+
+      config.dynamicConfig.initialize(
+        clientTelemetryExporterPluginOpt = None,
+        metricsGroupOpt = None
+      )
 
       maybeChangeStatus(STARTING, STARTED)
 

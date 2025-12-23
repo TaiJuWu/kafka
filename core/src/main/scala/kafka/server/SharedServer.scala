@@ -273,7 +273,11 @@ class SharedServer(
           // This is only done in tests.
           metrics = new Metrics()
         }
-        sharedServerConfig.dynamicConfig.initialize(clientTelemetryExporterPluginOpt = None)
+
+        sharedServerConfig.dynamicConfig.initialize(
+          clientTelemetryExporterPluginOpt = None,
+          metricsGroupOpt = None
+        )
 
         if (sharedServerConfig.processRoles.contains(ProcessRole.BrokerRole)) {
           brokerMetrics = new BrokerServerMetrics(metrics)
