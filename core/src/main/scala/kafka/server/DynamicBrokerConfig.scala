@@ -454,13 +454,16 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     val props = persistentProps.clone().asInstanceOf[Properties]
 
     var invalidCount = 0
+    var invalidConfigNames = Set.empty[String]
     // Remove all invalid configs from `props`
-    val invalidConfigsFromValidation = removeInvalidConfigs(props, perBrokerConfig)
-    warn(s"[DEBUG] removeInvalidConfigs returned: $invalidConfigsFromValidation, perBrokerConfig=$perBrokerConfig")
-    invalidCount += invalidConfigsFromValidation
+    val (invalidConfigsCount, invalidConfigsFromValidation) = removeInvalidConfigs(props, perBrokerConfig)
+    warn(s"[DEBUG] removeInvalidConfigs returned: count=$invalidConfigsCount, names=$invalidConfigsFromValidation, perBrokerConfig=$perBrokerConfig")
+    invalidCount += invalidConfigsCount
+    invalidConfigNames ++= invalidConfigsFromValidation
     def removeInvalidProps(invalidPropNames: Set[String], errorMessage: String): Int = {
       if (invalidPropNames.nonEmpty) {
         invalidPropNames.foreach(props.remove)
+        invalidConfigNames ++= invalidPropNames
         error(s"$errorMessage: $invalidPropNames")
       }
       invalidPropNames.size
@@ -470,8 +473,8 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       "Security configs can be dynamically updated only using listener prefix, base configs will be ignored")
     if (!perBrokerConfig)
       invalidCount += removeInvalidProps(perBrokerConfigs(props), "Per-broker configs defined at default cluster level will be ignored")
-    warn(s"[DEBUG] About to call updateInvalidConfigCount with perBrokerConfig=$perBrokerConfig, invalidCount=$invalidCount")
-    updateInvalidConfigCount(perBrokerConfig, invalidCount)
+    warn(s"[DEBUG] About to call updateInvalidConfigCount with perBrokerConfig=$perBrokerConfig, invalidCount=$invalidCount, invalidConfigNames=$invalidConfigNames")
+    updateInvalidConfigCount(perBrokerConfig, invalidCount, invalidConfigNames)
     warn(s"[DEBUG] After updateInvalidConfigCount, sharedInvalidBrokerConfigCount=${DynamicBrokerConfig.sharedInvalidBrokerConfigCount}, sharedInvalidDefaultConfigCount=${DynamicBrokerConfig.sharedInvalidDefaultConfigCount}")
 
     props
@@ -503,11 +506,11 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     processReconfiguration(newProps, validateOnly = true)
   }
 
-  private def removeInvalidConfigs(props: Properties, perBrokerConfig: Boolean): Int = {
+  private def removeInvalidConfigs(props: Properties, perBrokerConfig: Boolean): (Int, Set[String]) = {
     try {
       validateConfigTypes(props)
       props.asScala
-      0
+      (0, Set.empty)
     } catch {
       case e: Exception =>
         val invalidProps = props.asScala.filter { case (k, v) =>
@@ -523,19 +526,20 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
         invalidProps.keys.foreach(props.remove)
         val configSource = if (perBrokerConfig) "broker" else "default cluster"
         error(s"Dynamic $configSource config contains invalid values in: ${invalidProps.keys}, these configs will be ignored", e)
-        invalidProps.size
+        (invalidProps.size, invalidProps.keys.toSet)
     }
   }
 
-  private def updateInvalidConfigCount(perBrokerConfig: Boolean, invalidCount: Int): Unit = {
+  private def updateInvalidConfigCount(perBrokerConfig: Boolean, invalidCount: Int, invalidConfigNames: Set[String]): Unit = {
+    val configNamesStr = invalidConfigNames.mkString(", ")
     if (perBrokerConfig) {
-      warn("update invalidBrokerConfigCount to " + invalidCount)
+      warn(s"update invalidBrokerConfigCount to $invalidCount, invalid configs: [$configNamesStr]")
       DynamicBrokerConfig.sharedInvalidBrokerConfigCount = invalidCount
-      invalidConfigMetricsOpt.foreach(_.setInvalidBrokerConfigCount(invalidCount))
+      invalidConfigMetricsOpt.foreach(_.setInvalidBrokerConfigCount(invalidCount, configNamesStr))
     } else {
-      warn("update invalidDefaultConfigCount to " + invalidCount)
+      warn(s"update invalidDefaultConfigCount to $invalidCount, invalid configs: [$configNamesStr]")
       DynamicBrokerConfig.sharedInvalidDefaultConfigCount = invalidCount
-      invalidConfigMetricsOpt.foreach(_.setInvalidDefaultConfigCount(invalidCount))
+      invalidConfigMetricsOpt.foreach(_.setInvalidDefaultConfigCount(invalidCount, configNamesStr))
     }
   }
 

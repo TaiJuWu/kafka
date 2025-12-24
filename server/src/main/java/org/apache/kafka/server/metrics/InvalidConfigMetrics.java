@@ -23,9 +23,10 @@ import org.apache.kafka.common.metrics.Metrics;
 
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Tracks invalid dynamic broker configuration counts.
+ * Tracks invalid dynamic broker configuration counts and names.
  * This class provides metrics for monitoring invalid configurations that are
  * rejected during dynamic broker configuration updates.
  */
@@ -34,10 +35,14 @@ public final class InvalidConfigMetrics implements AutoCloseable {
     private static final String INVALID_BROKER_CONFIG_COUNT = "invalid-broker-config-count";
     private static final String INVALID_DEFAULT_CONFIG_COUNT = "invalid-default-config-count";
     private static final String TOTAL_INVALID_CONFIG_COUNT = "total-invalid-config-count";
+    private static final String INVALID_BROKER_CONFIG_NAMES = "invalid-broker-config-names";
+    private static final String INVALID_DEFAULT_CONFIG_NAMES = "invalid-default-config-names";
 
     private final Metrics metrics;
     private final AtomicInteger invalidBrokerConfigCount = new AtomicInteger(0);
     private final AtomicInteger invalidDefaultConfigCount = new AtomicInteger(0);
+    private final AtomicReference<String> invalidBrokerConfigNames = new AtomicReference<>("");
+    private final AtomicReference<String> invalidDefaultConfigNames = new AtomicReference<>("");
 
     public InvalidConfigMetrics(Metrics metrics) {
         this.metrics = metrics;
@@ -62,6 +67,18 @@ public final class InvalidConfigMetrics implements AutoCloseable {
             metricName(TOTAL_INVALID_CONFIG_COUNT),
             (Gauge<Integer>) (config, now) -> invalidBrokerConfigCount.get() + invalidDefaultConfigCount.get()
         );
+
+        // Register invalid broker config names metric
+        metrics.addMetric(
+            metricName(INVALID_BROKER_CONFIG_NAMES),
+            (Gauge<String>) (config, now) -> invalidBrokerConfigNames.get()
+        );
+
+        // Register invalid default config names metric
+        metrics.addMetric(
+            metricName(INVALID_DEFAULT_CONFIG_NAMES),
+            (Gauge<String>) (config, now) -> invalidDefaultConfigNames.get()
+        );
     }
 
     private MetricName metricName(String name) {
@@ -69,21 +86,43 @@ public final class InvalidConfigMetrics implements AutoCloseable {
     }
 
     /**
-     * Update the invalid broker config count.
+     * Update the invalid broker config count and names.
+     *
+     * @param count the new count of invalid broker configurations
+     * @param configNames comma-separated list of invalid config names
+     */
+    public void setInvalidBrokerConfigCount(int count, String configNames) {
+        invalidBrokerConfigCount.set(count);
+        invalidBrokerConfigNames.set(configNames != null ? configNames : "");
+    }
+
+    /**
+     * Update the invalid broker config count (backward compatibility).
      *
      * @param count the new count of invalid broker configurations
      */
     public void setInvalidBrokerConfigCount(int count) {
-        invalidBrokerConfigCount.set(count);
+        setInvalidBrokerConfigCount(count, "");
     }
 
     /**
-     * Update the invalid default config count.
+     * Update the invalid default config count and names.
+     *
+     * @param count the new count of invalid default configurations
+     * @param configNames comma-separated list of invalid config names
+     */
+    public void setInvalidDefaultConfigCount(int count, String configNames) {
+        invalidDefaultConfigCount.set(count);
+        invalidDefaultConfigNames.set(configNames != null ? configNames : "");
+    }
+
+    /**
+     * Update the invalid default config count (backward compatibility).
      *
      * @param count the new count of invalid default configurations
      */
     public void setInvalidDefaultConfigCount(int count) {
-        invalidDefaultConfigCount.set(count);
+        setInvalidDefaultConfigCount(count, "");
     }
 
     /**
@@ -118,5 +157,7 @@ public final class InvalidConfigMetrics implements AutoCloseable {
         metrics.removeMetric(metricName(INVALID_BROKER_CONFIG_COUNT));
         metrics.removeMetric(metricName(INVALID_DEFAULT_CONFIG_COUNT));
         metrics.removeMetric(metricName(TOTAL_INVALID_CONFIG_COUNT));
+        metrics.removeMetric(metricName(INVALID_BROKER_CONFIG_NAMES));
+        metrics.removeMetric(metricName(INVALID_DEFAULT_CONFIG_NAMES));
     }
 }
