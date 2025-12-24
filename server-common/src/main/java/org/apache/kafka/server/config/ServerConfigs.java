@@ -76,6 +76,13 @@ public class ServerConfigs {
     public static final String DELETE_TOPIC_ENABLE_DOC = "When set to true, topics can be deleted by the admin client. " +
             "When set to false, deletion requests will be explicitly rejected by the broker.";
 
+    /** ********* Dynamic Configuration Failure Policy ***********/
+    public static final String DYNAMIC_CONFIG_FAILURE_POLICY_CONFIG = "dynamic.config.failure.policy";
+    public static final String DYNAMIC_CONFIG_FAILURE_POLICY_DEFAULT = "fail";
+    public static final String DYNAMIC_CONFIG_FAILURE_POLICY_DOC = "The policy to apply when dynamic configuration validation fails. " +
+            "Valid values are 'warn' (log warning and ignore invalid configs) and 'fail' (halt the broker). " +
+            "This setting helps ensure configuration consistency and prevents silent configuration errors.";
+
     public static final String COMPRESSION_TYPE_CONFIG = ServerTopicConfigSynonyms.serverSynonym(TopicConfig.COMPRESSION_TYPE_CONFIG);
     public static final String COMPRESSION_TYPE_DOC = "Specify the final compression type for a given topic. This configuration accepts the standard compression codecs " +
             "('gzip', 'snappy', 'lz4', 'zstd'). It additionally accepts 'uncompressed' which is equivalent to no compression; and " +
@@ -143,6 +150,7 @@ public class ServerConfigs {
             /** ********* Controlled shutdown configuration ***********/
             .define(CONTROLLED_SHUTDOWN_ENABLE_CONFIG, BOOLEAN, CONTROLLED_SHUTDOWN_ENABLE_DEFAULT, MEDIUM, CONTROLLED_SHUTDOWN_ENABLE_DOC)
             .define(DELETE_TOPIC_ENABLE_CONFIG, BOOLEAN, DELETE_TOPIC_ENABLE_DEFAULT, HIGH, DELETE_TOPIC_ENABLE_DOC)
+            .define(DYNAMIC_CONFIG_FAILURE_POLICY_CONFIG, STRING, DYNAMIC_CONFIG_FAILURE_POLICY_DEFAULT, ConfigDef.ValidString.in("warn", "fail"), MEDIUM, DYNAMIC_CONFIG_FAILURE_POLICY_DOC)
             .define(COMPRESSION_TYPE_CONFIG, STRING, ServerLogConfigs.COMPRESSION_TYPE_DEFAULT, ConfigDef.ValidString.in(BrokerCompressionType.names().toArray(new String[0])), HIGH, COMPRESSION_TYPE_DOC)
             .define(COMPRESSION_GZIP_LEVEL_CONFIG, INT, CompressionType.GZIP.defaultLevel(), CompressionType.GZIP.levelValidator(), MEDIUM, COMPRESSION_GZIP_LEVEL_DOC)
             .define(COMPRESSION_LZ4_LEVEL_CONFIG, INT, CompressionType.LZ4.defaultLevel(), CompressionType.LZ4.levelValidator(), MEDIUM, COMPRESSION_LZ4_LEVEL_DOC)

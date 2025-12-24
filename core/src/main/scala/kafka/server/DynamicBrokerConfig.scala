@@ -258,9 +258,6 @@ object DynamicBrokerConfig {
 
 class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging {
 
-  val stackTrace = Thread.currentThread().getStackTrace.take(15).mkString("\n  ")
-  warn(s"[DEBUG] ★★★ DynamicBrokerConfig instance created! Thread: ${Thread.currentThread().getName}\nCall stack:\n  $stackTrace")
-
   private[server] val staticBrokerConfigs = ConfigDef.convertToStringMapWithPasswordValues(kafkaConfig.originalsFromThisConfig).asScala
   private[server] val staticDefaultConfigs = ConfigDef.convertToStringMapWithPasswordValues(KafkaConfig.defaultValues.asJava).asScala
   private val dynamicBrokerConfigs = mutable.Map[String, String]()
@@ -285,10 +282,6 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     // Initialize invalid config metrics if provided (only once)
     if (this.invalidConfigMetricsOpt.isEmpty) {
       this.invalidConfigMetricsOpt = invalidConfigMetricsOpt
-      invalidConfigMetricsOpt.foreach { metrics =>
-        val stackTrace = Thread.currentThread().getStackTrace.take(15).mkString("\n  ")
-        warn(s"[DEBUG] ★★★ Invalid config metrics registered for DynamicBrokerConfig\nStack trace:\n  $stackTrace")
-      }
     }
   }
 
@@ -411,7 +404,12 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       dynamicBrokerConfigs ++= props.asScala
       updateCurrentConfig(doLog)
     } catch {
-      case e: Exception => error(s"Per-broker configs of $brokerId could not be applied: ${persistentProps.keySet()}", e)
+      case e: ConfigException if kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail") =>
+        // Re-throw ConfigException when failure policy is "fail" to halt the broker
+        error(s"Per-broker configs of $brokerId could not be applied: ${persistentProps.keySet()}", e)
+        throw e
+      case e: Exception =>
+        error(s"Per-broker configs of $brokerId could not be applied: ${persistentProps.keySet()}", e)
     }
   }
 
@@ -422,7 +420,12 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       dynamicDefaultConfigs ++= props.asScala
       updateCurrentConfig(doLog)
     } catch {
-      case e: Exception => error(s"Cluster default configs could not be applied: ${persistentProps.keySet()}", e)
+      case e: ConfigException if kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail") =>
+        // Re-throw ConfigException when failure policy is "fail" to halt the broker
+        error(s"Cluster default configs could not be applied: ${persistentProps.keySet()}", e)
+        throw e
+      case e: Exception =>
+        error(s"Cluster default configs could not be applied: ${persistentProps.keySet()}", e)
     }
   }
 
@@ -476,6 +479,17 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     warn(s"[DEBUG] About to call updateInvalidConfigCount with perBrokerConfig=$perBrokerConfig, invalidCount=$invalidCount, invalidConfigNames=$invalidConfigNames")
     updateInvalidConfigCount(perBrokerConfig, invalidCount, invalidConfigNames)
     warn(s"[DEBUG] After updateInvalidConfigCount, sharedInvalidBrokerConfigCount=${DynamicBrokerConfig.sharedInvalidBrokerConfigCount}, sharedInvalidDefaultConfigCount=${DynamicBrokerConfig.sharedInvalidDefaultConfigCount}")
+
+    // Check failure policy and fail fast if configured
+    if (invalidCount > 0 && kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail")) {
+      val configType = if (perBrokerConfig) "per-broker" else "cluster-wide"
+      val errorMsg = s"Invalid $configType dynamic configuration detected: $invalidConfigNames. " +
+        s"Broker is configured with dynamic.config.failure.policy=fail, halting the broker. " +
+        s"To allow the broker to start with warnings instead, set dynamic.config.failure.policy=warn in server.properties."
+      fatal(errorMsg)
+      // Throw exception first, then exit if it gets caught
+      throw new ConfigException(errorMsg)
+    }
 
     props
   }
