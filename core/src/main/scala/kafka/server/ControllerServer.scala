@@ -133,7 +133,7 @@ class ControllerServer(
 
       config.dynamicConfig.initialize(
         clientTelemetryExporterPluginOpt = None,
-        metricsGroupOpt = None
+        invalidConfigMetricsOpt = None
       )
 
       maybeChangeStatus(STARTING, STARTED)

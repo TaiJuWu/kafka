@@ -46,7 +46,7 @@ import org.apache.kafka.server.{DynamicThreadPool, ProcessRole}
 import org.apache.kafka.server.common.ApiMessageAndVersion
 import org.apache.kafka.server.config.{DynamicProducerStateManagerConfig, ReplicationConfigs, ServerConfigs, ServerLogConfigs, ServerTopicConfigSynonyms}
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
-import org.apache.kafka.server.metrics.{ClientTelemetryExporterPlugin, KafkaMetricsGroup, MetricConfigs}
+import org.apache.kafka.server.metrics.{ClientTelemetryExporterPlugin, MetricConfigs}
 import org.apache.kafka.server.telemetry.{ClientTelemetry, ClientTelemetryExporterProvider}
 import org.apache.kafka.snapshot.RecordsSnapshotReader
 import org.apache.kafka.storage.internals.log.{LogCleaner, LogConfig}
@@ -258,14 +258,16 @@ object DynamicBrokerConfig {
 
 class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging {
 
-  warn(s"[DEBUG] ★★★ DynamicBrokerConfig instance created! Thread: ${Thread.currentThread().getName}")
+  val stackTrace = Thread.currentThread().getStackTrace.take(15).mkString("\n  ")
+  warn(s"[DEBUG] ★★★ DynamicBrokerConfig instance created! Thread: ${Thread.currentThread().getName}\nCall stack:\n  $stackTrace")
 
   private[server] val staticBrokerConfigs = ConfigDef.convertToStringMapWithPasswordValues(kafkaConfig.originalsFromThisConfig).asScala
   private[server] val staticDefaultConfigs = ConfigDef.convertToStringMapWithPasswordValues(KafkaConfig.defaultValues.asJava).asScala
   private val dynamicBrokerConfigs = mutable.Map[String, String]()
   private val dynamicDefaultConfigs = mutable.Map[String, String]()
 
-  private var metricsGroupOpt: Option[KafkaMetricsGroup] = None
+  // Invalid config metrics - will be set via initialize()
+  private var invalidConfigMetricsOpt: Option[org.apache.kafka.server.metrics.InvalidConfigMetrics] = None
 
   // Use COWArrayList to prevent concurrent modification exception when an item is added by one thread to these
   // collections, while another thread is iterating over them.
@@ -276,19 +278,16 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   private var currentConfig: KafkaConfig = _
 
   private[server] def initialize(clientTelemetryExporterPluginOpt: Option[ClientTelemetryExporterPlugin],
-                                  metricsGroupOpt: Option[KafkaMetricsGroup] = None): Unit = {
+                                  invalidConfigMetricsOpt: Option[org.apache.kafka.server.metrics.InvalidConfigMetrics] = None): Unit = {
     currentConfig = new KafkaConfig(kafkaConfig.props, false)
     telemetryExporterPluginOpt = clientTelemetryExporterPluginOpt
 
-    // Initialize metrics group if provided (only register gauge once)
-    if (this.metricsGroupOpt.isEmpty) {
-      this.metricsGroupOpt = metricsGroupOpt
-      this.metricsGroupOpt.foreach { metricsGroup =>
+    // Initialize invalid config metrics if provided (only once)
+    if (this.invalidConfigMetricsOpt.isEmpty) {
+      this.invalidConfigMetricsOpt = invalidConfigMetricsOpt
+      invalidConfigMetricsOpt.foreach { metrics =>
         val stackTrace = Thread.currentThread().getStackTrace.take(15).mkString("\n  ")
-        warn(s"[DEBUG] ★★★ Metrics registered for DynamicBrokerConfig\nStack trace:\n  $stackTrace")
-        metricsGroup.newGauge("InvalidDynamicBrokerConfigCount", () => {
-          DynamicBrokerConfig.sharedInvalidBrokerConfigCount + DynamicBrokerConfig.sharedInvalidDefaultConfigCount
-        })
+        warn(s"[DEBUG] ★★★ Invalid config metrics registered for DynamicBrokerConfig\nStack trace:\n  $stackTrace")
       }
     }
   }
@@ -530,11 +529,13 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
 
   private def updateInvalidConfigCount(perBrokerConfig: Boolean, invalidCount: Int): Unit = {
     if (perBrokerConfig) {
-      warn("update sharedInvalidBrokerConfigCount to " + invalidCount)
+      warn("update invalidBrokerConfigCount to " + invalidCount)
       DynamicBrokerConfig.sharedInvalidBrokerConfigCount = invalidCount
+      invalidConfigMetricsOpt.foreach(_.setInvalidBrokerConfigCount(invalidCount))
     } else {
-      warn("update sharedInvalidDefaultConfigCount to " + invalidCount)
+      warn("update invalidDefaultConfigCount to " + invalidCount)
       DynamicBrokerConfig.sharedInvalidDefaultConfigCount = invalidCount
+      invalidConfigMetricsOpt.foreach(_.setInvalidDefaultConfigCount(invalidCount))
     }
   }
 
