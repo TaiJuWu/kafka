@@ -37,7 +37,7 @@ import org.apache.kafka.raft.Endpoints
 import org.apache.kafka.server.{ProcessRole, ServerSocketFactory}
 import org.apache.kafka.server.common.ApiMessageAndVersion
 import org.apache.kafka.server.fault.{FaultHandler, LoggingFaultHandler, ProcessTerminatingFaultHandler}
-import org.apache.kafka.server.metrics.{BrokerServerMetrics, KafkaYammerMetrics, NodeMetrics}
+import org.apache.kafka.server.metrics.{BrokerServerMetrics, KafkaMetricsGroup, KafkaYammerMetrics, NodeMetrics}
 
 import java.net.InetSocketAddress
 import java.util.Arrays
@@ -274,9 +274,10 @@ class SharedServer(
           metrics = new Metrics()
         }
 
+        val dynamicConfigMetricsGroup = new KafkaMetricsGroup(Server.MetricsPrefix, "DynamicBrokerConfig")
         sharedServerConfig.dynamicConfig.initialize(
           clientTelemetryExporterPluginOpt = None,
-          metricsGroupOpt = None
+          metricsGroupOpt = Some(dynamicConfigMetricsGroup)
         )
 
         if (sharedServerConfig.processRoles.contains(ProcessRole.BrokerRole)) {

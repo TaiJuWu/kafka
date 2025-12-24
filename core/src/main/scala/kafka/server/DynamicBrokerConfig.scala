@@ -89,6 +89,10 @@ import scala.jdk.CollectionConverters._
   */
 object DynamicBrokerConfig {
 
+  // Shared counters across all DynamicBrokerConfig instances (to survive KafkaConfig recreation)
+  @volatile private var sharedInvalidBrokerConfigCount = 0
+  @volatile private var sharedInvalidDefaultConfigCount = 0
+
   private[server] val DynamicSecurityConfigs = SslConfigs.RECONFIGURABLE_CONFIGS.asScala
   private[server] val DynamicProducerStateManagerConfig = Set(TransactionLogConfig.PRODUCER_ID_EXPIRATION_MS_CONFIG, TransactionLogConfig.TRANSACTION_PARTITION_VERIFICATION_ENABLE_CONFIG)
 
@@ -261,10 +265,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   private val dynamicBrokerConfigs = mutable.Map[String, String]()
   private val dynamicDefaultConfigs = mutable.Map[String, String]()
 
-  // Metrics group and counters - will be set via initialize()
   private var metricsGroupOpt: Option[KafkaMetricsGroup] = None
-  @volatile private var invalidBrokerConfigCount = 0
-  @volatile private var invalidDefaultConfigCount = 0
 
   // Use COWArrayList to prevent concurrent modification exception when an item is added by one thread to these
   // collections, while another thread is iterating over them.
@@ -283,10 +284,11 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     if (this.metricsGroupOpt.isEmpty) {
       this.metricsGroupOpt = metricsGroupOpt
       this.metricsGroupOpt.foreach { metricsGroup =>
+        val stackTrace = Thread.currentThread().getStackTrace.take(15).mkString("\n  ")
+        warn(s"[DEBUG] ★★★ Metrics registered for DynamicBrokerConfig\nStack trace:\n  $stackTrace")
         metricsGroup.newGauge("InvalidDynamicBrokerConfigCount", () => {
-          invalidBrokerConfigCount + invalidDefaultConfigCount
+          DynamicBrokerConfig.sharedInvalidBrokerConfigCount + DynamicBrokerConfig.sharedInvalidDefaultConfigCount
         })
-        warn(s"[DEBUG] ★★★ Metrics registered for DynamicBrokerConfig")
       }
     }
   }
@@ -471,7 +473,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       invalidCount += removeInvalidProps(perBrokerConfigs(props), "Per-broker configs defined at default cluster level will be ignored")
     warn(s"[DEBUG] About to call updateInvalidConfigCount with perBrokerConfig=$perBrokerConfig, invalidCount=$invalidCount")
     updateInvalidConfigCount(perBrokerConfig, invalidCount)
-    warn(s"[DEBUG] After updateInvalidConfigCount, invalidBrokerConfigCount=$invalidBrokerConfigCount, invalidDefaultConfigCount=$invalidDefaultConfigCount")
+    warn(s"[DEBUG] After updateInvalidConfigCount, sharedInvalidBrokerConfigCount=${DynamicBrokerConfig.sharedInvalidBrokerConfigCount}, sharedInvalidDefaultConfigCount=${DynamicBrokerConfig.sharedInvalidDefaultConfigCount}")
 
     props
   }
@@ -528,11 +530,11 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
 
   private def updateInvalidConfigCount(perBrokerConfig: Boolean, invalidCount: Int): Unit = {
     if (perBrokerConfig) {
-      warn("update invalidBrokerConfigCount to " + invalidCount)
-      invalidBrokerConfigCount = invalidCount
+      warn("update sharedInvalidBrokerConfigCount to " + invalidCount)
+      DynamicBrokerConfig.sharedInvalidBrokerConfigCount = invalidCount
     } else {
-      warn("update invalidDefaultConfigCount to " + invalidCount)
-      invalidDefaultConfigCount = invalidCount
+      warn("update sharedInvalidDefaultConfigCount to " + invalidCount)
+      DynamicBrokerConfig.sharedInvalidDefaultConfigCount = invalidCount
     }
   }
 
