@@ -1151,8 +1151,8 @@ class DynamicBrokerReconfigurationTest extends QuorumTestHarness with SaslSetup 
     reporterAfterRestart.verifyState(reconfigureCount = 0, numFetcher = 2)
   }
 
-  @ParameterizedTest
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
+  @MethodSource(Array("getTestGroupProtocolParametersAll"))
   def testDynamicConfigFailurePolicyWarn(groupProtocol: String): Unit = {
     // Test that with policy=warn, invalid configs are logged but broker continues
     val props = defaultStaticConfig(numServers)
@@ -1181,8 +1181,8 @@ class DynamicBrokerReconfigurationTest extends QuorumTestHarness with SaslSetup 
     assertTrue(invalidDefaultConfigCount.get > 0, s"Expected invalid config count > 0, got ${invalidDefaultConfigCount.get}")
   }
 
-  @ParameterizedTest
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
+  @MethodSource(Array("getTestGroupProtocolParametersAll"))
   def testDynamicConfigFailurePolicyFail(groupProtocol: String): Unit = {
     // Test that with policy=fail, invalid configs cause broker to halt
     val props = defaultStaticConfig(numServers)
@@ -1212,8 +1212,8 @@ class DynamicBrokerReconfigurationTest extends QuorumTestHarness with SaslSetup 
     )
   }
 
-  @ParameterizedTest
-  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
+  @ParameterizedTest(name = TestInfoUtils.TestWithParameterizedGroupProtocolNames)
+  @MethodSource(Array("getTestGroupProtocolParametersAll"))
   def testInvalidConfigMetrics(groupProtocol: String): Unit = {
     // Test that invalid config metrics are correctly updated
     val props = defaultStaticConfig(numServers)

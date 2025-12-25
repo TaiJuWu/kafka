@@ -263,11 +263,6 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   private val dynamicBrokerConfigs = mutable.Map[String, String]()
   private val dynamicDefaultConfigs = mutable.Map[String, String]()
 
-  /**
-   * True if the dynamic config failure policy is set to "fail"
-   */
-  private val isPolicyFail: Boolean = kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail")
-
   // Invalid config metrics - will be set via initialize()
   private var invalidConfigMetricsOpt: Option[org.apache.kafka.server.metrics.InvalidConfigMetrics] = None
 
@@ -409,7 +404,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       dynamicBrokerConfigs ++= props.asScala
       updateCurrentConfig(doLog)
     } catch {
-      case e: ConfigException if isPolicyFail =>
+      case e: ConfigException if kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail") =>
         // Re-throw ConfigException when failure policy is "fail" to halt the broker
         error(s"Per-broker configs of $brokerId could not be applied: ${persistentProps.keySet()}", e)
         throw e
@@ -425,7 +420,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       dynamicDefaultConfigs ++= props.asScala
       updateCurrentConfig(doLog)
     } catch {
-      case e: ConfigException if isPolicyFail =>
+      case e: ConfigException if kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail") =>
         // Re-throw ConfigException when failure policy is "fail" to halt the broker
         error(s"Cluster default configs could not be applied: ${persistentProps.keySet()}", e)
         throw e
@@ -484,7 +479,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
 
     // Throw ConfigException if invalid configs detected with policy=fail
     // DynamicConfigPublisher will decide whether to halt based on whether it's the first publish
-    if (invalidCount > 0 && isPolicyFail) {
+    if (invalidCount > 0 && kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail")) {
       val configType = if (perBrokerConfig) "per-broker" else "cluster-wide"
       val errorMsg = s"Invalid $configType dynamic configuration detected: $invalidConfigNames. " +
         s"Broker is configured with dynamic.config.failure.policy=fail."
