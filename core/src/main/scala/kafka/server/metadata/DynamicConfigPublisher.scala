@@ -21,6 +21,7 @@ import java.util.Properties
 import kafka.server.ConfigAdminManager.toLoggableProps
 import kafka.server.{ConfigHandler, KafkaConfig}
 import kafka.utils.Logging
+import org.apache.kafka.common.config.ConfigException
 import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, CLIENT_METRICS, GROUP, TOPIC}
 import org.apache.kafka.image.loader.LoaderManifest
 import org.apache.kafka.image.{MetadataDelta, MetadataImage}
@@ -36,6 +37,17 @@ class DynamicConfigPublisher(
   nodeType: String,
 ) extends Logging with org.apache.kafka.image.publisher.MetadataPublisher {
   logIdent = s"[${name()}] "
+
+  /**
+   * True if this is the first time we are publishing dynamic configuration.
+   * We only enforce dynamic.config.failure.policy=fail during the first publish (startup).
+   */
+  @volatile private var _firstPublish = true
+
+  /**
+   * True if the dynamic config failure policy is set to "fail"
+   */
+  private val isPolicyFail: Boolean = conf.dynamicConfigFailurePolicy.equalsIgnoreCase("fail")
 
   override def name(): String = s"DynamicConfigPublisher $nodeType id=${conf.nodeId}"
 
@@ -66,6 +78,13 @@ class DynamicConfigPublisher(
                     toLoggableProps(resource, props).mkString(","))
                   topicConfigHandler.processConfigChanges(resource.name(), props)
                 } catch {
+                  case e: ConfigException if _firstPublish && isPolicyFail =>
+                    // During first publish (startup), if failure policy is "fail", use fatal fault handler
+                    throw fatalFaultHandler.handleFault(
+                      s"Error updating topic ${resource.name()} with new configuration: ${toLoggableProps(resource, props).mkString(",")} " +
+                      s"in $deltaName. Broker is configured with dynamic.config.failure.policy=fail.",
+                      e
+                    )
                   case t: Throwable => faultHandler.handleFault("Error updating topic " +
                     s"${resource.name()} with new configuration: ${toLoggableProps(resource, props).mkString(",")} " +
                     s"in $deltaName", t)
@@ -82,11 +101,11 @@ class DynamicConfigPublisher(
                     nodeConfigHandler.processConfigChanges(resource.name(), props)
                   } catch {
                     case e: org.apache.kafka.common.config.ConfigException
-                      if conf.dynamicConfigFailurePolicy.equalsIgnoreCase("fail") =>
-                      // When failure policy is "fail", use fatal fault handler for graceful shutdown
+                      if _firstPublish && isPolicyFail =>
+                      // During first publish (startup), if failure policy is "fail", throw fatal fault handler
                       throw fatalFaultHandler.handleFault(
                         s"Error updating cluster with new configuration: ${toLoggableProps(resource, props).mkString(",")} " +
-                        s"in $deltaName. Broker is configured with dynamic.config.failure.policy=fail, initiating graceful shutdown.",
+                        s"in $deltaName. Broker is configured with dynamic.config.failure.policy=fail.",
                         e
                       )
                     case t: Throwable => faultHandler.handleFault("Error updating " +
@@ -105,12 +124,12 @@ class DynamicConfigPublisher(
                     // have changed. This doesn't apply to topic configs or cluster configs.
                     reloadUpdatedFilesWithoutConfigChange(props)
                   } catch {
-                    case e: org.apache.kafka.common.config.ConfigException
-                      if conf.dynamicConfigFailurePolicy.equalsIgnoreCase("fail") =>
-                      // When failure policy is "fail", use fatal fault handler for graceful shutdown
+                    case e: ConfigException
+                      if _firstPublish && isPolicyFail =>
+                      // During first publish (startup), if failure policy is "fail", use fatal fault handler
                       throw fatalFaultHandler.handleFault(
                         s"Error updating node ${conf.nodeId} with new configuration: ${toLoggableProps(resource, props).mkString(",")} " +
-                        s"in $deltaName. Broker is configured with dynamic.config.failure.policy=fail, initiating graceful shutdown.",
+                        s"in $deltaName. Broker is configured with dynamic.config.failure.policy=fail.",
                         e
                       )
                     case t: Throwable => faultHandler.handleFault("Error updating " +
@@ -127,6 +146,13 @@ class DynamicConfigPublisher(
                     toLoggableProps(resource, props).mkString(","))
                   metricsConfigHandler.processConfigChanges(resource.name(), props)
                 } catch {
+                  case e: ConfigException if _firstPublish && isPolicyFail =>
+                    // During first publish (startup), if failure policy is "fail", use fatal fault handler
+                    throw fatalFaultHandler.handleFault(
+                      s"Error updating client metrics ${resource.name()} with new configuration: ${toLoggableProps(resource, props).mkString(",")} " +
+                      s"in $deltaName. Broker is configured with dynamic.config.failure.policy=fail.",
+                      e
+                    )
                   case t: Throwable => faultHandler.handleFault("Error updating client metrics" +
                     s"${resource.name()} with new configuration: ${toLoggableProps(resource, props).mkString(",")} " +
                     s"in $deltaName", t)
@@ -139,6 +165,13 @@ class DynamicConfigPublisher(
                     toLoggableProps(resource, props).mkString(","))
                   groupConfigHandler.processConfigChanges(resource.name(), props)
                 } catch {
+                  case e: ConfigException if _firstPublish && isPolicyFail =>
+                    // During first publish (startup), if failure policy is "fail", use fatal fault handler
+                    throw fatalFaultHandler.handleFault(
+                      s"Error updating group ${resource.name()} with new configuration: ${toLoggableProps(resource, props).mkString(",")} " +
+                      s"in $deltaName. Broker is configured with dynamic.config.failure.policy=fail.",
+                      e
+                    )
                   case t: Throwable => faultHandler.handleFault("Error updating group " +
                     s"${resource.name()} with new configuration: ${toLoggableProps(resource, props).mkString(",")} " +
                     s"in $deltaName", t)
@@ -150,6 +183,8 @@ class DynamicConfigPublisher(
     } catch {
       case t: Throwable => faultHandler.handleFault("Uncaught exception while " +
         s"publishing dynamic configuration changes from $deltaName", t)
+    } finally {
+      _firstPublish = false
     }
   }
 

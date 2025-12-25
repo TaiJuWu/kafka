@@ -264,7 +264,7 @@ class SharedServer(
 
   /**
    * The fatal fault handler to use when invalid dynamic configurations are detected
-   * with dynamic.config.failure.policy=fail. This handler triggers a graceful shutdown.
+   * with dynamic.config.failure.policy=fail during broker startup.
    */
   val dynamicConfigFatalFaultHandler: FaultHandler = faultHandlerFactory.build(
     name = "dynamic config",

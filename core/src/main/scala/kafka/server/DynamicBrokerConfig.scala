@@ -90,8 +90,8 @@ import scala.jdk.CollectionConverters._
 object DynamicBrokerConfig {
 
   // Shared counters across all DynamicBrokerConfig instances (to survive KafkaConfig recreation)
-  @volatile private var sharedInvalidBrokerConfigCount = 0
-  @volatile private var sharedInvalidDefaultConfigCount = 0
+  @volatile private[server] var sharedInvalidBrokerConfigCount = 0
+  @volatile private[server] var sharedInvalidDefaultConfigCount = 0
 
   private[server] val DynamicSecurityConfigs = SslConfigs.RECONFIGURABLE_CONFIGS.asScala
   private[server] val DynamicProducerStateManagerConfig = Set(TransactionLogConfig.PRODUCER_ID_EXPIRATION_MS_CONFIG, TransactionLogConfig.TRANSACTION_PARTITION_VERIFICATION_ENABLE_CONFIG)
@@ -263,6 +263,11 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   private val dynamicBrokerConfigs = mutable.Map[String, String]()
   private val dynamicDefaultConfigs = mutable.Map[String, String]()
 
+  /**
+   * True if the dynamic config failure policy is set to "fail"
+   */
+  private val isPolicyFail: Boolean = kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail")
+
   // Invalid config metrics - will be set via initialize()
   private var invalidConfigMetricsOpt: Option[org.apache.kafka.server.metrics.InvalidConfigMetrics] = None
 
@@ -404,7 +409,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       dynamicBrokerConfigs ++= props.asScala
       updateCurrentConfig(doLog)
     } catch {
-      case e: ConfigException if kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail") =>
+      case e: ConfigException if isPolicyFail =>
         // Re-throw ConfigException when failure policy is "fail" to halt the broker
         error(s"Per-broker configs of $brokerId could not be applied: ${persistentProps.keySet()}", e)
         throw e
@@ -420,7 +425,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       dynamicDefaultConfigs ++= props.asScala
       updateCurrentConfig(doLog)
     } catch {
-      case e: ConfigException if kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail") =>
+      case e: ConfigException if isPolicyFail =>
         // Re-throw ConfigException when failure policy is "fail" to halt the broker
         error(s"Cluster default configs could not be applied: ${persistentProps.keySet()}", e)
         throw e
@@ -460,7 +465,6 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     var invalidConfigNames = Set.empty[String]
     // Remove all invalid configs from `props`
     val (invalidConfigsCount, invalidConfigsFromValidation) = removeInvalidConfigs(props, perBrokerConfig)
-    warn(s"[DEBUG] removeInvalidConfigs returned: count=$invalidConfigsCount, names=$invalidConfigsFromValidation, perBrokerConfig=$perBrokerConfig")
     invalidCount += invalidConfigsCount
     invalidConfigNames ++= invalidConfigsFromValidation
     def removeInvalidProps(invalidPropNames: Set[String], errorMessage: String): Int = {
@@ -476,18 +480,14 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       "Security configs can be dynamically updated only using listener prefix, base configs will be ignored")
     if (!perBrokerConfig)
       invalidCount += removeInvalidProps(perBrokerConfigs(props), "Per-broker configs defined at default cluster level will be ignored")
-    warn(s"[DEBUG] About to call updateInvalidConfigCount with perBrokerConfig=$perBrokerConfig, invalidCount=$invalidCount, invalidConfigNames=$invalidConfigNames")
     updateInvalidConfigCount(perBrokerConfig, invalidCount, invalidConfigNames)
-    warn(s"[DEBUG] After updateInvalidConfigCount, sharedInvalidBrokerConfigCount=${DynamicBrokerConfig.sharedInvalidBrokerConfigCount}, sharedInvalidDefaultConfigCount=${DynamicBrokerConfig.sharedInvalidDefaultConfigCount}")
 
-    // Check failure policy and fail fast if configured
-    if (invalidCount > 0 && kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail")) {
+    // Throw ConfigException if invalid configs detected with policy=fail
+    // DynamicConfigPublisher will decide whether to halt based on whether it's the first publish
+    if (invalidCount > 0 && isPolicyFail) {
       val configType = if (perBrokerConfig) "per-broker" else "cluster-wide"
       val errorMsg = s"Invalid $configType dynamic configuration detected: $invalidConfigNames. " +
-        s"Broker is configured with dynamic.config.failure.policy=fail, halting the broker. " +
-        s"To allow the broker to start with warnings instead, set dynamic.config.failure.policy=warn in server.properties."
-      fatal(errorMsg)
-      // Throw exception first, then exit if it gets caught
+        s"Broker is configured with dynamic.config.failure.policy=fail."
       throw new ConfigException(errorMsg)
     }
 
