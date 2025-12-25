@@ -262,6 +262,16 @@ class SharedServer(
       // Note: snapshot generation does not need to be disabled for a publishing fault.
     })
 
+  /**
+   * The fatal fault handler to use when invalid dynamic configurations are detected
+   * with dynamic.config.failure.policy=fail. This handler triggers a graceful shutdown.
+   */
+  val dynamicConfigFatalFaultHandler: FaultHandler = faultHandlerFactory.build(
+    name = "dynamic config",
+    fatal = sharedServerConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail"),
+    action = () => { }
+  )
+
   private def start(listenerEndpoints: Endpoints): Unit = synchronized {
     if (started) {
       debug("SharedServer has already been started.")

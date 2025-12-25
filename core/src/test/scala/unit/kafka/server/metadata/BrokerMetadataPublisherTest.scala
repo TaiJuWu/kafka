@@ -101,6 +101,7 @@ class BrokerMetadataPublisherTest {
     Mockito.spy(new DynamicConfigPublisher(
       conf = broker.config,
       faultHandler = errorHandler,
+      fatalFaultHandler = errorHandler,  // Use same handler for tests
       dynamicConfigHandlers = broker.dynamicConfigHandlers.toMap,
       nodeType = "broker"))
   }

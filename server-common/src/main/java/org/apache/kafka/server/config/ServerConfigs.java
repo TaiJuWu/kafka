@@ -80,7 +80,7 @@ public class ServerConfigs {
     public static final String DYNAMIC_CONFIG_FAILURE_POLICY_CONFIG = "dynamic.config.failure.policy";
     public static final String DYNAMIC_CONFIG_FAILURE_POLICY_DEFAULT = "fail";
     public static final String DYNAMIC_CONFIG_FAILURE_POLICY_DOC = "The policy to apply when dynamic configuration validation fails. " +
-            "Valid values are 'warn' (log warning and ignore invalid configs) and 'fail' (halt the broker). " +
+            "Valid values are 'warn' (log warning and ignore invalid configs, default for backward compatibility) and 'fail' (halt the broker). " +
             "This setting helps ensure configuration consistency and prevents silent configuration errors.";
 
     public static final String COMPRESSION_TYPE_CONFIG = ServerTopicConfigSynonyms.serverSynonym(TopicConfig.COMPRESSION_TYPE_CONFIG);

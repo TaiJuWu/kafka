@@ -497,6 +497,7 @@ class BrokerServer(
         new DynamicConfigPublisher(
           config,
           sharedServer.metadataPublishingFaultHandler,
+          sharedServer.dynamicConfigFatalFaultHandler,
           dynamicConfigHandlers.toMap,
         "broker"),
         new DynamicClientQuotaPublisher(

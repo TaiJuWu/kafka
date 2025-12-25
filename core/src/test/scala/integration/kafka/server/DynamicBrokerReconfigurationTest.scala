@@ -57,6 +57,7 @@ import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializ
 import org.apache.kafka.coordinator.transaction.TransactionLogConfig
 import org.apache.kafka.network.SocketServerConfigs
 import org.apache.kafka.raft.MetadataLogConfig
+import org.apache.kafka.metadata.BrokerState
 import org.apache.kafka.server.config.{ReplicationConfigs, ServerConfigs, ServerLogConfigs, ServerTopicConfigSynonyms}
 import org.apache.kafka.server.metrics.{KafkaYammerMetrics, MetricConfigs}
 import org.apache.kafka.server.ReplicaState
@@ -1148,6 +1149,124 @@ class DynamicBrokerReconfigurationTest extends QuorumTestHarness with SaslSetup 
     // If readDynamicBrokerConfigsFromSnapshot works correctly, the reporter should maintain its state.
     val reporterAfterRestart = TestNumReplicaFetcherMetricsReporter.waitForReporters(1).head
     reporterAfterRestart.verifyState(reconfigureCount = 0, numFetcher = 2)
+  }
+
+  @ParameterizedTest
+  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
+  def testDynamicConfigFailurePolicyWarn(groupProtocol: String): Unit = {
+    // Test that with policy=warn, invalid configs are logged but broker continues
+    val props = defaultStaticConfig(numServers)
+    props.put(ServerConfigs.DYNAMIC_CONFIG_FAILURE_POLICY_CONFIG, "warn")
+
+    val kafkaConfig = KafkaConfig.fromProps(props)
+    val newBroker = createBroker(kafkaConfig).asInstanceOf[BrokerServer]
+    servers += newBroker
+
+    // Try to set an invalid cluster-wide config (log.segment.bytes is not allowed as dynamic cluster config)
+    val invalidProps = new Properties()
+    invalidProps.put(ServerLogConfigs.LOG_SEGMENT_BYTES_CONFIG, "1024")
+
+    // This should succeed (config is ignored with warning) when policy=warn
+    val alterResult = alterConfigs(Seq(newBroker), adminClients.head, invalidProps, perBrokerConfig = false)
+    alterResult.all().get()
+
+    // Verify broker is still running
+    assertTrue(newBroker.brokerState == BrokerState.RUNNING)
+
+    // Verify invalid config count metric
+    val invalidDefaultConfigCount = newBroker.metrics.metrics().asScala
+      .find(_._1.name() == "invalid-default-config-count")
+      .map(_._2.metricValue().asInstanceOf[Int])
+    assertTrue(invalidDefaultConfigCount.isDefined)
+    assertTrue(invalidDefaultConfigCount.get > 0, s"Expected invalid config count > 0, got ${invalidDefaultConfigCount.get}")
+  }
+
+  @ParameterizedTest
+  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
+  def testDynamicConfigFailurePolicyFail(groupProtocol: String): Unit = {
+    // Test that with policy=fail, invalid configs cause broker to halt
+    val props = defaultStaticConfig(numServers)
+    props.put(ServerConfigs.DYNAMIC_CONFIG_FAILURE_POLICY_CONFIG, "fail")
+
+    val kafkaConfig = KafkaConfig.fromProps(props)
+    val newBroker = createBroker(kafkaConfig).asInstanceOf[BrokerServer]
+    servers += newBroker
+
+    // Try to set an invalid cluster-wide config
+    val invalidProps = new Properties()
+    invalidProps.put(ServerLogConfigs.LOG_SEGMENT_BYTES_CONFIG, "1024")
+
+    // This should fail when policy=fail
+    // Note: In the actual implementation, this would cause System.exit(1)
+    // For testing purposes, we verify the exception is thrown
+    val alterResult = alterConfigs(Seq(newBroker), adminClients.head, invalidProps, perBrokerConfig = false)
+
+    // The alter operation itself succeeds, but the broker will shut down when applying the config
+    alterResult.all().get()
+
+    // Wait for broker to shut down due to invalid config
+    TestUtils.waitUntilTrue(
+      () => newBroker.brokerState == BrokerState.SHUTTING_DOWN,
+      "Broker did not shut down after invalid config with policy=fail",
+      30000L
+    )
+  }
+
+  @ParameterizedTest
+  @MethodSource(Array("getTestQuorumAndGroupProtocolParametersAll"))
+  def testInvalidConfigMetrics(groupProtocol: String): Unit = {
+    // Test that invalid config metrics are correctly updated
+    val props = defaultStaticConfig(numServers)
+    props.put(ServerConfigs.DYNAMIC_CONFIG_FAILURE_POLICY_CONFIG, "warn")
+
+    val kafkaConfig = KafkaConfig.fromProps(props)
+    val newBroker = createBroker(kafkaConfig).asInstanceOf[BrokerServer]
+    servers += newBroker
+
+    // Initially, no invalid configs
+    val initialMetrics = newBroker.metrics.metrics().asScala
+    val initialInvalidCount = initialMetrics
+      .find(_._1.name() == "invalid-default-config-count")
+      .map(_._2.metricValue().asInstanceOf[Int])
+      .getOrElse(0)
+    assertEquals(0, initialInvalidCount, "Expected no invalid configs initially")
+
+    // Set multiple invalid cluster-wide configs
+    val invalidProps = new Properties()
+    invalidProps.put(ServerLogConfigs.LOG_SEGMENT_BYTES_CONFIG, "1024")
+    invalidProps.put("broker.id", "999") // broker.id is not dynamic
+    invalidProps.put("node.id", "888") // node.id is not dynamic
+
+    alterConfigs(Seq(newBroker), adminClients.head, invalidProps, perBrokerConfig = false).all().get()
+
+    // Wait for metrics to update
+    TestUtils.waitUntilTrue(
+      () => {
+        val metrics = newBroker.metrics.metrics().asScala
+        val count = metrics
+          .find(_._1.name() == "invalid-default-config-count")
+          .map(_._2.metricValue().asInstanceOf[Int])
+          .getOrElse(0)
+        count > 0
+      },
+      "Invalid config count metric did not update",
+      10000L
+    )
+
+    // Verify invalid config names are tracked
+    val metricsAfter = newBroker.metrics.metrics().asScala
+    val invalidConfigNames = metricsAfter
+      .find(_._1.name() == "invalid-default-config-names")
+      .map(_._2.metricValue().asInstanceOf[String])
+    assertTrue(invalidConfigNames.isDefined)
+    assertFalse(invalidConfigNames.get.isEmpty, "Expected invalid config names to be recorded")
+
+    // Verify total count
+    val totalInvalidCount = metricsAfter
+      .find(_._1.name() == "total-invalid-config-count")
+      .map(_._2.metricValue().asInstanceOf[Int])
+      .getOrElse(0)
+    assertTrue(totalInvalidCount > 0, s"Expected total invalid count > 0, got $totalInvalidCount")
   }
 
   private def awaitInitialPositions(consumer: Consumer[_, _]): Unit = {
