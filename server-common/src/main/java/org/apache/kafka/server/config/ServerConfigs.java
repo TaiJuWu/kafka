@@ -78,7 +78,7 @@ public class ServerConfigs {
 
     /** ********* Dynamic Configuration Failure Policy ***********/
     public static final String DYNAMIC_CONFIG_FAILURE_POLICY_CONFIG = "dynamic.config.failure.policy";
-    public static final String DYNAMIC_CONFIG_FAILURE_POLICY_DEFAULT = "warn";
+    public static final String DYNAMIC_CONFIG_FAILURE_POLICY_DEFAULT = "fail";
     public static final String DYNAMIC_CONFIG_FAILURE_POLICY_DOC = "The policy to apply when dynamic configuration validation fails. " +
             "Valid values are 'warn' (log warning and ignore invalid configs, default for backward compatibility) and 'fail' (halt the broker). " +
             "This setting helps ensure configuration consistency and prevents silent configuration errors.";
