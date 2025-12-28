@@ -44,7 +44,7 @@ import org.apache.kafka.security.authorizer.AuthorizerUtils
 import org.apache.kafka.server.ProcessRole
 import org.apache.kafka.server.authorizer.Authorizer
 import org.apache.kafka.server.config.AbstractKafkaConfig.getMap
-import org.apache.kafka.server.config.{AbstractKafkaConfig, QuotaConfig, ReplicationConfigs, ServerConfigs, ServerLogConfigs}
+import org.apache.kafka.server.config.{AbstractKafkaConfig, DynamicConfigFailurePolicy, QuotaConfig, ReplicationConfigs, ServerConfigs, ServerLogConfigs}
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
 import org.apache.kafka.server.metrics.MetricConfigs
 import org.apache.kafka.storage.internals.log.{CleanerConfig, LogConfig}
@@ -405,8 +405,8 @@ class KafkaConfig private(doLog: Boolean, val props: util.Map[_, _])
   val maxRequestPartitionSizeLimit = getInt(ServerConfigs.MAX_REQUEST_PARTITION_SIZE_LIMIT_CONFIG)
 
   val deleteTopicEnable = getBoolean(ServerConfigs.DELETE_TOPIC_ENABLE_CONFIG)
-  val dynamicConfigFailurePolicy = org.apache.kafka.server.config.DynamicConfigFailurePolicy.fromString(
-    getString(ServerConfigs.DYNAMIC_CONFIG_FAILURE_POLICY_CONFIG))
+  val dynamicBrokerConfigFailurePolicy = DynamicConfigFailurePolicy.fromString(
+    getString(ServerConfigs.DYNAMIC_BROKER_CONFIG_FAILURE_POLICY_CONFIG))
   def compressionType = getString(ServerConfigs.COMPRESSION_TYPE_CONFIG)
 
   def gzipCompressionLevel = getInt(ServerConfigs.COMPRESSION_GZIP_LEVEL_CONFIG)

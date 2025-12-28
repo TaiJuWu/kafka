@@ -44,7 +44,7 @@ import org.apache.kafka.network.SocketServerConfigs
 import org.apache.kafka.raft.KafkaRaftClient
 import org.apache.kafka.server.{DynamicThreadPool, ProcessRole}
 import org.apache.kafka.server.common.ApiMessageAndVersion
-import org.apache.kafka.server.config.{DynamicProducerStateManagerConfig, ReplicationConfigs, ServerConfigs, ServerLogConfigs, ServerTopicConfigSynonyms}
+import org.apache.kafka.server.config.{DynamicConfigFailurePolicy, DynamicProducerStateManagerConfig, ReplicationConfigs, ServerConfigs, ServerLogConfigs, ServerTopicConfigSynonyms}
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
 import org.apache.kafka.server.metrics.{ClientTelemetryExporterPlugin, MetricConfigs}
 import org.apache.kafka.server.telemetry.{ClientTelemetry, ClientTelemetryExporterProvider}
@@ -400,7 +400,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       updateCurrentConfig(doLog)
       validationResult
     } catch {
-      case e: ConfigException if kafkaConfig.dynamicConfigFailurePolicy == org.apache.kafka.server.config.DynamicConfigFailurePolicy.FAIL =>
+      case e: ConfigException if kafkaConfig.dynamicBrokerConfigFailurePolicy == DynamicConfigFailurePolicy.FAIL =>
         // Re-throw ConfigException when failure policy is "fail" to halt the broker
         error(s"Per-broker configs of $brokerId could not be applied: ${persistentProps.keySet()}", e)
         throw e
@@ -418,7 +418,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       updateCurrentConfig(doLog)
       validationResult
     } catch {
-      case e: ConfigException if kafkaConfig.dynamicConfigFailurePolicy == org.apache.kafka.server.config.DynamicConfigFailurePolicy.FAIL =>
+      case e: ConfigException if kafkaConfig.dynamicBrokerConfigFailurePolicy == DynamicConfigFailurePolicy.FAIL =>
         // Re-throw ConfigException when failure policy is "fail" to halt the broker
         error(s"Cluster default configs could not be applied: ${persistentProps.keySet()}", e)
         throw e
@@ -484,7 +484,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
 
     // Throw ConfigException if invalid configs detected with policy=fail
     // DynamicConfigPublisher will decide whether to halt based on whether it's the first publish
-    if (invalidCount > 0 && kafkaConfig.dynamicConfigFailurePolicy == org.apache.kafka.server.config.DynamicConfigFailurePolicy.FAIL) {
+    if (invalidCount > 0 && kafkaConfig.dynamicBrokerConfigFailurePolicy == DynamicConfigFailurePolicy.FAIL) {
       val configType = if (perBrokerConfig) "per-broker" else "cluster-wide"
       val errorMsg = s"Invalid $configType dynamic configuration detected: ${invalidConfigNames.mkString(", ")}. " +
         s"Broker is configured with dynamic.config.failure.policy=fail."

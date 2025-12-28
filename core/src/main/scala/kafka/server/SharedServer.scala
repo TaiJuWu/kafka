@@ -36,8 +36,9 @@ import org.apache.kafka.metadata.properties.MetaPropertiesEnsemble
 import org.apache.kafka.raft.Endpoints
 import org.apache.kafka.server.{ProcessRole, ServerSocketFactory}
 import org.apache.kafka.server.common.ApiMessageAndVersion
+import org.apache.kafka.server.config.DynamicConfigFailurePolicy
 import org.apache.kafka.server.fault.{FaultHandler, LoggingFaultHandler, ProcessTerminatingFaultHandler}
-import org.apache.kafka.server.metrics.{BrokerServerMetrics, KafkaYammerMetrics, NodeMetrics}
+import org.apache.kafka.server.metrics.{BrokerServerMetrics, InvalidConfigMetrics, KafkaYammerMetrics, NodeMetrics}
 
 import java.net.InetSocketAddress
 import java.util.Arrays
@@ -121,7 +122,7 @@ class SharedServer(
   @volatile var brokerMetrics: BrokerServerMetrics = _
   @volatile var controllerServerMetrics: ControllerMetadataMetrics = _
   @volatile var nodeMetrics: NodeMetrics = _
-  @volatile var invalidConfigMetrics: org.apache.kafka.server.metrics.InvalidConfigMetrics = _
+  @volatile var invalidConfigMetrics: InvalidConfigMetrics = _
   @volatile var loader: MetadataLoader = _
   private val snapshotsDisabledReason = new AtomicReference[String](null)
   @volatile var snapshotEmitter: SnapshotEmitter = _
@@ -268,8 +269,8 @@ class SharedServer(
    * with dynamic.config.failure.policy=fail during broker startup.
    */
   val dynamicConfigFatalFaultHandler: FaultHandler = faultHandlerFactory.build(
-    name = "dynamic config",
-    fatal = sharedServerConfig.dynamicConfigFailurePolicy == org.apache.kafka.server.config.DynamicConfigFailurePolicy.FAIL,
+    name = "dynamic config loading",
+    fatal = sharedServerConfig.dynamicBrokerConfigFailurePolicy == DynamicConfigFailurePolicy.FAIL,
     action = () => { }
   )
 
@@ -286,10 +287,8 @@ class SharedServer(
         }
 
         // Create invalid config metrics for DynamicConfigPublisher (shared across all server instances)
-        invalidConfigMetrics = new org.apache.kafka.server.metrics.InvalidConfigMetrics(metrics)
+        invalidConfigMetrics = new InvalidConfigMetrics(metrics)
         sharedServerConfig.dynamicConfig.initialize(clientTelemetryExporterPluginOpt = None)
-        brokerConfig.dynamicConfig.initialize(clientTelemetryExporterPluginOpt = None)
-        controllerConfig.dynamicConfig.initialize(clientTelemetryExporterPluginOpt = None)
 
         if (sharedServerConfig.processRoles.contains(ProcessRole.BrokerRole)) {
           brokerMetrics = new BrokerServerMetrics(metrics)
