@@ -145,12 +145,20 @@ class TopicConfigHandler(private val replicaManager: ReplicaManager,
   */
 class BrokerConfigHandler(private val brokerConfig: KafkaConfig,
                           private val quotaManagers: QuotaManagers) extends ConfigHandler with Logging {
+
+  @volatile private var _lastValidationResult: Option[DynamicBrokerConfig.ValidationResult] = None
+
+  def lastValidationResult: Option[DynamicBrokerConfig.ValidationResult] = _lastValidationResult
+
   def processConfigChanges(brokerId: String, properties: Properties): Unit = {
-    if (brokerId.isEmpty)
+    val validationResult = if (brokerId.isEmpty)
       brokerConfig.dynamicConfig.updateDefaultConfig(properties)
     else if (brokerConfig.brokerId == brokerId.trim.toInt) {
       brokerConfig.dynamicConfig.updateBrokerConfig(brokerConfig.brokerId, properties)
+    } else {
+      None
     }
+    _lastValidationResult = validationResult
     val updatedDynamicBrokerConfigs = brokerConfig.dynamicConfig.currentDynamicBrokerConfigs
     val updatedDynamicDefaultConfigs = brokerConfig.dynamicConfig.currentDynamicDefaultConfigs
 

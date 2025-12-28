@@ -89,9 +89,13 @@ import scala.jdk.CollectionConverters._
   */
 object DynamicBrokerConfig {
 
-  // Shared counters across all DynamicBrokerConfig instances (to survive KafkaConfig recreation)
-  @volatile private[server] var sharedInvalidBrokerConfigCount = 0
-  @volatile private[server] var sharedInvalidDefaultConfigCount = 0
+  /**
+    * Validation result for dynamic broker configuration
+    * @param invalidCount Number of invalid configurations
+    * @param invalidConfigNames Set of invalid configuration names
+    * @param perBrokerConfig True if these are per-broker configs, false if cluster-wide default configs
+    */
+  case class ValidationResult(invalidCount: Int, invalidConfigNames: Set[String], perBrokerConfig: Boolean)
 
   private[server] val DynamicSecurityConfigs = SslConfigs.RECONFIGURABLE_CONFIGS.asScala
   private[server] val DynamicProducerStateManagerConfig = Set(TransactionLogConfig.PRODUCER_ID_EXPIRATION_MS_CONFIG, TransactionLogConfig.TRANSACTION_PARTITION_VERIFICATION_ENABLE_CONFIG)
@@ -263,9 +267,6 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   private val dynamicBrokerConfigs = mutable.Map[String, String]()
   private val dynamicDefaultConfigs = mutable.Map[String, String]()
 
-  // Invalid config metrics - will be set via initialize()
-  private var invalidConfigMetricsOpt: Option[org.apache.kafka.server.metrics.InvalidConfigMetrics] = None
-
   // Use COWArrayList to prevent concurrent modification exception when an item is added by one thread to these
   // collections, while another thread is iterating over them.
   private[server] val reconfigurables = new CopyOnWriteArrayList[Reconfigurable]()
@@ -274,15 +275,9 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   private var telemetryExporterPluginOpt: Option[ClientTelemetryExporterPlugin] = _
   private var currentConfig: KafkaConfig = _
 
-  private[server] def initialize(clientTelemetryExporterPluginOpt: Option[ClientTelemetryExporterPlugin],
-                                  invalidConfigMetricsOpt: Option[org.apache.kafka.server.metrics.InvalidConfigMetrics] = None): Unit = {
+  private[server] def initialize(clientTelemetryExporterPluginOpt: Option[ClientTelemetryExporterPlugin]): Unit = {
     currentConfig = new KafkaConfig(kafkaConfig.props, false)
     telemetryExporterPluginOpt = clientTelemetryExporterPluginOpt
-
-    // Initialize invalid config metrics if provided (only once)
-    if (this.invalidConfigMetricsOpt.isEmpty) {
-      this.invalidConfigMetricsOpt = invalidConfigMetricsOpt
-    }
   }
 
   /**
@@ -397,12 +392,13 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
     telemetryExporterPluginOpt
   }
 
-  private[server] def updateBrokerConfig(brokerId: Int, persistentProps: Properties, doLog: Boolean = true): Unit = CoreUtils.inWriteLock(lock) {
+  private[server] def updateBrokerConfig(brokerId: Int, persistentProps: Properties, doLog: Boolean = true): Option[DynamicBrokerConfig.ValidationResult] = CoreUtils.inWriteLock(lock) {
     try {
-      val props = fromPersistentProps(persistentProps, perBrokerConfig = true)
+      val (props, validationResult) = fromPersistentProps(persistentProps, perBrokerConfig = true)
       dynamicBrokerConfigs.clear()
       dynamicBrokerConfigs ++= props.asScala
       updateCurrentConfig(doLog)
+      validationResult
     } catch {
       case e: ConfigException if kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail") =>
         // Re-throw ConfigException when failure policy is "fail" to halt the broker
@@ -410,15 +406,17 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
         throw e
       case e: Exception =>
         error(s"Per-broker configs of $brokerId could not be applied: ${persistentProps.keySet()}", e)
+        None
     }
   }
 
-  private[server] def updateDefaultConfig(persistentProps: Properties, doLog: Boolean = true): Unit = CoreUtils.inWriteLock(lock) {
+  private[server] def updateDefaultConfig(persistentProps: Properties, doLog: Boolean = true): Option[DynamicBrokerConfig.ValidationResult] = CoreUtils.inWriteLock(lock) {
     try {
-      val props = fromPersistentProps(persistentProps, perBrokerConfig = false)
+      val (props, validationResult) = fromPersistentProps(persistentProps, perBrokerConfig = false)
       dynamicDefaultConfigs.clear()
       dynamicDefaultConfigs ++= props.asScala
       updateCurrentConfig(doLog)
+      validationResult
     } catch {
       case e: ConfigException if kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail") =>
         // Re-throw ConfigException when failure policy is "fail" to halt the broker
@@ -426,6 +424,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
         throw e
       case e: Exception =>
         error(s"Cluster default configs could not be applied: ${persistentProps.keySet()}", e)
+        None
     }
   }
 
@@ -453,7 +452,7 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
   }
 
   private[server] def fromPersistentProps(persistentProps: Properties,
-                                          perBrokerConfig: Boolean): Properties = {
+                                          perBrokerConfig: Boolean): (Properties, Option[DynamicBrokerConfig.ValidationResult]) = {
     val props = persistentProps.clone().asInstanceOf[Properties]
 
     var invalidCount = 0
@@ -475,18 +474,24 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
       "Security configs can be dynamically updated only using listener prefix, base configs will be ignored")
     if (!perBrokerConfig)
       invalidCount += removeInvalidProps(perBrokerConfigs(props), "Per-broker configs defined at default cluster level will be ignored")
-    updateInvalidConfigCount(perBrokerConfig, invalidCount, invalidConfigNames)
+
+    // Create validation result if invalid configs were found
+    val validationResult = if (invalidCount > 0) {
+      Some(DynamicBrokerConfig.ValidationResult(invalidCount, invalidConfigNames.toSet, perBrokerConfig))
+    } else {
+      None
+    }
 
     // Throw ConfigException if invalid configs detected with policy=fail
     // DynamicConfigPublisher will decide whether to halt based on whether it's the first publish
     if (invalidCount > 0 && kafkaConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail")) {
       val configType = if (perBrokerConfig) "per-broker" else "cluster-wide"
-      val errorMsg = s"Invalid $configType dynamic configuration detected: $invalidConfigNames. " +
+      val errorMsg = s"Invalid $configType dynamic configuration detected: ${invalidConfigNames.mkString(", ")}. " +
         s"Broker is configured with dynamic.config.failure.policy=fail."
       throw new ConfigException(errorMsg)
     }
 
-    props
+    (props, validationResult)
   }
 
   /**
@@ -536,19 +541,6 @@ class DynamicBrokerConfig(private val kafkaConfig: KafkaConfig) extends Logging 
         val configSource = if (perBrokerConfig) "broker" else "default cluster"
         error(s"Dynamic $configSource config contains invalid values in: ${invalidProps.keys}, these configs will be ignored", e)
         (invalidProps.size, invalidProps.keys.toSet)
-    }
-  }
-
-  private def updateInvalidConfigCount(perBrokerConfig: Boolean, invalidCount: Int, invalidConfigNames: Set[String]): Unit = {
-    val configNamesStr = invalidConfigNames.mkString(", ")
-    if (perBrokerConfig) {
-      warn(s"update invalidBrokerConfigCount to $invalidCount, invalid configs: [$configNamesStr]")
-      DynamicBrokerConfig.sharedInvalidBrokerConfigCount = invalidCount
-      invalidConfigMetricsOpt.foreach(_.setInvalidBrokerConfigCount(invalidCount, configNamesStr))
-    } else {
-      warn(s"update invalidDefaultConfigCount to $invalidCount, invalid configs: [$configNamesStr]")
-      DynamicBrokerConfig.sharedInvalidDefaultConfigCount = invalidCount
-      invalidConfigMetricsOpt.foreach(_.setInvalidDefaultConfigCount(invalidCount, configNamesStr))
     }
   }
 

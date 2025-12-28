@@ -121,6 +121,7 @@ class SharedServer(
   @volatile var brokerMetrics: BrokerServerMetrics = _
   @volatile var controllerServerMetrics: ControllerMetadataMetrics = _
   @volatile var nodeMetrics: NodeMetrics = _
+  @volatile var invalidConfigMetrics: org.apache.kafka.server.metrics.InvalidConfigMetrics = _
   @volatile var loader: MetadataLoader = _
   private val snapshotsDisabledReason = new AtomicReference[String](null)
   @volatile var snapshotEmitter: SnapshotEmitter = _
@@ -284,20 +285,11 @@ class SharedServer(
           metrics = new Metrics()
         }
 
-        // Create invalid config metrics for DynamicBrokerConfig (shared across all KafkaConfig instances)
-        val invalidConfigMetrics = new org.apache.kafka.server.metrics.InvalidConfigMetrics(metrics)
-        sharedServerConfig.dynamicConfig.initialize(
-          clientTelemetryExporterPluginOpt = None,
-          invalidConfigMetricsOpt = Some(invalidConfigMetrics)
-        )
-        brokerConfig.dynamicConfig.initialize(
-          clientTelemetryExporterPluginOpt = None,
-          invalidConfigMetricsOpt = Some(invalidConfigMetrics)
-        )
-        controllerConfig.dynamicConfig.initialize(
-          clientTelemetryExporterPluginOpt = None,
-          invalidConfigMetricsOpt = Some(invalidConfigMetrics)
-        )
+        // Create invalid config metrics for DynamicConfigPublisher (shared across all server instances)
+        invalidConfigMetrics = new org.apache.kafka.server.metrics.InvalidConfigMetrics(metrics)
+        sharedServerConfig.dynamicConfig.initialize(clientTelemetryExporterPluginOpt = None)
+        brokerConfig.dynamicConfig.initialize(clientTelemetryExporterPluginOpt = None)
+        controllerConfig.dynamicConfig.initialize(clientTelemetryExporterPluginOpt = None)
 
         if (sharedServerConfig.processRoles.contains(ProcessRole.BrokerRole)) {
           brokerMetrics = new BrokerServerMetrics(metrics)

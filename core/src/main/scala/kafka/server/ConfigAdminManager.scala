@@ -165,7 +165,7 @@ class ConfigAdminManager(nodeId: Int,
   ): Unit = {
     val perBrokerConfig = configResource.name().nonEmpty
     val persistentProps = configRepository.config(configResource)
-    val configProps = conf.dynamicConfig.fromPersistentProps(persistentProps, perBrokerConfig)
+    val (configProps, _) = conf.dynamicConfig.fromPersistentProps(persistentProps, perBrokerConfig)
     val alterConfigOps = resource.configs().asScala.map {
       config =>
         val opType = AlterConfigOp.OpType.forId(config.configOperation())

@@ -19,7 +19,7 @@ package kafka.server.metadata
 
 import java.util.Properties
 import kafka.server.ConfigAdminManager.toLoggableProps
-import kafka.server.{ConfigHandler, KafkaConfig}
+import kafka.server.{BrokerConfigHandler, ConfigHandler, DynamicBrokerConfig, KafkaConfig}
 import kafka.utils.Logging
 import org.apache.kafka.common.config.ConfigException
 import org.apache.kafka.common.config.ConfigResource.Type.{BROKER, CLIENT_METRICS, GROUP, TOPIC}
@@ -27,6 +27,7 @@ import org.apache.kafka.image.loader.LoaderManifest
 import org.apache.kafka.image.{MetadataDelta, MetadataImage}
 import org.apache.kafka.server.config.ConfigType
 import org.apache.kafka.server.fault.FaultHandler
+import org.apache.kafka.server.metrics.InvalidConfigMetrics
 
 
 class DynamicConfigPublisher(
@@ -35,6 +36,7 @@ class DynamicConfigPublisher(
   fatalFaultHandler: FaultHandler,
   dynamicConfigHandlers: Map[ConfigType, ConfigHandler],
   nodeType: String,
+  invalidConfigMetrics: Option[InvalidConfigMetrics] = None,
 ) extends Logging with org.apache.kafka.image.publisher.MetadataPublisher {
   logIdent = s"[${name()}] "
 
@@ -48,6 +50,21 @@ class DynamicConfigPublisher(
    * True if the dynamic config failure policy is set to "fail"
    */
   private val isPolicyFail: Boolean = conf.dynamicConfigFailurePolicy.equalsIgnoreCase("fail")
+
+  /**
+   * Update metrics from validation result
+   */
+  private def updateMetrics(validationResult: DynamicBrokerConfig.ValidationResult): Unit = {
+    invalidConfigMetrics.foreach { metrics =>
+      if (validationResult.perBrokerConfig) {
+        warn(s"Updating invalidBrokerConfigCount to ${validationResult.invalidCount}, invalid configs: [${validationResult.invalidConfigNames.mkString(", ")}]")
+        metrics.setInvalidBrokerConfigCount(validationResult.invalidCount, validationResult.invalidConfigNames.mkString(", "))
+      } else {
+        warn(s"Updating invalidDefaultConfigCount to ${validationResult.invalidCount}, invalid configs: [${validationResult.invalidConfigNames.mkString(", ")}]")
+        metrics.setInvalidDefaultConfigCount(validationResult.invalidCount, validationResult.invalidConfigNames.mkString(", "))
+      }
+    }
+  }
 
   override def name(): String = s"DynamicConfigPublisher $nodeType id=${conf.nodeId}"
 
@@ -99,9 +116,15 @@ class DynamicConfigPublisher(
                     info("Updating cluster configuration : " +
                       toLoggableProps(resource, props).mkString(","))
                     nodeConfigHandler.processConfigChanges(resource.name(), props)
+
+                    // Update metrics if there were validation issues (only for BrokerConfigHandler)
+                    nodeConfigHandler match {
+                      case brokerHandler: BrokerConfigHandler =>
+                        brokerHandler.lastValidationResult.foreach(updateMetrics)
+                      case _ => // other config handlers don't have validation results
+                    }
                   } catch {
-                    case e: org.apache.kafka.common.config.ConfigException
-                      if _firstPublish && isPolicyFail =>
+                    case e: ConfigException if _firstPublish && isPolicyFail =>
                       // During first publish (startup), if failure policy is "fail", throw fatal fault handler
                       throw fatalFaultHandler.handleFault(
                         s"Error updating cluster with new configuration: ${toLoggableProps(resource, props).mkString(",")} " +
@@ -123,9 +146,15 @@ class DynamicConfigPublisher(
                     // set to /tmp/foo, we still want to reload /tmp/foo in case its contents
                     // have changed. This doesn't apply to topic configs or cluster configs.
                     reloadUpdatedFilesWithoutConfigChange(props)
+
+                    // Update metrics if there were validation issues (only for BrokerConfigHandler)
+                    nodeConfigHandler match {
+                      case brokerHandler: BrokerConfigHandler =>
+                        brokerHandler.lastValidationResult.foreach(updateMetrics)
+                      case _ => // other config handlers don't have validation results
+                    }
                   } catch {
-                    case e: ConfigException
-                      if _firstPublish && isPolicyFail =>
+                    case e: ConfigException if _firstPublish && isPolicyFail =>
                       // During first publish (startup), if failure policy is "fail", use fatal fault handler
                       throw fatalFaultHandler.handleFault(
                         s"Error updating node ${conf.nodeId} with new configuration: ${toLoggableProps(resource, props).mkString(",")} " +

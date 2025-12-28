@@ -131,10 +131,7 @@ class ControllerServer(
       this.logIdent = logContext.logPrefix()
       info("Starting controller")
 
-      config.dynamicConfig.initialize(
-        clientTelemetryExporterPluginOpt = None,
-        invalidConfigMetricsOpt = None
-      )
+      config.dynamicConfig.initialize(clientTelemetryExporterPluginOpt = None)
 
       maybeChangeStatus(STARTING, STARTED)
 
@@ -331,7 +328,8 @@ class ControllerServer(
           // controllers don't host topics, so no need to do anything with dynamic topic config changes here
           ConfigType.BROKER -> new BrokerConfigHandler(config, quotaManagers)
         ),
-        "controller"))
+        "controller",
+        Some(sharedServer.invalidConfigMetrics)))
 
       // Register this instance for dynamic config changes to the KafkaConfig. This must be called
       // after the authorizer and quotaManagers are initialized, since it references those objects.
