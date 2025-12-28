@@ -49,7 +49,7 @@ class DynamicConfigPublisher(
   /**
    * True if the dynamic config failure policy is set to "fail"
    */
-  private val isPolicyFail: Boolean = conf.dynamicConfigFailurePolicy.equalsIgnoreCase("fail")
+  private val isPolicyFail: Boolean = conf.dynamicConfigFailurePolicy == org.apache.kafka.server.config.DynamicConfigFailurePolicy.FAIL
 
   /**
    * Update metrics from validation result

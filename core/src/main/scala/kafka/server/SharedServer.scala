@@ -269,7 +269,7 @@ class SharedServer(
    */
   val dynamicConfigFatalFaultHandler: FaultHandler = faultHandlerFactory.build(
     name = "dynamic config",
-    fatal = sharedServerConfig.dynamicConfigFailurePolicy.equalsIgnoreCase("fail"),
+    fatal = sharedServerConfig.dynamicConfigFailurePolicy == org.apache.kafka.server.config.DynamicConfigFailurePolicy.FAIL,
     action = () => { }
   )
 
