@@ -422,7 +422,9 @@ public class RangeAssignor implements ConsumerGroupPartitionAssignor {
                 .filter(memberId -> {
                     // Check if member has capacity
                     TopicMetadata firstTopic = topics.get(0);
-                    if (assignedCounts.get(memberId) < firstTopic.minQuota + (firstTopic.extraPartitions > 0 ? 1 : 0)) {
+                    int memberIndex = memberIds.indexOf(memberId);
+                    int memberQuota = firstTopic.minQuota + (memberIndex < firstTopic.extraPartitions ? 1 : 0);
+                    if (assignedCounts.get(memberId) < memberQuota) {
                         // Check if rack matches for all topics
                         return topics.stream().allMatch(t -> t.racksMatch(p, memberRacks.get(memberId)));
                     }
@@ -445,7 +447,8 @@ public class RangeAssignor implements ConsumerGroupPartitionAssignor {
 
                 // Check if member reached capacity
                 TopicMetadata firstTopic = topics.get(0);
-                int memberQuota = firstTopic.minQuota + (assignedCounts.get(memberId) <= firstTopic.extraPartitions ? 1 : 0);
+                int memberIndex = memberIds.indexOf(memberId);
+                int memberQuota = firstTopic.minQuota + (memberIndex < firstTopic.extraPartitions ? 1 : 0);
                 if (assignedCounts.get(memberId) >= memberQuota) {
                     remainingMembers.remove(memberId);
                     if (remainingMembers.isEmpty()) {
