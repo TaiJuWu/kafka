@@ -73,7 +73,9 @@ org.apache.kafka.server.log.remote.metadata.storage.RemoteLogSegmentLifecycleTes
 - testCacheSegmentsWithDeleteSegmentFinishedState
 - testRemoteLogSegmentLifeCycle
 org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfigTest:
-- testCommonProducerConsumerOverridesConfig
+- testCommonClientOverridesConfig
+- testCustomMinIsr
+- testDefaultMinIsr
 - testValidConfig
 - verifyToStringRedactsSensitiveConfigurations
 org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerMultipleSubscriptionsTest:
@@ -85,6 +87,8 @@ org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataM
 - testDoesTopicExistWithAdminClientExecutionError
 - testInitializationFailure
 - testNewPartitionUpdates
+- testRemoteLogMetadataTopicWithCustomMinIsr
+- testRemoteLogMetadataTopicWithDefaultMinIsr
 - testRemoteLogSizeCalculationForUnknownTopicIdPartitionThrows
 - testRemoteLogSizeCalculationWithSegmentsHavingNonExistentEpochs
 - testRemoteLogSizeCalculationWithSegmentsOfDifferentEpochs
@@ -131,6 +135,7 @@ org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfigTest:
 - testValidateEmptyStringConfig
 org.apache.kafka.server.log.remote.storage.RemoteLogManagerTest:
 - testBuildFilteredLeaderEpochMap
+- testBuildRetentionSizeData
 - testCandidateLogSegmentsSkipsActiveSegment
 - testCandidateLogSegmentsSkipsSegmentsAfterLastStableOffset
 - testConfigure
@@ -293,6 +298,38 @@ org.apache.kafka.storage.internals.log.LocalLogTest:
 - testTruncateTo
 - testUpdateConfig
 - testWhenFetchOffsetHigherThanMaxOffset
+org.apache.kafka.storage.internals.log.LogCleanerManagerTest:
+- testAlterCheckpointDirShouldRemoveDataInSrcDirAndAddInNewDir
+- testCheckpointUpdatedForInvalidOffsetNoCleaning
+- testCheckpointUpdatedForInvalidOffsetNotSelected
+- testCleanableOffsetsActiveSegment
+- testCleanableOffsetsForNone
+- testCleanableOffsetsForShortTime
+- testCleanableOffsetsForTime
+- testCleanableOffsetsNeedsCheckpointReset
+- testConcurrentLogCleanupAndLogTruncation
+- testConcurrentLogCleanupAndTopicDeletion
+- testDirtyOffsetLargerThanActiveSegmentBaseOffset
+- testDirtyOffsetResetIfLargerThanEndOffset
+- testDirtyOffsetResetIfSmallerThanStartOffset
+- testDoneCleaning
+- testDoneDeleting
+- testGrabFilthiestCompactedLogIgnoresBothInProgressPartitionsAndUncleanablePartitions
+- testGrabFilthiestCompactedLogIgnoresInProgressPartitions
+- testGrabFilthiestCompactedLogIgnoresUncleanablePartitions
+- testGrabFilthiestCompactedLogReturnsLogWithDirtiestRatio
+- testGrabFilthiestCompactedLogThrowsException
+- testHandleLogDirFailureShouldRemoveDirAndData
+- testLogStartOffsetLargerThanActiveSegmentBaseOffset
+- testLogsUnderCleanupIneligibleForCompaction
+- testLogsWithSegmentsToDeleteShouldConsiderCleanupPolicyCompactDeleteLogs
+- testLogsWithSegmentsToDeleteShouldConsiderCleanupPolicyCompactLogs
+- testLogsWithSegmentsToDeleteShouldNotConsiderCleanupPolicyDeleteLogs
+- testLogsWithSegmentsToDeleteShouldNotConsiderUncleanablePartitions
+- testMaybeTruncateCheckpointShouldTruncateData
+- testUndecidedTransactionalDataNotCleanable
+- testUpdateCheckpointsShouldAddOffsetToPartition
+- testUpdateCheckpointsShouldRemovePartitionData
 org.apache.kafka.storage.internals.log.LogConcurrencyTest:
 - testUncommittedDataNotConsumed
 - testUncommittedDataNotConsumedFrequentSegmentRolls
@@ -433,6 +470,7 @@ org.apache.kafka.storage.internals.log.ProducerStateManagerTest:
 - testHasLateTransactionInitializedAfterReload
 - testHasLateTransactionUpdatedAfterFullTruncation
 - testHasLateTransactionUpdatedAfterPartialTruncation
+- testIdempotentTransactionMarkerRetryTV2
 - testLastStableOffsetCompletedTxn
 - testLoadFromCorruptSnapshotFile
 - testLoadFromEmptySnapshotFile
@@ -476,6 +514,10 @@ org.apache.kafka.storage.internals.log.RemoteIndexCacheTest:
 - shouldThrowErrorWhenAccessedAfterCacheClose
 - testCacheEntryExpiry
 - testCacheEntryIsDeletedOnRemoval
+- testCacheTtlCanBeDisabled
+- testCacheTtlEviction
+- testCacheTtlRefreshOnAccess
+- testCacheTtlWithMultipleEntries
 - testCleanerThreadShutdown
 - testClearCacheAndIndexFilesWhenResizeCache
 - testClose
@@ -499,6 +541,7 @@ org.apache.kafka.storage.internals.log.RemoteIndexCacheTest:
 - testRemoveItem
 - testRemoveMultipleItems
 - testRemoveNonExistentItem
+- testSizeAndTimeBasedEviction
 org.apache.kafka.storage.internals.log.TimeIndexTest:
 - testAppend
 - testEntry

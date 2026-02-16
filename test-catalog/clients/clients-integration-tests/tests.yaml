@@ -33,6 +33,8 @@ org.apache.kafka.clients.admin.ClientTelemetryTest:
 - testClientInstanceId
 - testIntervalMsParser
 - testMetrics
+org.apache.kafka.clients.admin.ConcurrentListOffsetsRequestTest:
+- correctlyHandleConcurrentModificationOfPartitionLeaderCache
 org.apache.kafka.clients.admin.DeleteTopicTest:
 - testAddPartitionDuringDeleteTopic
 - testDeleteNonExistingTopic
@@ -92,6 +94,7 @@ org.apache.kafka.clients.consumer.ConsumerIntegrationTest:
 - testFetchPartitionsWithAlwaysFailedListenerWithGroupProtocolConsumer
 - testLeaderEpoch
 - testRackAwareAssignment
+- testSingleCoordinatorOwnershipAfterPartitionReassignment
 org.apache.kafka.clients.consumer.ConsumerTopicCreationTest:
 - testAsyncConsumerTopicCreationIfConsumerAllowToCreateTopic
 - testAsyncConsumerTopicCreationIfConsumerDisallowToCreateTopic
@@ -328,6 +331,7 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testAlterReadCommittedToReadUncommittedIsolationLevelWithReleaseAck
 - testAlterReadUncommittedToReadCommittedIsolationLevel
 - testBehaviorOnDeliveryCountBoundary
+- testCommitSyncFailsForDeletedTopic
 - testComplexShareConsumer
 - testConfiguredExplicitAcknowledgeCommitSuccess
 - testConfiguredImplicitAcknowledgeExplicitAcknowledgeFails
@@ -388,6 +392,8 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testShareConsumerAfterCoordinatorMovement
 - testShareGroupMaxSizeConfigExceeded
 - testShareGroupShareSessionCacheIsFull
+- testSharePartitionLagAfterAlterShareGroupOffsets
+- testSharePartitionLagAfterDeleteShareGroupOffsets
 - testSharePartitionLagForMultipleShareConsumers
 - testSharePartitionLagForSingleShareConsumer
 - testSharePartitionLagOnGroupCoordinatorMovement
