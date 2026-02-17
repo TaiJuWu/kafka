@@ -292,7 +292,11 @@ public class ConsumerMembershipManager extends AbstractMembershipManager<Consume
      */
     @Override
     protected CompletableFuture<Void> signalMemberLeavingGroup() {
-        return invokeOnPartitionsRevokedOrLostToReleaseAssignment();
+        // Auto-commit offsets before leaving the group, consistent with the reconciliation
+        // flow in signalReconciliationStarted().
+        CompletableFuture<Void> commitResult =
+            commitRequestManager.maybeAutoCommitSyncBeforeRebalance(getDeadlineMsForTimeout(rebalanceTimeoutMs));
+        return commitResult.thenCompose(__ -> invokeOnPartitionsRevokedOrLostToReleaseAssignment());
     }
 
     /**

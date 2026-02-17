@@ -886,6 +886,10 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
         log.debug("Executing onLeavePrepare with generation {}", currentGeneration);
 
+        // Auto-commit offsets before leaving the group, consistent with the
+        // onJoinPrepare flow and the async consumer's signalMemberLeavingGroup().
+        maybeAutoCommitOffsetsSync(time.timer(rebalanceConfig.rebalanceTimeoutMs));
+
         // we should reset assignment and trigger the callback before leaving group
         SortedSet<TopicPartition> droppedPartitions = new TreeSet<>(COMPARATOR);
         droppedPartitions.addAll(subscriptions.assignedPartitions());
