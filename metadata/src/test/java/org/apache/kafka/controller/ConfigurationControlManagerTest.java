@@ -86,7 +86,9 @@ public class ConfigurationControlManagerTest {
             define("def", ConfigDef.Type.STRING, ConfigDef.Importance.HIGH, "def").
             define("ghi", ConfigDef.Type.BOOLEAN, true, ConfigDef.Importance.HIGH, "ghi").
             define("quuux", ConfigDef.Type.LONG, ConfigDef.Importance.HIGH, "quux").
-            define(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, ConfigDef.Type.INT, ConfigDef.Importance.HIGH, ""));
+            define(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, ConfigDef.Type.INT, ConfigDef.Importance.HIGH, "").
+            define(TopicConfig.SEGMENT_BYTES_CONFIG, ConfigDef.Type.INT, 1024 * 1024 * 1024,
+                ConfigDef.Range.atLeast(1024 * 1024), ConfigDef.Importance.HIGH, "segment.bytes"));
     }
 
     public static final Map<String, List<ConfigSynonym>> SYNONYMS = new HashMap<>();
@@ -552,6 +554,133 @@ public class ConfigurationControlManagerTest {
         } else {
             assertEquals(Errors.INVALID_UPDATE_VERSION, result.response().error());
         }
+    }
+
+    @Test
+    public void testUpdateFeaturesPassesWhenConfigsAreValid() {
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.LATEST_PRODUCTION.featureLevel()));
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setStaticConfig(Map.of(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "2")).
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // No broker-level min.insync.replicas configs — upgrade should succeed.
+        ControllerResult<ApiError> result = manager.updateFeatures(
+            Map.of(EligibleLeaderReplicasVersion.FEATURE_NAME,
+                EligibleLeaderReplicasVersion.ELRV_1.featureLevel()),
+            Map.of(EligibleLeaderReplicasVersion.FEATURE_NAME,
+                FeatureUpdate.UpgradeType.UPGRADE),
+            false,
+            0);
+        assertEquals(Errors.NONE, result.response().error());
+        assertFalse(result.records().isEmpty());
+    }
+
+    @Test
+    public void testMetadataVersionUpgradeBlockedByInvalidSegmentBytes() {
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        // Start at a version below IBP_4_0_IV0.
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.IBP_3_9_IV0.featureLevel()));
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // Set a topic-level segment.bytes below the minimum (1 MB).
+        manager.replay(new ConfigRecord().
+            setResourceType(TOPIC.id()).setResourceName("badTopic").
+            setName(TopicConfig.SEGMENT_BYTES_CONFIG).setValue("1024"));
+
+        // Upgrading metadata.version to IBP_4_0_IV0 should be blocked.
+        ControllerResult<ApiError> result = manager.updateFeatures(
+            Map.of(MetadataVersion.FEATURE_NAME,
+                MetadataVersion.IBP_4_0_IV0.featureLevel()),
+            Map.of(MetadataVersion.FEATURE_NAME,
+                FeatureUpdate.UpgradeType.UPGRADE),
+            false,
+            0);
+        assertEquals(Errors.INVALID_CONFIG, result.response().error());
+        assertTrue(result.response().message().contains("segment.bytes"));
+        assertTrue(result.response().message().contains("badTopic"));
+        assertTrue(result.records().isEmpty());
+    }
+
+    @Test
+    public void testMetadataVersionUpgradePassesWithValidSegmentBytes() {
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.IBP_3_9_IV0.featureLevel()));
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // Set a topic-level segment.bytes at exactly the minimum (1 MB) — should be fine.
+        manager.replay(new ConfigRecord().
+            setResourceType(TOPIC.id()).setResourceName("goodTopic").
+            setName(TopicConfig.SEGMENT_BYTES_CONFIG).
+            setValue(String.valueOf(1024 * 1024)));
+
+        ControllerResult<ApiError> result = manager.updateFeatures(
+            Map.of(MetadataVersion.FEATURE_NAME,
+                MetadataVersion.IBP_4_0_IV0.featureLevel()),
+            Map.of(MetadataVersion.FEATURE_NAME,
+                FeatureUpdate.UpgradeType.UPGRADE),
+            false,
+            0);
+        assertEquals(Errors.NONE, result.response().error());
+        assertFalse(result.records().isEmpty());
+    }
+
+    @Test
+    public void testMetadataVersionUpgradeSkipsCheckWhenAlreadyAtVersion() {
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        // Already at IBP_4_0_IV0 — upgrading further should not re-check segment.bytes.
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.IBP_4_0_IV0.featureLevel()));
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // Even with an invalid segment.bytes, upgrading to a higher version should pass
+        // because the constraint threshold (IBP_4_0_IV0) was already crossed.
+        manager.replay(new ConfigRecord().
+            setResourceType(TOPIC.id()).setResourceName("badTopic").
+            setName(TopicConfig.SEGMENT_BYTES_CONFIG).setValue("1024"));
+
+        ControllerResult<ApiError> result = manager.updateFeatures(
+            Map.of(MetadataVersion.FEATURE_NAME,
+                MetadataVersion.IBP_4_0_IV1.featureLevel()),
+            Map.of(MetadataVersion.FEATURE_NAME,
+                FeatureUpdate.UpgradeType.UPGRADE),
+            false,
+            0);
+        assertEquals(Errors.NONE, result.response().error());
     }
 
     private FeatureControlManager createFeatureControlManager() {

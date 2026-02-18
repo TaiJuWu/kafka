@@ -20,6 +20,7 @@ package org.apache.kafka.metadata;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource;
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.types.Password;
 import org.apache.kafka.common.metadata.ConfigRecord;
@@ -111,6 +112,26 @@ public class KafkaConfigSchema {
         ConfigDef.ConfigKey configKey = configDef.configKeys().get(key);
         if (configKey == null) return false;
         return configKey.type == ConfigDef.Type.LIST;
+    }
+
+    /**
+     * Validate a single config value against the ConfigDef's type and validator for the given
+     * resource type and key. Throws ConfigException if the value is invalid.
+     *
+     * @param type   The resource type (TOPIC, BROKER, etc.)
+     * @param key    The config key name.
+     * @param value  The string value to validate.
+     * @throws ConfigException if the value fails type parsing or validator checks.
+     */
+    public void validateValue(ConfigResource.Type type, String key, String value) {
+        ConfigDef configDef = configDefs.get(type);
+        if (configDef == null) return;
+        ConfigDef.ConfigKey configKey = configDef.configKeys().get(key);
+        if (configKey == null) return;
+        Object parsedValue = ConfigDef.parseType(key, value, configKey.type);
+        if (configKey.validator != null) {
+            configKey.validator.ensureValid(key, parsedValue);
+        }
     }
 
     /**

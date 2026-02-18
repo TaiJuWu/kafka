@@ -33,6 +33,7 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.metadata.KafkaConfigSchema;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
+import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
 import org.apache.kafka.server.policy.AlterConfigPolicy.RequestMetadata;
@@ -658,6 +659,67 @@ public class ConfigurationControlManager {
     }
 
     /**
+     * Validate that existing configurations are compatible with a proposed feature upgrade.
+     * This pre-flight check rejects the upgrade if any existing configs violate constraints
+     * introduced by the new version.
+     *
+     * @param updates  The proposed feature updates (feature name to new level).
+     * @return         An error if validation fails, or empty if all configs are compatible.
+     */
+    Optional<ApiError> validateConfigsForFeatureUpgrade(Map<String, Short> updates) {
+        for (Entry<String, Short> entry : updates.entrySet()) {
+            String featureName = entry.getKey();
+            short proposedLevel = entry.getValue();
+            Optional<ApiError> error = Optional.empty();
+            if (featureName.equals(MetadataVersion.FEATURE_NAME)) {
+                error = validateMetadataVersionUpgradeConstraints(proposedLevel);
+            }
+            if (error.isPresent()) {
+                return error;
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Validate that all existing configurations pass their ConfigDef validators before a
+     * metadata version upgrade. This catches config values that were accepted under a previous
+     * version but would be invalid under the new version's stricter constraints.
+     *
+     * @param proposedLevel  The proposed metadata version feature level.
+     * @return               An error if any config value is invalid, or empty if all are valid.
+     */
+    private Optional<ApiError> validateMetadataVersionUpgradeConstraints(short proposedLevel) {
+        if (proposedLevel < MetadataVersion.IBP_4_0_IV0.featureLevel()) {
+            return Optional.empty();
+        }
+        if (featureControl.metadataVersion().isPresent() &&
+                featureControl.metadataVersion().get().isAtLeast(MetadataVersion.IBP_4_0_IV0)) {
+            return Optional.empty();
+        }
+        Map<ConfigResource, String> violations = new HashMap<>();
+        for (Entry<ConfigResource, TimelineHashMap<String, String>> entry : configData.entrySet()) {
+            ConfigResource resource = entry.getKey();
+            Map<String, String> configs = entry.getValue();
+            for (Entry<String, String> configEntry : configs.entrySet()) {
+                try {
+                    configSchema.validateValue(resource.type(), configEntry.getKey(), configEntry.getValue());
+                } catch (ConfigException e) {
+                    violations.put(resource, e.getMessage());
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            return Optional.of(new ApiError(INVALID_CONFIG,
+                "Cannot upgrade " + MetadataVersion.FEATURE_NAME +
+                " to version " + proposedLevel +
+                " because existing configs are invalid: " + violations +
+                ". Fix these configs before upgrading."));
+        }
+        return Optional.empty();
+    }
+
+    /**
      * Update a Kafka feature, generating any configuration changes that are required.
      *
      * @param updates       The user-requested updates.
@@ -673,6 +735,11 @@ public class ConfigurationControlManager {
         boolean validateOnly,
         int currentClaimEpoch
     ) {
+        Optional<ApiError> validationError = validateConfigsForFeatureUpgrade(updates);
+        if (validationError.isPresent()) {
+            return ControllerResult.of(List.of(), validationError.get());
+        }
+
         ControllerResult<ApiError> result = featureControl.updateFeatures(updates, upgradeTypes, validateOnly, currentClaimEpoch);
         if (result.response().isSuccess() &&
             !validateOnly &&
