@@ -128,7 +128,10 @@ public enum MetadataVersion {
     //
 
     // New version for the Kafka 4.3.0 release.
-    IBP_4_3_IV0(30, "4.3", "IV0", false);
+    IBP_4_3_IV0(30, "4.3", "IV0", false),
+
+    // Support for broker static config reporting in BrokerRegistration (KIP-TBD).
+    IBP_4_3_IV1(31, "4.3", "IV1", false);
 
     // NOTES when adding a new version:
     //   Update the default version in @ClusterTest annotation to point to the latest version
@@ -212,8 +215,14 @@ public enum MetadataVersion {
         return this.isAtLeast(MetadataVersion.IBP_3_4_IV0);
     }
 
+    public boolean isStaticConfigReportingSupported() {
+        return this.isAtLeast(IBP_4_3_IV1);
+    }
+
     public short registerBrokerRecordVersion() {
-        if (isDirectoryAssignmentSupported()) {
+        if (isStaticConfigReportingSupported()) {
+            return (short) 4;
+        } else if (isDirectoryAssignmentSupported()) {
             // new logDirs field
             return (short) 3;
         } else if (isMigrationSupported()) {

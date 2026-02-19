@@ -59,6 +59,7 @@ import org.slf4j.Logger;
 
 import java.util.AbstractMap;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -270,6 +271,11 @@ public class ClusterControlManager {
     private final TimelineHashMap<Uuid, Integer> directoryToBroker;
 
     /**
+     * Maps broker IDs to their non-default static configs reported during registration.
+     */
+    private final Map<Integer, Map<String, String>> brokerStaticConfigs;
+
+    /**
      * Manages the kafka.controller:type=KafkaController,name=TimeSinceLastHeartbeatReceivedMs,broker=<brokerId> metrics.
      */
     private final QuorumControllerMetrics metrics;
@@ -298,6 +304,7 @@ public class ClusterControlManager {
         this.featureControl = featureControl;
         this.controllerRegistrations = new TimelineHashMap<>(snapshotRegistry, 0);
         this.directoryToBroker = new TimelineHashMap<>(snapshotRegistry, 0);
+        this.brokerStaticConfigs = new HashMap<>();
         this.brokerShutdownHandler = brokerShutdownHandler;
         this.metrics = metrics;
     }
@@ -337,6 +344,10 @@ public class ClusterControlManager {
 
     Map<Integer, BrokerRegistration> brokerRegistrations() {
         return brokerRegistrations;
+    }
+
+    public Map<Integer, Map<String, String>> brokerStaticConfigs() {
+        return Collections.unmodifiableMap(brokerStaticConfigs);
     }
 
     Map<Integer, ControllerRegistration> controllerRegistrations() {
@@ -431,6 +442,22 @@ public class ClusterControlManager {
         });
         if (featureControl.metadataVersionOrThrow().isDirectoryAssignmentSupported()) {
             record.setLogDirs(request.logDirs());
+        }
+
+        // Store broker static configs in-memory (always available for pre-upgrade validation)
+        Map<String, String> statics = new HashMap<>();
+        for (BrokerRegistrationRequestData.StaticConfig sc : request.staticConfigs()) {
+            statics.put(sc.name(), sc.value());
+        }
+        brokerStaticConfigs.put(brokerId, Map.copyOf(statics));
+
+        // Write static configs to the record when MV supports it
+        if (featureControl.metadataVersionOrThrow().isStaticConfigReportingSupported()) {
+            for (BrokerRegistrationRequestData.StaticConfig sc : request.staticConfigs()) {
+                record.staticConfigs().add(new RegisterBrokerRecord.BrokerStaticConfig()
+                    .setName(sc.name())
+                    .setValue(sc.value()));
+            }
         }
 
         if (!request.incarnationId().equals(prevIncarnationId)) {
@@ -576,6 +603,13 @@ public class ClusterControlManager {
                 setIsMigratingZkBroker(record.isMigratingZkBroker()).
                 setDirectories(record.logDirs()).
                     build());
+        // Restore static configs from metadata log (for controller failover)
+        Map<String, String> replayedStatics = new HashMap<>();
+        for (RegisterBrokerRecord.BrokerStaticConfig sc : record.staticConfigs()) {
+            replayedStatics.put(sc.name(), sc.value());
+        }
+        brokerStaticConfigs.put(record.brokerId(), Map.copyOf(replayedStatics));
+
         updateDirectories(brokerId, prevRegistration == null ? null : prevRegistration.directories(), record.logDirs());
         if (heartbeatManager != null) {
             if (prevRegistration != null) heartbeatManager.remove(brokerId);

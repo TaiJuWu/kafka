@@ -77,6 +77,7 @@ public class ConfigurationControlManager {
     private final Map<String, Object> staticConfig;
     private final ConfigResource currentController;
     private final FeatureControlManager featureControl;
+    private final ClusterControlManager clusterControl;
 
     static class Builder {
         private LogContext logContext = null;
@@ -88,6 +89,7 @@ public class ConfigurationControlManager {
         private Map<String, Object> staticConfig = Map.of();
         private int nodeId = 0;
         private FeatureControlManager featureControl = null;
+        private ClusterControlManager clusterControl = null;
 
         Builder setLogContext(LogContext logContext) {
             this.logContext = logContext;
@@ -134,6 +136,11 @@ public class ConfigurationControlManager {
             return this;
         }
 
+        Builder setClusterControl(ClusterControlManager clusterControl) {
+            this.clusterControl = clusterControl;
+            return this;
+        }
+
         ConfigurationControlManager build() {
             if (logContext == null) logContext = new LogContext();
             if (snapshotRegistry == null) snapshotRegistry = new SnapshotRegistry(logContext);
@@ -152,7 +159,8 @@ public class ConfigurationControlManager {
                 validator,
                 staticConfig,
                 nodeId,
-                featureControl);
+                featureControl,
+                clusterControl);
         }
     }
 
@@ -164,7 +172,8 @@ public class ConfigurationControlManager {
             ConfigurationValidator validator,
             Map<String, Object> staticConfig,
             int nodeId,
-            FeatureControlManager featureControl
+            FeatureControlManager featureControl,
+            ClusterControlManager clusterControl
     ) {
         this.log = logContext.logger(ConfigurationControlManager.class);
         this.snapshotRegistry = snapshotRegistry;
@@ -177,6 +186,7 @@ public class ConfigurationControlManager {
         this.staticConfig = Map.copyOf(staticConfig);
         this.currentController = new ConfigResource(Type.BROKER, Integer.toString(nodeId));
         this.featureControl = featureControl;
+        this.clusterControl = clusterControl;
     }
 
     SnapshotRegistry snapshotRegistry() {
@@ -700,13 +710,27 @@ public class ConfigurationControlManager {
             Map<String, String> configs = entry.getValue();
             for (Entry<String, String> configEntry : configs.entrySet()) {
                 try {
-                    System.err.println("lll resource.type() " + resource.type() + " configEntry.getKey(): " + configEntry.getKey() + " configEntry.getValue():" + configEntry.getValue());
-                    configSchema.validateValue(resource.type(), configEntry.getKey(), "1024");
+                    configSchema.validateValue(resource.type(), configEntry.getKey(), configEntry.getValue());
                 } catch (ConfigException e) {
                     violations.put(resource, e.getMessage());
                 }
             }
         }
+        // Validate broker static configs
+        if (clusterControl != null) {
+            Map<Integer, Map<String, String>> brokerStatics = clusterControl.brokerStaticConfigs();
+            for (Entry<Integer, Map<String, String>> brokerEntry : brokerStatics.entrySet()) {
+                int brokerId = brokerEntry.getKey();
+                for (Entry<String, String> configEntry : brokerEntry.getValue().entrySet()) {
+                    try {
+                        configSchema.validateValue(ConfigResource.Type.BROKER, configEntry.getKey(), configEntry.getValue());
+                    } catch (ConfigException e) {
+                        violations.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(brokerId)), e.getMessage());
+                    }
+                }
+            }
+        }
+
         if (!violations.isEmpty()) {
             return Optional.of(new ApiError(INVALID_CONFIG,
                 "Cannot upgrade " + MetadataVersion.FEATURE_NAME +
