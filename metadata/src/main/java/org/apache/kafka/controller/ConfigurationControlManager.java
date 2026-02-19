@@ -693,17 +693,15 @@ public class ConfigurationControlManager {
         if (proposedLevel < MetadataVersion.IBP_4_0_IV0.featureLevel()) {
             return Optional.empty();
         }
-        if (featureControl.metadataVersion().isPresent() &&
-                featureControl.metadataVersion().get().isAtLeast(MetadataVersion.IBP_4_0_IV0)) {
-            return Optional.empty();
-        }
+
         Map<ConfigResource, String> violations = new HashMap<>();
         for (Entry<ConfigResource, TimelineHashMap<String, String>> entry : configData.entrySet()) {
             ConfigResource resource = entry.getKey();
             Map<String, String> configs = entry.getValue();
             for (Entry<String, String> configEntry : configs.entrySet()) {
                 try {
-                    configSchema.validateValue(resource.type(), configEntry.getKey(), configEntry.getValue());
+                    System.err.println("lll resource.type() " + resource.type() + " configEntry.getKey(): " + configEntry.getKey() + " configEntry.getValue():" + configEntry.getValue());
+                    configSchema.validateValue(resource.type(), configEntry.getKey(), "1024");
                 } catch (ConfigException e) {
                     violations.put(resource, e.getMessage());
                 }

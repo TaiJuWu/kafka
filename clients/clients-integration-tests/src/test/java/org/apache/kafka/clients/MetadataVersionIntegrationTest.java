@@ -16,7 +16,11 @@
  */
 package org.apache.kafka.clients;
 
+import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.FeatureUpdate;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.test.ClusterInstance;
 import org.apache.kafka.common.test.api.ClusterTest;
 import org.apache.kafka.common.test.api.ClusterTests;
@@ -24,6 +28,7 @@ import org.apache.kafka.common.test.api.Type;
 import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.test.TestUtils;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -69,6 +74,38 @@ public class MetadataVersionIntegrationTest {
             var updateResult = admin.updateFeatures(
                     Map.of("metadata.version", new FeatureUpdate(updateVersion, FeatureUpdate.UpgradeType.UPGRADE)));
             updateResult.all().get();
+        }
+    }
+
+    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_3_9_IV0)
+    public void testMetadataVersionUpgradeWithValidTopicConfigs(ClusterInstance clusterInstance) throws Exception {
+        try (var admin = clusterInstance.admin()) {
+            // Create a topic with a valid dynamic config
+            admin.createTopics(List.of(new NewTopic("test-topic", 1, (short) 1))).all().get();
+            admin.incrementalAlterConfigs(Map.of(
+                new ConfigResource(ConfigResource.Type.TOPIC, "test-topic"),
+                List.of(new AlterConfigOp(
+                    new ConfigEntry("segment.bytes", "10485760"),
+                    AlterConfigOp.OpType.SET))
+            )).all().get();
+
+            // Upgrade metadata.version past IBP_4_0_IV0 — should succeed
+            // because the config passes pre-flight validation
+            short targetVersion = MetadataVersion.IBP_4_0_IV0.featureLevel();
+            admin.updateFeatures(Map.of(
+                MetadataVersion.FEATURE_NAME,
+                new FeatureUpdate(targetVersion, FeatureUpdate.UpgradeType.UPGRADE)
+            )).all().get();
+
+            TestUtils.waitForCondition(() -> {
+                try {
+                    var ff = admin.describeFeatures().featureMetadata().get()
+                        .finalizedFeatures().get(MetadataVersion.FEATURE_NAME);
+                    return ff.maxVersionLevel() >= targetVersion;
+                } catch (Exception e) {
+                    return false;
+                }
+            }, "metadata.version did not reach " + targetVersion);
         }
     }
 
