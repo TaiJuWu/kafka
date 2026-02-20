@@ -717,14 +717,18 @@ public class ConfigurationControlManager {
 
                 List<String> brokerViolations = new ArrayList<>();
 
-                for (Entry<String, ConfigEntry> configEntry : computeEffectiveBrokerConfigs(brokerId).entrySet()) {
+                for (Entry<String, ConfigEntry> entry : computeEffectiveBrokerConfigs(brokerId).entrySet()) {
+                    String name = entry.getKey();
+                    ConfigEntry configEntry = entry.getValue();
+
                     try {
-                        ConfigFeatureGate.validate(proposedMV, configEntry.getKey(), configEntry.getValue().value());
+                        ConfigFeatureGate.validate(proposedMV, name, configEntry.value());
                     } catch (Exception e) {
-                        brokerViolations.add(e.getMessage());
+                        String errorMessage = String.format("Broker %d config '%s' is invalid (Source: %s): %s",
+                                brokerId, name, configEntry.source(), e.getMessage());
+                        brokerViolations.add(errorMessage);
                     }
-                }
-                if (!brokerViolations.isEmpty()) {
+                }                if (!brokerViolations.isEmpty()) {
                     violations.put(brokerResource, String.join(", ", brokerViolations));
                 }
             }

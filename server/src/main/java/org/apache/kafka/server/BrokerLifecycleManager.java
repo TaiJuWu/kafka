@@ -445,11 +445,13 @@ public class BrokerLifecycleManager {
         List<Uuid> sortedLogDirs = new ArrayList<>(logDirs);
         sortedLogDirs.sort(Uuid::compareTo);
         List<BrokerRegistrationRequestData.StaticConfig> staticConfigs = new ArrayList<>();
-        for (Map.Entry<String, ?> entry : config.originals().entrySet()) {
+        // we send all static config to controller even if the value is null
+        for (Map.Entry<String, ?> entry : config.values().entrySet()) {
             staticConfigs.add(new BrokerRegistrationRequestData.StaticConfig()
                 .setName(entry.getKey())
-                .setValue(entry.getValue().toString()));
+                .setValue(String.valueOf(entry.getValue())));
         }
+        System.err.println("llll " + staticConfigs);
         BrokerRegistrationRequestData data = new BrokerRegistrationRequestData()
             .setBrokerId(nodeId)
             .setIsMigratingZkBroker(false)

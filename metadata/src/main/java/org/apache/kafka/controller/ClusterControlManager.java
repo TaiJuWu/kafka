@@ -450,6 +450,7 @@ public class ClusterControlManager {
         for (BrokerRegistrationRequestData.StaticConfig sc : request.staticConfigs()) {
             statics.put(sc.name(), sc.value());
         }
+        System.err.println("LLLLLL " + statics);
         brokerStaticConfigs.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(brokerId)), Map.copyOf(statics));
 
         // Write static configs to the record when MV supports it
