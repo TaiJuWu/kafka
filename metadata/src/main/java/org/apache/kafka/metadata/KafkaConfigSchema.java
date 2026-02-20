@@ -20,7 +20,6 @@ package org.apache.kafka.metadata;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.ConfigEntry.ConfigSource;
 import org.apache.kafka.common.config.ConfigDef;
-import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.types.Password;
 import org.apache.kafka.common.metadata.ConfigRecord;
@@ -115,26 +114,6 @@ public class KafkaConfigSchema {
     }
 
     /**
-     * Validate a single config value against the ConfigDef's type and validator for the given
-     * resource type and key. Throws ConfigException if the value is invalid.
-     *
-     * @param type   The resource type (TOPIC, BROKER, etc.)
-     * @param key    The config key name.
-     * @param value  The string value to validate.
-     * @throws ConfigException if the value fails type parsing or validator checks.
-     */
-    public void validateValue(ConfigResource.Type type, String key, String value) {
-        ConfigDef configDef = configDefs.get(type);
-        if (configDef == null) return;
-        ConfigDef.ConfigKey configKey = configDef.configKeys().get(key);
-        if (configKey == null) return;
-        Object parsedValue = ConfigDef.parseType(key, value, configKey.type);
-        if (configKey.validator != null) {
-            configKey.validator.ensureValid(key, parsedValue);
-        }
-    }
-
-    /**
      * Returns true if the configuration key specified in this ConfigRecord is sensitive, or if
      * we don't know whether it is sensitive.
      */
@@ -187,6 +166,24 @@ public class KafkaConfigSchema {
         return effectiveConfigs;
     }
 
+    public Map<String, ConfigEntry> resolveEffectiveBrokerConfigs(
+            Map<String, ?> staticNodeConfig,
+            Map<String, ?> dynamicClusterConfigs,
+            Map<String, ?> dynamicNodeConfigs) {
+        ConfigDef configDef = configDefs.getOrDefault(ConfigResource.Type.BROKER, EMPTY_CONFIG_DEF);
+        HashMap<String, ConfigEntry> effectiveConfigs = new HashMap<>();
+        for (ConfigDef.ConfigKey configKey : configDef.configKeys().values()) {
+            // This config is internal; if the user hasn't set it explicitly, it should not be returned.
+            if (configKey.internalConfig) {
+                continue;
+            }
+            ConfigEntry entry = resolveEffectiveBrokerConfig(configKey, staticNodeConfig,
+                    dynamicClusterConfigs, dynamicNodeConfigs);
+            effectiveConfigs.put(entry.name(), entry);
+        }
+        return effectiveConfigs;
+    }
+
     public ConfigEntry resolveEffectiveTopicConfig(
         String keyName,
         Map<String, ?> staticNodeConfig,
@@ -215,27 +212,49 @@ public class KafkaConfigSchema {
                 dynamicTopicConfigs.get(configKey.name),
                 ConfigSource.DYNAMIC_TOPIC_CONFIG, Function.identity());
         }
+        return resolveEffectiveBrokerConfig(configKey, staticNodeConfig, dynamicClusterConfigs, dynamicNodeConfigs);
+    }
+
+    public ConfigEntry resolveEffectiveBrokerConfig(
+            ConfigDef.ConfigKey configKey,
+            Map<String, ?> staticNodeConfig,
+            Map<String, ?> dynamicClusterConfigs,
+            Map<String, ?> dynamicNodeConfigs
+    ) {
         List<ConfigSynonym> synonyms = logConfigSynonyms.getOrDefault(configKey.name, List.of());
+        if (dynamicNodeConfigs.containsKey(configKey.name)) {
+            return toConfigEntry(configKey, dynamicNodeConfigs.get(configKey.name),
+                    ConfigSource.DYNAMIC_BROKER_CONFIG, Function.identity());
+        }
         for (ConfigSynonym synonym : synonyms) {
             if (dynamicNodeConfigs.containsKey(synonym.name())) {
                 return toConfigEntry(configKey, dynamicNodeConfigs.get(synonym.name()),
-                    ConfigSource.DYNAMIC_BROKER_CONFIG, synonym.converter());
+                        ConfigSource.DYNAMIC_BROKER_CONFIG, synonym.converter());
             }
+        }
+
+        if (dynamicClusterConfigs.containsKey(configKey.name)) {
+            return toConfigEntry(configKey, dynamicClusterConfigs.get(configKey.name),
+                    ConfigSource.DYNAMIC_DEFAULT_BROKER_CONFIG, Function.identity());
         }
         for (ConfigSynonym synonym : synonyms) {
             if (dynamicClusterConfigs.containsKey(synonym.name())) {
                 return toConfigEntry(configKey, dynamicClusterConfigs.get(synonym.name()),
-                    ConfigSource.DYNAMIC_DEFAULT_BROKER_CONFIG, synonym.converter());
+                        ConfigSource.DYNAMIC_DEFAULT_BROKER_CONFIG, synonym.converter());
             }
+        }
+        if (staticNodeConfig.containsKey(configKey.name)) {
+            return toConfigEntry(configKey, staticNodeConfig.get(configKey.name),
+                    ConfigSource.STATIC_BROKER_CONFIG, Function.identity());
         }
         for (ConfigSynonym synonym : synonyms) {
             if (staticNodeConfig.containsKey(synonym.name())) {
                 return toConfigEntry(configKey, staticNodeConfig.get(synonym.name()),
-                    ConfigSource.STATIC_BROKER_CONFIG, synonym.converter());
+                        ConfigSource.STATIC_BROKER_CONFIG, synonym.converter());
             }
         }
         return toConfigEntry(configKey, configKey.hasDefault() ? configKey.defaultValue : null,
-            ConfigSource.DEFAULT_CONFIG, Function.identity());
+                ConfigSource.DEFAULT_CONFIG, Function.identity());
     }
 
     public String getStaticOrDefaultConfig(

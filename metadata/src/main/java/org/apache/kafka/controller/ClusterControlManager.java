@@ -19,6 +19,7 @@ package org.apache.kafka.controller;
 
 import org.apache.kafka.common.DirectoryId;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.BrokerIdNotRegisteredException;
 import org.apache.kafka.common.errors.DuplicateBrokerRegistrationException;
 import org.apache.kafka.common.errors.InconsistentClusterIdException;
@@ -273,7 +274,7 @@ public class ClusterControlManager {
     /**
      * Maps broker IDs to their non-default static configs reported during registration.
      */
-    private final Map<Integer, Map<String, String>> brokerStaticConfigs;
+    private final Map<ConfigResource, Map<String, String>> brokerStaticConfigs;
 
     /**
      * Manages the kafka.controller:type=KafkaController,name=TimeSinceLastHeartbeatReceivedMs,broker=<brokerId> metrics.
@@ -346,7 +347,7 @@ public class ClusterControlManager {
         return brokerRegistrations;
     }
 
-    public Map<Integer, Map<String, String>> brokerStaticConfigs() {
+    public Map<ConfigResource, Map<String, String>> brokerStaticConfigs() {
         return Collections.unmodifiableMap(brokerStaticConfigs);
     }
 
@@ -449,7 +450,7 @@ public class ClusterControlManager {
         for (BrokerRegistrationRequestData.StaticConfig sc : request.staticConfigs()) {
             statics.put(sc.name(), sc.value());
         }
-        brokerStaticConfigs.put(brokerId, Map.copyOf(statics));
+        brokerStaticConfigs.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(brokerId)), Map.copyOf(statics));
 
         // Write static configs to the record when MV supports it
         if (featureControl.metadataVersionOrThrow().isStaticConfigReportingSupported()) {
@@ -608,7 +609,7 @@ public class ClusterControlManager {
         for (RegisterBrokerRecord.BrokerStaticConfig sc : record.staticConfigs()) {
             replayedStatics.put(sc.name(), sc.value());
         }
-        brokerStaticConfigs.put(record.brokerId(), Map.copyOf(replayedStatics));
+        brokerStaticConfigs.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(record.brokerId())), Map.copyOf(replayedStatics));
 
         updateDirectories(brokerId, prevRegistration == null ? null : prevRegistration.directories(), record.logDirs());
         if (heartbeatManager != null) {

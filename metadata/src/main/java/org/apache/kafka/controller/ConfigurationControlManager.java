@@ -32,6 +32,7 @@ import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.metadata.KafkaConfigSchema;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
+import org.apache.kafka.server.common.ConfigFeatureGate;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
 import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.mutable.BoundedList;
@@ -53,6 +54,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import static org.apache.kafka.clients.admin.AlterConfigOp.OpType.APPEND;
 import static org.apache.kafka.common.config.ConfigResource.Type.BROKER;
@@ -173,8 +175,7 @@ public class ConfigurationControlManager {
             Map<String, Object> staticConfig,
             int nodeId,
             FeatureControlManager featureControl,
-            ClusterControlManager clusterControl
-    ) {
+            ClusterControlManager clusterControl) {
         this.log = logContext.logger(ConfigurationControlManager.class);
         this.snapshotRegistry = snapshotRegistry;
         this.configSchema = configSchema;
@@ -692,9 +693,9 @@ public class ConfigurationControlManager {
     }
 
     /**
-     * Validate that all existing configurations pass their ConfigDef validators before a
-     * metadata version upgrade. This catches config values that were accepted under a previous
-     * version but would be invalid under the new version's stricter constraints.
+     * Validate that all existing configurations are compatible with a proposed metadata version
+     * upgrade. Uses MV-specific constraints when available, falling back to ConfigDef validators
+     * only when crossing the initial threshold (< IBP_4_0_IV0 to >= IBP_4_0_IV0).
      *
      * @param proposedLevel  The proposed metadata version feature level.
      * @return               An error if any config value is invalid, or empty if all are valid.
@@ -704,39 +705,41 @@ public class ConfigurationControlManager {
             return Optional.empty();
         }
 
+        MetadataVersion proposedMV = MetadataVersion.fromFeatureLevel(proposedLevel);
+
         Map<ConfigResource, String> violations = new HashMap<>();
-        for (Entry<ConfigResource, TimelineHashMap<String, String>> entry : configData.entrySet()) {
-            ConfigResource resource = entry.getKey();
-            Map<String, String> configs = entry.getValue();
-            for (Entry<String, String> configEntry : configs.entrySet()) {
-                try {
-                    configSchema.validateValue(resource.type(), configEntry.getKey(), configEntry.getValue());
-                } catch (ConfigException e) {
-                    violations.put(resource, e.getMessage());
-                }
-            }
-        }
-        // Validate broker static configs
+
+        // Validate broker configs
         if (clusterControl != null) {
-            Map<Integer, Map<String, String>> brokerStatics = clusterControl.brokerStaticConfigs();
-            for (Entry<Integer, Map<String, String>> brokerEntry : brokerStatics.entrySet()) {
-                int brokerId = brokerEntry.getKey();
-                for (Entry<String, String> configEntry : brokerEntry.getValue().entrySet()) {
+            for (Entry<ConfigResource, Map<String, String>> brokerEntry : clusterControl.brokerStaticConfigs().entrySet()) {
+                int brokerId = Integer.parseInt(brokerEntry.getKey().name());
+                ConfigResource brokerResource = brokerEntry.getKey();
+
+                List<String> brokerViolations = new ArrayList<>();
+
+                for (Entry<String, ConfigEntry> configEntry : computeEffectiveBrokerConfigs(brokerId).entrySet()) {
                     try {
-                        configSchema.validateValue(ConfigResource.Type.BROKER, configEntry.getKey(), configEntry.getValue());
-                    } catch (ConfigException e) {
-                        violations.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(brokerId)), e.getMessage());
+                        ConfigFeatureGate.validate(proposedMV, configEntry.getKey(), configEntry.getValue().value());
+                    } catch (Exception e) {
+                        brokerViolations.add(e.getMessage());
                     }
+                }
+                if (!brokerViolations.isEmpty()) {
+                    violations.put(brokerResource, String.join(", ", brokerViolations));
                 }
             }
         }
 
         if (!violations.isEmpty()) {
-            return Optional.of(new ApiError(INVALID_CONFIG,
-                "Cannot upgrade " + MetadataVersion.FEATURE_NAME +
-                " to version " + proposedLevel +
-                " because existing configs are invalid: " + violations +
-                ". Fix these configs before upgrading."));
+            String errorMessage = violations.entrySet().stream()
+                    .map(entry -> "NodeId=" + entry.getKey().name() + " -> " + entry.getValue())
+                    .collect(Collectors.joining("; "));
+
+            return Optional.of(new ApiError(Errors.INVALID_CONFIG,
+                    "Cannot upgrade " + MetadataVersion.FEATURE_NAME +
+                            " to version " + proposedLevel +
+                            " because existing configs are invalid: " + errorMessage +
+                            ". Fix these configs before upgrading."));
         }
         return Optional.empty();
     }
@@ -797,8 +800,22 @@ public class ConfigurationControlManager {
             currentControllerConfig(), creationConfigs);
     }
 
+    Map<String, ConfigEntry> computeEffectiveBrokerConfigs(int brokerId) {
+        return configSchema.resolveEffectiveBrokerConfigs(brokerStaticConfig(brokerId), clusterConfig(), brokerDynamicConfig(brokerId));
+    }
+
     Map<String, String> clusterConfig() {
         Map<String, String> result = configData.get(DEFAULT_NODE);
+        return (result == null) ? Map.of() : result;
+    }
+
+    Map<String, String> brokerStaticConfig(int brokerId) {
+        Map<String, String> result = clusterControl.brokerStaticConfigs().get(new ConfigResource(BROKER, String.valueOf(brokerId)));
+        return (result == null) ? Map.of() : result;
+    }
+
+    Map<String, String> brokerDynamicConfig(int brokerId) {
+        Map<String, String> result = configData.get(new ConfigResource(BROKER, String.valueOf(brokerId)));
         return (result == null) ? Map.of() : result;
     }
 

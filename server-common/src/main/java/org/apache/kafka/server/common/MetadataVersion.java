@@ -131,7 +131,10 @@ public enum MetadataVersion {
     IBP_4_3_IV0(30, "4.3", "IV0", false),
 
     // Support for broker static config reporting in BrokerRegistration (KIP-TBD).
-    IBP_4_3_IV1(31, "4.3", "IV1", false);
+    IBP_4_3_IV1(31, "4.3", "IV1", false),
+
+    // Support for broker static config reporting in BrokerRegistration (KIP-TBD).
+    IBP_4_3_IV2(32, "4.3", "IV2", false);
 
     // NOTES when adding a new version:
     //   Update the default version in @ClusterTest annotation to point to the latest version

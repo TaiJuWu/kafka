@@ -683,6 +683,105 @@ public class ConfigurationControlManagerTest {
         assertEquals(Errors.NONE, result.response().error());
     }
 
+    @Test
+    public void testMetadataVersionUpgradeBlockedByMvSpecificConstraint() {
+        // Start at IBP_4_0_IV0 (already past absolute minimum check)
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.IBP_4_0_IV0.featureLevel()));
+
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // segment.bytes = 1.5MB (valid for absolute min 1MB, invalid for 4.3's 2MB)
+        manager.replay(new ConfigRecord().
+            setResourceType(TOPIC.id()).setResourceName("testTopic").
+            setName(TopicConfig.SEGMENT_BYTES_CONFIG).setValue(String.valueOf(1536 * 1024)));
+
+        // Upgrade to IBP_4_3_IV0 → should be blocked
+        ControllerResult<ApiError> result = manager.updateFeatures(
+            Map.of(MetadataVersion.FEATURE_NAME,
+                MetadataVersion.IBP_4_3_IV0.featureLevel()),
+            Map.of(MetadataVersion.FEATURE_NAME,
+                FeatureUpdate.UpgradeType.UPGRADE),
+            false,
+            0);
+        assertEquals(Errors.INVALID_CONFIG, result.response().error());
+        assertTrue(result.response().message().contains("segment.bytes"));
+    }
+
+    @Test
+    public void testMetadataVersionUpgradePassesMvSpecificConstraint() {
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.IBP_4_0_IV0.featureLevel()));
+
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // segment.bytes = 3MB (> 2MB threshold) → should pass
+        manager.replay(new ConfigRecord().
+            setResourceType(TOPIC.id()).setResourceName("testTopic").
+            setName(TopicConfig.SEGMENT_BYTES_CONFIG).setValue(String.valueOf(3 * 1024 * 1024)));
+
+        ControllerResult<ApiError> result = manager.updateFeatures(
+            Map.of(MetadataVersion.FEATURE_NAME,
+                MetadataVersion.IBP_4_3_IV0.featureLevel()),
+            Map.of(MetadataVersion.FEATURE_NAME,
+                FeatureUpdate.UpgradeType.UPGRADE),
+            false,
+            0);
+        assertEquals(Errors.NONE, result.response().error());
+    }
+
+    @Test
+    public void testMvSpecificConstraintSkippedWhenAlreadyPast() {
+
+        // Start at IBP_4_3_IV0 (already past the constraint threshold)
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.IBP_4_3_IV0.featureLevel()));
+
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // segment.bytes = 1.5MB (below 2MB threshold, but we're already past IBP_4_3_IV0)
+        manager.replay(new ConfigRecord().
+            setResourceType(TOPIC.id()).setResourceName("testTopic").
+            setName(TopicConfig.SEGMENT_BYTES_CONFIG).setValue(String.valueOf(1536 * 1024)));
+
+        // Upgrade to IBP_4_3_IV1 → should pass (already past 4.3 threshold)
+        ControllerResult<ApiError> result = manager.updateFeatures(
+            Map.of(MetadataVersion.FEATURE_NAME,
+                MetadataVersion.IBP_4_3_IV1.featureLevel()),
+            Map.of(MetadataVersion.FEATURE_NAME,
+                FeatureUpdate.UpgradeType.UPGRADE),
+            false,
+            0);
+        assertEquals(Errors.NONE, result.response().error());
+    }
+
     private FeatureControlManager createFeatureControlManager() {
         FeatureControlManager featureControlManager = new FeatureControlManager.Builder().build();
         featureControlManager.replay(new FeatureLevelRecord().

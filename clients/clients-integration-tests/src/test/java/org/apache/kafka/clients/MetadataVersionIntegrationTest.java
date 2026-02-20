@@ -22,6 +22,7 @@ import org.apache.kafka.clients.admin.FeatureUpdate;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.test.ClusterInstance;
+import org.apache.kafka.common.test.api.ClusterConfigProperty;
 import org.apache.kafka.common.test.api.ClusterTest;
 import org.apache.kafka.common.test.api.ClusterTests;
 import org.apache.kafka.common.test.api.Type;
@@ -77,21 +78,23 @@ public class MetadataVersionIntegrationTest {
         }
     }
 
-    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_3_9_IV0)
+    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_3_IV1,
+            serverProperties = @ClusterConfigProperty(key = "log.segment.bytes", value = "1048576")
+    )
     public void testMetadataVersionUpgradeWithValidTopicConfigs(ClusterInstance clusterInstance) throws Exception {
         try (var admin = clusterInstance.admin()) {
             // Create a topic with a valid dynamic config
             admin.createTopics(List.of(new NewTopic("test-topic", 1, (short) 1))).all().get();
             admin.incrementalAlterConfigs(Map.of(
-                new ConfigResource(ConfigResource.Type.TOPIC, "test-topic"),
+                new ConfigResource(ConfigResource.Type.BROKER, "0"),
                 List.of(new AlterConfigOp(
-                    new ConfigEntry("segment.bytes", "10485760"),
+                    new ConfigEntry("log.segment.bytes", String.valueOf(2 * 1024 * 1024)),
                     AlterConfigOp.OpType.SET))
             )).all().get();
 
             // Upgrade metadata.version past IBP_4_0_IV0 — should succeed
             // because the config passes pre-flight validation
-            short targetVersion = MetadataVersion.IBP_4_0_IV0.featureLevel();
+            short targetVersion = MetadataVersion.IBP_4_3_IV2.featureLevel();
             admin.updateFeatures(Map.of(
                 MetadataVersion.FEATURE_NAME,
                 new FeatureUpdate(targetVersion, FeatureUpdate.UpgradeType.UPGRADE)
