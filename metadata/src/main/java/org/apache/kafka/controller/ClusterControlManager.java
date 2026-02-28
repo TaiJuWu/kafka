@@ -444,13 +444,15 @@ public class ClusterControlManager {
         if (featureControl.metadataVersionOrThrow().isDirectoryAssignmentSupported()) {
             record.setLogDirs(request.logDirs());
         }
+        if (featureControl.metadataVersionOrThrow().isCordonedLogDirsSupported()) {
+            record.setCordonedLogDirs(request.cordonedLogDirs());
+        }
 
         // Store broker static configs in-memory (always available for pre-upgrade validation)
         Map<String, String> statics = new HashMap<>();
         for (BrokerRegistrationRequestData.StaticConfig sc : request.staticConfigs()) {
             statics.put(sc.name(), sc.value());
         }
-        System.err.println("LLLLLL " + statics);
         brokerStaticConfigs.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(brokerId)), Map.copyOf(statics));
 
         // Write static configs to the record when MV supports it
@@ -461,7 +463,6 @@ public class ClusterControlManager {
                     .setValue(sc.value()));
             }
         }
-
         if (!request.incarnationId().equals(prevIncarnationId)) {
             int prevNumRecords = records.size();
             boolean isCleanShutdown = cleanShutdownDetectionEnabled ?
@@ -582,6 +583,22 @@ public class ClusterControlManager {
         return OptionalLong.empty();
     }
 
+    public void updateCordonedLogDirs(int brokerId, List<Uuid> cordonedLogDirs) {
+        brokerRegistrations.compute(brokerId,
+                (k, brokerRegistration) -> new BrokerRegistration.Builder().
+                        setId(brokerId).
+                        setEpoch(brokerRegistration.epoch()).
+                        setIncarnationId(brokerRegistration.incarnationId()).
+                        setListeners(brokerRegistration.listeners()).
+                        setSupportedFeatures(brokerRegistration.supportedFeatures()).
+                        setRack(brokerRegistration.rack()).
+                        setFenced(brokerRegistration.fenced()).
+                        setInControlledShutdown(brokerRegistration.inControlledShutdown()).
+                        setDirectories(brokerRegistration.directories()).
+                        setCordonedDirectories(cordonedLogDirs).
+                        build());
+    }
+
     public void replay(RegisterBrokerRecord record, long offset) {
         registerBrokerRecordOffsets.put(record.brokerId(), offset);
         int brokerId = record.brokerId();
@@ -604,6 +621,7 @@ public class ClusterControlManager {
                 setInControlledShutdown(record.inControlledShutdown()).
                 setIsMigratingZkBroker(record.isMigratingZkBroker()).
                 setDirectories(record.logDirs()).
+                setCordonedDirectories(record.cordonedLogDirs()).
                     build());
         // Restore static configs from metadata log (for controller failover)
         Map<String, String> replayedStatics = new HashMap<>();
@@ -653,6 +671,7 @@ public class ClusterControlManager {
             record.epoch(),
             BrokerRegistrationFencingChange.FENCE.asBoolean(),
             BrokerRegistrationInControlledShutdownChange.NONE.asBoolean(),
+            Optional.empty(),
             Optional.empty()
         );
     }
@@ -664,6 +683,7 @@ public class ClusterControlManager {
             record.epoch(),
             BrokerRegistrationFencingChange.UNFENCE.asBoolean(),
             BrokerRegistrationInControlledShutdownChange.NONE.asBoolean(),
+            Optional.empty(),
             Optional.empty()
         );
     }
@@ -678,13 +698,15 @@ public class ClusterControlManager {
                 () -> new IllegalStateException(String.format("Unable to replay %s: unknown " +
                     "value for inControlledShutdown field: %x", record, record.inControlledShutdown())));
         Optional<List<Uuid>> directoriesChange = Optional.ofNullable(record.logDirs()).filter(list -> !list.isEmpty());
+        Optional<List<Uuid>> cordonedDirectoriesChange = Optional.ofNullable(record.cordonedLogDirs()).filter(list -> !list.isEmpty());
         replayRegistrationChange(
             record,
             record.brokerId(),
             record.brokerEpoch(),
             fencingChange.asBoolean(),
             inControlledShutdownChange.asBoolean(),
-            directoriesChange
+            directoriesChange,
+            cordonedDirectoriesChange
         );
     }
 
@@ -694,7 +716,8 @@ public class ClusterControlManager {
         long brokerEpoch,
         Optional<Boolean> fencingChange,
         Optional<Boolean> inControlledShutdownChange,
-        Optional<List<Uuid>> directoriesChange
+        Optional<List<Uuid>> directoriesChange,
+        Optional<List<Uuid>> cordonedDirectoriesChange
     ) {
         BrokerRegistration curRegistration = brokerRegistrations.get(brokerId);
         if (curRegistration == null) {
@@ -707,7 +730,8 @@ public class ClusterControlManager {
             BrokerRegistration nextRegistration = curRegistration.cloneWith(
                 fencingChange,
                 inControlledShutdownChange,
-                directoriesChange
+                directoriesChange,
+                cordonedDirectoriesChange
             );
             if (!curRegistration.equals(nextRegistration)) {
                 log.info("Replayed {} modifying the registration for broker {}: {}",
@@ -741,7 +765,8 @@ public class ClusterControlManager {
             throw new RuntimeException("ClusterControlManager is not active.");
         }
         return heartbeatManager.usableBrokers(
-            id -> brokerRegistrations.get(id).rack());
+            id -> brokerRegistrations.get(id).rack(),
+            id -> brokerRegistrations.get(id).hasUncordonedDirs());
     }
 
     /**
