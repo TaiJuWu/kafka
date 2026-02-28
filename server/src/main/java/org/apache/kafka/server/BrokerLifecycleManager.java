@@ -535,11 +535,8 @@ public class BrokerLifecycleManager {
             .setRack(rack.orElse(null))
             .setPreviousBrokerEpoch(previousBrokerEpoch.orElse(-1L))
             .setLogDirs(sortedLogDirs)
-<<<<<<< HEAD
+            .setCordonedLogDirs(cordonedLogDirs.entrySet().stream().filter(Map.Entry::getValue).map(Map.Entry::getKey).toList())
             .setStaticConfigs(staticConfigs);
-=======
-            .setCordonedLogDirs(cordonedLogDirs.entrySet().stream().filter(Map.Entry::getValue).map(Map.Entry::getKey).toList());
->>>>>>> trunk
         if (logger.isDebugEnabled()) {
             logger.debug("Sending broker registration {}", data);
         }
