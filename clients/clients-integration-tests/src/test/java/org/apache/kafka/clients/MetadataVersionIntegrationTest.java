@@ -79,21 +79,13 @@ public class MetadataVersionIntegrationTest {
         }
     }
 
-    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_3_IV1)
+    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_3_IV0)
     public void testMetadataVersionUpgradeWithValidStaticConfigs(ClusterInstance clusterInstance) throws Exception {
         try (var admin = clusterInstance.admin()) {
-            // Create a topic with a valid dynamic config
             admin.createTopics(List.of(new NewTopic("test-topic", 1, (short) 1))).all().get();
-//            admin.incrementalAlterConfigs(Map.of(
-//                new ConfigResource(ConfigResource.Type.BROKER, "0"),
-//                List.of(new AlterConfigOp(
-//                    new ConfigEntry("log.segment.bytes", String.valueOf(2 * 1024 * 1024)),
-//                    AlterConfigOp.OpType.SET))
-//            )).all().get();
 
-            // Upgrade metadata.version past IBP_4_0_IV0 — should succeed
-            // because the config passes pre-flight validation
-            short targetVersion = MetadataVersion.IBP_4_3_IV2.featureLevel();
+            // Upgrade metadata.version to IBP_4_3_IV1 — should succeed
+            short targetVersion = MetadataVersion.IBP_4_3_IV1.featureLevel();
             admin.updateFeatures(Map.of(
                 MetadataVersion.FEATURE_NAME,
                 new FeatureUpdate(targetVersion, FeatureUpdate.UpgradeType.UPGRADE)
@@ -112,40 +104,29 @@ public class MetadataVersionIntegrationTest {
     }
 
     @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_3_IV1)
-    public void testMetadataVersionUpgradeWithInValidClusterConfigs(ClusterInstance clusterInstance) throws Exception {
+    public void testAlterClusterConfigBlockedByMvConstraint(ClusterInstance clusterInstance) throws Exception {
         try (var admin = clusterInstance.admin()) {
-            // Create a topic with a valid dynamic config
-            admin.createTopics(List.of(new NewTopic("test-topic", 1, (short) 1))).all().get();
-            admin.incrementalAlterConfigs(Map.of(
-                new ConfigResource(ConfigResource.Type.BROKER, ""),
-                List.of(new AlterConfigOp(
-                    new ConfigEntry("log.segment.bytes", String.valueOf(2 * 1024 * 1024)),
-                    AlterConfigOp.OpType.SET))
-            )).all().get();
-
-            // Upgrade metadata.version past IBP_4_0_IV0 — should succeed
-            // because the config passes pre-flight validation
-            short targetVersion = MetadataVersion.IBP_4_3_IV2.featureLevel();
-            admin.updateFeatures(Map.of(
-                    MetadataVersion.FEATURE_NAME,
-                    new FeatureUpdate(targetVersion, FeatureUpdate.UpgradeType.UPGRADE)
-            )).all().get();
-
-            TestUtils.assertFutureThrowsWithMessageContaining(InvalidConfigurationException.class,
-                    admin.describeFeatures().featureMetadata(),
-                    "The update failed for all features since the following feature had an error: Cannot upgrade metadata.version to version 32 " +
-                            "because existing configs are invalid: NodeId=0 -> Broker 0 config 'log.segment.bytes' is invalid (Source: DYNAMIC_DEFAULT_BROKER_CONFIG): log.segment.bytes should be at least 3 MB for IBP_4_3_IV1. Fix these configs before upgrading");
+            // Setting log.segment.bytes = 2MB on cluster-wide config should be blocked
+            // because IBP_4_3_IV1 requires >= 3MB
+            TestUtils.assertFutureThrows(InvalidConfigurationException.class,
+                admin.incrementalAlterConfigs(Map.of(
+                    new ConfigResource(ConfigResource.Type.BROKER, ""),
+                    List.of(new AlterConfigOp(
+                        new ConfigEntry("log.segment.bytes", String.valueOf(2 * 1024 * 1024)),
+                        AlterConfigOp.OpType.SET))
+                )).all(),
+                "log.segment.bytes should be at least 3 MB for IBP_4_3_IV1");
         }
     }
 
-    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_3_IV1,
+    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_3_IV0,
             serverProperties = {@ClusterConfigProperty(key = "log.segment.bytes", value = "2097152")}
     )
     public void testMetadataVersionUpgradeWithInValidStaticConfigs(ClusterInstance clusterInstance) throws Exception {
         try (var admin = clusterInstance.admin()) {
-            // Upgrade metadata.version past IBP_4_0_IV0 — should succeed
-            // because the config passes pre-flight validation
-            short targetVersion = MetadataVersion.IBP_4_3_IV2.featureLevel();
+            // Upgrade metadata.version to IBP_4_3_IV1 — should succeed
+            // because static configs are not checked by upgrade-path validation
+            short targetVersion = MetadataVersion.IBP_4_3_IV1.featureLevel();
             admin.updateFeatures(Map.of(
                     MetadataVersion.FEATURE_NAME,
                     new FeatureUpdate(targetVersion, FeatureUpdate.UpgradeType.UPGRADE)
@@ -165,34 +146,18 @@ public class MetadataVersionIntegrationTest {
 
 
     @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_3_IV1)
-    public void testMetadataVersionUpgradeWithInValidDynamicConfigs(ClusterInstance clusterInstance) throws Exception {
+    public void testAlterBrokerDynamicConfigBlockedByMvConstraint(ClusterInstance clusterInstance) throws Exception {
         try (var admin = clusterInstance.admin()) {
-            // Create a topic with a valid dynamic config
-            admin.createTopics(List.of(new NewTopic("test-topic", 1, (short) 1))).all().get();
-            admin.incrementalAlterConfigs(Map.of(
-                new ConfigResource(ConfigResource.Type.BROKER, "0"),
-                List.of(new AlterConfigOp(
-                    new ConfigEntry("log.segment.bytes", String.valueOf(2 * 1024 * 1024)),
-                    AlterConfigOp.OpType.SET))
-            )).all().get();
-
-            // Upgrade metadata.version past IBP_4_0_IV0 — should succeed
-            // because the config passes pre-flight validation
-            short targetVersion = MetadataVersion.IBP_4_3_IV2.featureLevel();
-            admin.updateFeatures(Map.of(
-                    MetadataVersion.FEATURE_NAME,
-                    new FeatureUpdate(targetVersion, FeatureUpdate.UpgradeType.UPGRADE)
-            )).all().get();
-
-            TestUtils.waitForCondition(() -> {
-                try {
-                    var ff = admin.describeFeatures().featureMetadata().get()
-                            .finalizedFeatures().get(MetadataVersion.FEATURE_NAME);
-                    return ff.maxVersionLevel() >= targetVersion;
-                } catch (Exception e) {
-                    return false;
-                }
-            }, "metadata.version did not reach " + targetVersion);
+            // Setting log.segment.bytes = 2MB on a specific broker should be blocked
+            // because IBP_4_3_IV1 requires >= 3MB
+            TestUtils.assertFutureThrows(InvalidConfigurationException.class,
+                admin.incrementalAlterConfigs(Map.of(
+                    new ConfigResource(ConfigResource.Type.BROKER, "0"),
+                    List.of(new AlterConfigOp(
+                        new ConfigEntry("log.segment.bytes", String.valueOf(2 * 1024 * 1024)),
+                        AlterConfigOp.OpType.SET))
+                )).all(),
+                "log.segment.bytes should be at least 3 MB for IBP_4_3_IV1");
         }
     }
 
