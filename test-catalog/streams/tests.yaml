@@ -11,7 +11,6 @@ org.apache.kafka.streams.KafkaStreamsTest:
 - shouldAllowCleanupBeforeStartAndAfterClose
 - shouldCleanupOldStateDirs
 - shouldCleanupResourcesOnCloseWithoutPreviousStart
-- shouldCloseStartupTasksAfterFirstRebalance
 - shouldCountDownTimeoutAcrossClient
 - shouldGetClientSupplierFromConfigForConstructor
 - shouldGetClientSupplierFromConfigForConstructorWithTime
@@ -229,6 +228,9 @@ org.apache.kafka.streams.StreamsConfigTest:
 - defaultSerdeShouldBeConfigured
 - shouldAcceptAtLeastOnce
 - shouldAcceptBuiltInMetricsLatestVersion
+- shouldAcceptDslStoreFormatCaseInsensitively
+- shouldAcceptValidDslStoreFormatDefault
+- shouldAcceptValidDslStoreFormatHeaders
 - shouldAllowConfiguringProcessorWrapperWithClass
 - shouldAllowConfiguringProcessorWrapperWithClassName
 - shouldAllowMultipleOptimizations
@@ -326,6 +328,7 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldThrowConfigExceptionConsumerMetricsEnabledButAdminClientMetricsDisabled
 - shouldThrowConfigExceptionConsumerMetricsEnabledButMainConsumerAndAdminMetricsDisabled
 - shouldThrowConfigExceptionConsumerMetricsEnabledButMainConsumerMetricsDisabled
+- shouldThrowConfigExceptionForInvalidDslStoreFormat
 - shouldThrowConfigExceptionIfAcceptableRecoveryLagIsOutsideBounds
 - shouldThrowConfigExceptionIfMaxInFlightRequestsPerConnectionIsInvalidStringIfEosV2Enabled
 - shouldThrowConfigExceptionIfMaxWarmupReplicasIsOutsideBounds
@@ -359,6 +362,7 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldUseCacheMaxBytesBufferingConfigWhenOnlyDeprecatedConfigIsSet
 - shouldUseCorrectDefaultsWhenNoneSpecified
 - shouldUseDefaultStateStoreCacheMaxBytesConfigWhenNoConfigIsSet
+- shouldUseDefaultStoreFormatWhenNotSpecified
 - shouldUseNewConfigsWhenPresent
 - shouldUseNewDeserializationExceptionHandlerWhenBothConfigsAreSet
 - shouldUseNewProductionExceptionHandlerWhenBothConfigsAreSet
@@ -578,6 +582,7 @@ org.apache.kafka.streams.kstream.RepartitionTopicNamingTest:
 - shouldReuseFirstRepartitionTopicNameWhenOptimizing
 org.apache.kafka.streams.kstream.SessionWindowedDeserializerTest:
 - shouldIgnoreWindowedInnerClassSerdeConfigIfWindowedInnerDeserializerClassConfigIsSet
+- shouldPassHeadersToUnderlyingSerializer
 - shouldSetSerializerThroughWindowedInnerClassSerdeConfig
 - shouldSetSerializerThroughWindowedInnerDeserializerClassConfig
 - shouldThrowConfigExceptionWhenInvalidWindowedInnerClassSerdeSupplied
@@ -588,6 +593,7 @@ org.apache.kafka.streams.kstream.SessionWindowedDeserializerTest:
 - testSessionWindowedDeserializerConstructor
 org.apache.kafka.streams.kstream.SessionWindowedSerializerTest:
 - shouldIgnoreWindowedInnerClassSerdeConfigIfWindowedInnerSerializerClassConfigIsSet
+- shouldPassHeadersToUnderlyingSerializer
 - shouldSetSerializerThroughWindowedInnerClassSerdeConfig
 - shouldSetSerializerThroughWindowedInnerSerializerClassConfig
 - shouldThrowConfigExceptionWhenInvalidWindowedInnerClassSerdeSupplied
@@ -1767,6 +1773,7 @@ org.apache.kafka.streams.processor.internals.DefaultStateUpdaterTest:
 - shouldNotResumeStandbyTaskInFailedTasks
 - shouldNotSwitchTwiceToUpdatingStandbyTaskIfStandbyTaskIsRemoved
 - shouldNotTransitToStandbyAgainAfterStandbyTaskFailed
+- shouldPassSuspendReasonToChangelogReaderOnRemove
 - shouldPauseActiveStatefulTask
 - shouldPauseActiveTaskAndTransitToUpdateStandby
 - shouldPauseStandbyTask
@@ -2106,9 +2113,13 @@ org.apache.kafka.streams.processor.internals.InternalTopologyBuilderTest:
 - testTopicGroups
 - testTopicGroupsByStateStore
 org.apache.kafka.streams.processor.internals.KeyValueStoreMaterializerTest:
+- shouldBuildHeadersAwareStoreWithCachingEnabledByDefault
 - shouldCreateDefaultTimestampedBuilderWithCachingAndLoggingDisabled
 - shouldCreateDefaultTimestampedBuilderWithCachingDisabled
 - shouldCreateDefaultTimestampedBuilderWithLoggingDisabled
+- shouldCreateHeadersAwareStoreWithLoggingDisabled
+- shouldCreateHeadersAwareStoreWithLoggingEnabledByDefault
+- shouldCreateHeadersAwareStoreWithProvidedSupplierAndLoggingEnabled
 - shouldCreateTimestampedBuilderWithCachingAndLoggingEnabledByDefault
 - shouldCreateTimestampedStoreWithProvidedSupplierAndCachingAndLoggingDisabled
 - shouldCreateTimestampedStoreWithProvidedSupplierAndCachingAndLoggingEnabledByDefault
@@ -2519,7 +2530,6 @@ org.apache.kafka.streams.processor.internals.StateConsumerTest:
 - shouldUpdateStateWithReceivedRecordsForPartition
 - shouldWipeStoreOnClose
 org.apache.kafka.streams.processor.internals.StateDirectoryTest:
-- shouldAssignStartupTaskToStreamThread
 - shouldBeAbleToUnlockEvenWithoutLocking
 - shouldBeTrueIfAlreadyHoldsLock
 - shouldCleanUpTaskStateDirectoriesThatAreNotCurrentlyLocked
@@ -2527,7 +2537,7 @@ org.apache.kafka.streams.processor.internals.StateDirectoryTest:
 - shouldCleanupObsoleteTaskDirectoriesAndDeleteTheDirectoryItself
 - shouldCleanupObsoleteTaskDirectoriesInNamedTopologiesAndDeleteTheParentDirectories
 - shouldCleanupStateDirectoriesWhenLastModifiedIsLessThanNowMinusCleanupDelay
-- shouldCloseStartupTasksOnDirectoryClose
+- shouldCloseStartupStateOnAutoCleanUp
 - shouldCreateBaseDirectory
 - shouldCreateDirectoriesIfParentDoesntExist
 - shouldCreateTaskDirectoriesUnderNamedTopologyDirs
@@ -2537,20 +2547,19 @@ org.apache.kafka.streams.processor.internals.StateDirectoryTest:
 - shouldGetFreshProcessIdIfProcessFileDeleted
 - shouldHaveSecurePermissions
 - shouldHaveSecurePermissionsIfGroupWriteAccessAllowed
-- shouldInitializeStandbyTasksForLocalState
+- shouldInitializeStartupStateForLocalState
 - shouldLockMultipleTaskDirectories
 - shouldLockTaskStateDirectoryWhenDirectoryCreationDisabled
 - shouldLogManualUserCallMessage
 - shouldLogStateDirCleanerMessage
 - shouldLogTempDirMessage
-- shouldNotAssignStartupTasksWeDontHave
-- shouldNotCloseStartupTasksOnAutoCleanUp
+- shouldNotAssignStartupStateWeDontHave
 - shouldNotCreateBaseDirectory
 - shouldNotCreateGlobalStateDirectory
 - shouldNotCreateTaskStateDirectory
 - shouldNotDeleteAppDirWhenCleanUpIfNotEmpty
 - shouldNotFailWhenCreatingTaskDirectoryInParallel
-- shouldNotInitializeStandbyTasksWhenNoLocalState
+- shouldNotInitializeStartupStateWhenNoLocalState
 - shouldNotLockStateDirLockedByAnotherThread
 - shouldNotRemoveDirsThatDoNotMatchNamedTopologyDirsWhenCallingClean
 - shouldNotRemoveNonTaskDirectoriesAndFiles
@@ -2573,7 +2582,7 @@ org.apache.kafka.streams.processor.internals.StateDirectoryTest:
 - shouldThrowProcessorStateException
 - shouldThrowProcessorStateExceptionIfStateDirOccupied
 - shouldThrowProcessorStateExceptionIfTestDirOccupied
-- shouldUnlockStartupTasksOnClose
+- shouldUnlockStartupStateOnClose
 - shouldUpdateSecurePermissions
 org.apache.kafka.streams.processor.internals.StateManagerUtilTest:
 - shouldNotCloseStateManagerIfUnableToLockTaskDirectory
@@ -2603,6 +2612,7 @@ org.apache.kafka.streams.processor.internals.StoreChangelogReaderTest:
 - shouldNotThrowOnUnknownRevokedPartition
 - shouldNotUpdateLimitForNonSourceStandbyChangelog
 - shouldOnlyRestoreStandbyChangelogInUpdateStandbyState
+- shouldPassSuspendReasonToStandbyListener
 - shouldPollWithRightTimeout
 - shouldRequestCommittedOffsetsAndHandleTimeoutException
 - shouldRequestEndOffsetsAndHandleTimeoutException
@@ -3062,7 +3072,9 @@ org.apache.kafka.streams.processor.internals.TaskManagerTest:
 - shouldConvertActiveTaskToStandbyTask
 - shouldConvertStandbyTaskToActiveTask
 - shouldCreateActiveTaskDuringAssignment
+- shouldCreateActiveTaskFromStartupStateStore
 - shouldCreateStandbyTaskDuringAssignment
+- shouldCreateStandbyTaskFromStartupStateStore
 - shouldFailOnCommitFatal
 - shouldFirstHandleTasksInStateUpdaterThenSuspendedActiveTasksInTaskRegistry
 - shouldHandleExceptionThrownDuringRecyclingActiveTask
@@ -3093,6 +3105,7 @@ org.apache.kafka.streams.processor.internals.TaskManagerTest:
 - shouldNotCommitOnHandleAssignmentIfOnlyStandbyTaskClosed
 - shouldNotCompleteRestorationIfTaskCannotCompleteRestoration
 - shouldNotCompleteRestorationIfTasksCannotInitialize
+- shouldNotComputeOffsetSumForRunningStatelessTask
 - shouldNotFailForTimeoutExceptionOnConsumerCommit
 - shouldNotFailOnTimeoutException
 - shouldNotLockAnythingIfStateDirIsEmpty
@@ -3118,7 +3131,6 @@ org.apache.kafka.streams.processor.internals.TaskManagerTest:
 - shouldReInitializeStreamsProducerOnHandleLostAllIfEosV2Enabled
 - shouldRecycleActiveTaskInStateUpdater
 - shouldRecycleStandbyTaskInStateUpdater
-- shouldRecycleStartupTasksFromStateDirectoryAsActive
 - shouldReleaseLockForUnassignedTasksAfterRebalance
 - shouldRemoveUnusedActiveTaskFromStateUpdaterAndCloseCleanly
 - shouldRemoveUnusedFailedActiveTaskFromStateUpdaterAndCloseDirty
@@ -3171,7 +3183,6 @@ org.apache.kafka.streams.processor.internals.TaskManagerTest:
 - shouldUpdateInputPartitionOfActiveTaskInStateUpdater
 - shouldUpdateInputPartitionsAfterRebalance
 - shouldUpdateLagForAllActiveTasks
-- shouldUseStartupTasksFromStateDirectoryAsStandby
 - shouldWrapRuntimeExceptionsInProcessActiveTasksAndSetTaskId
 org.apache.kafka.streams.processor.internals.TaskMetadataImplTest:
 - shouldBeEqualsIfOnlyDifferInCommittedOffsets
@@ -3716,6 +3727,16 @@ org.apache.kafka.streams.query.StateQueryResultTest:
 org.apache.kafka.streams.query.VersionedKeyQueryTest:
 - shouldThrowNPEWithNullAsOftimestamp
 - shouldThrowNPEWithNullKey
+org.apache.kafka.streams.state.AggregationWithHeadersTest:
+- shouldAllowNullableAggregation
+- shouldCreateAggregationWithHeaders
+- shouldGetAggregationOrNull
+- shouldImplementEquals
+- shouldImplementToString
+- shouldNotBeEqualWithDifferentAggregations
+- shouldNotBeEqualWithDifferentHeaders
+- shouldNotCreateWithNullHeaders
+- shouldReturnNullForNullAggregation
 org.apache.kafka.streams.state.HeadersBytesStoreTest:
 - shouldConvertEmptyValueToHeaderFormat
 - shouldConvertLegacyValueToHeaderFormat
@@ -3800,6 +3821,19 @@ org.apache.kafka.streams.state.ValueTimestampHeadersTest:
 - shouldNotBeEqualWhenDifferentTimestamps
 - shouldNotBeEqualWhenDifferentValues
 - shouldReturnNullWhenValueIsNullWithMake
+org.apache.kafka.streams.state.internals.AggregationWithHeadersDeserializerTest:
+- shouldDeserializeAggregationWithEmptyHeaders
+- shouldDeserializeAggregationWithHeaders
+- shouldDeserializeNullAsNull
+- shouldExtractHeaders
+- shouldReturnNullForNullInput
+- shouldThrowOnInvalidFormat
+org.apache.kafka.streams.state.internals.AggregationWithHeadersSerializerTest:
+- shouldHandleNullAggregationInAggregationWithHeaders
+- shouldSerializeAggregationWithEmptyHeaders
+- shouldSerializeAggregationWithHeaders
+- shouldSerializeAndDeserializeConsistently
+- shouldSerializeNullAsNull
 org.apache.kafka.streams.state.internals.BlockBasedTableConfigWithAccessibleCacheTest:
 - shouldReturnNoBlockCacheIfNoneIsSet
 - shouldSetBlockCacheAndMakeItAccessible
@@ -4046,6 +4080,14 @@ org.apache.kafka.streams.state.internals.ChangeLoggingSessionBytesStoreTest:
 - shouldLogPuts
 - shouldLogPutsWithPosition
 - shouldLogRemoves
+org.apache.kafka.streams.state.internals.ChangeLoggingSessionBytesStoreWithHeadersTest:
+- shouldDelegateInit
+- shouldHandleEmptyHeaders
+- shouldHandleMultipleHeadersInSingleRecord
+- shouldHandleNullValueInPut
+- shouldLogPutWithHeaders
+- shouldLogPutWithPosition
+- shouldLogRemoveWithRecordContextHeaders
 org.apache.kafka.streams.state.internals.ChangeLoggingTimestampedKeyValueBytesStoreTest:
 - shouldDelegateInit
 - shouldLogChangesOnPutAll
@@ -4062,8 +4104,37 @@ org.apache.kafka.streams.state.internals.ChangeLoggingTimestampedKeyValueBytesSt
 - shouldWriteKeyValueBytesToInnerStoreOnPut
 - shouldWriteToChangelogOnPutIfAbsentWhenNoPreviousValue
 - shouldWriteToInnerOnPutIfAbsentNoPreviousValue
+org.apache.kafka.streams.state.internals.ChangeLoggingTimestampedKeyValueBytesStoreWithHeadersTest:
+- shouldDelegateInit
+- shouldHandleEmptyHeaders
+- shouldHandleMultipleHeadersInSingleRecord
+- shouldHandleNullValueInPut
+- shouldHandleNullValueInPutIfAbsent
+- shouldLogChangesOnPutAll
+- shouldLogKeyNullOnDelete
+- shouldNotWriteToChangeLogOnPutIfAbsentWhenValueForKeyExists
+- shouldNotWriteToInnerOnPutIfAbsentWhenValueForKeyExists
+- shouldPropagateDelete
+- shouldReturnCurrentValueOnPutIfAbsent
+- shouldReturnNullOnGetWhenDoesntExist
+- shouldReturnNullOnPutIfAbsentWhenNoPreviousValue
+- shouldReturnOldValueOnDelete
+- shouldReturnValueOnGetWhenExists
+- shouldWriteAllKeyValueToInnerStoreOnPutAll
+- shouldWriteKeyValueBytesToInnerStoreOnPut
+- shouldWriteToChangelogOnPutIfAbsentWhenNoPreviousValue
+- shouldWriteToInnerOnPutIfAbsentNoPreviousValue
 org.apache.kafka.streams.state.internals.ChangeLoggingTimestampedWindowBytesStoreTest:
 - shouldDelegateInit
+- shouldDelegateToUnderlyingStoreWhenFetching
+- shouldDelegateToUnderlyingStoreWhenFetchingRange
+- shouldLogPuts
+- shouldLogPutsWithPosition
+- shouldRetainDuplicatesWhenSet
+org.apache.kafka.streams.state.internals.ChangeLoggingTimestampedWindowBytesStoreWithHeadersTest:
+- shouldDelegateInit
+- shouldDelegateToUnderlyingStoreWhenBackwardFetching
+- shouldDelegateToUnderlyingStoreWhenBackwardFetchingRange
 - shouldDelegateToUnderlyingStoreWhenFetching
 - shouldDelegateToUnderlyingStoreWhenFetchingRange
 - shouldLogPuts
@@ -4698,6 +4769,33 @@ org.apache.kafka.streams.state.internals.MeteredSessionStoreTest:
 - shouldTrackOpenIteratorsMetric
 - shouldWriteBytesToInnerStoreAndRecordPutMetric
 - testMetrics
+org.apache.kafka.streams.state.internals.MeteredSessionStoreWithHeadersTest:
+- shouldBackwardFetchForKeyAndRecordFetchMetric
+- shouldBackwardFetchRangeFromStoreAndRecordFetchMetric
+- shouldBackwardFindSessionRangeFromStoreAndRecordFetchMetric
+- shouldBackwardFindSessionsFromStoreAndRecordFetchMetric
+- shouldCloseInnerStore
+- shouldDelegateInit
+- shouldFetchForKeyAndRecordFetchMetric
+- shouldFetchRangeFromStoreAndRecordFetchMetric
+- shouldFetchSessionAndReturnValueWithHeaders
+- shouldFindSessionRangeFromStoreAndRecordFetchMetric
+- shouldFindSessionsFromStoreAndRecordFetchMetric
+- shouldRecordRestoreTime
+- shouldRemoveFromStoreAndRecordRemoveMetric
+- shouldRemoveMetricsEvenIfWrappedStoreThrowsOnClose
+- shouldRemoveMetricsOnClose
+- shouldReturnNullOnFetchSessionWhenSessionDoesNotExist
+- shouldSetFlushListenerOnWrappedCachingStore
+- shouldThrowNullPointerOnFetchSessionIfKeyIsNull
+- shouldThrowNullPointerOnPutIfKeyIsNull
+- shouldThrowNullPointerOnPutIfWrappedKeyIsNull
+- shouldThrowNullPointerOnRemoveIfKeyIsNull
+- shouldTimeIteratorDuration
+- shouldTrackOldestOpenIteratorTimestamp
+- shouldTrackOpenIteratorsMetric
+- shouldWriteBytesToInnerStoreAndRecordPutMetric
+- testMetrics
 org.apache.kafka.streams.state.internals.MeteredTimestampedKeyValueStoreTest:
 - shouldCommitInnerWhenCommitTimeRecords
 - shouldDelegateInit
@@ -4721,7 +4819,35 @@ org.apache.kafka.streams.state.internals.MeteredTimestampedKeyValueStoreTest:
 - shouldTrackOpenIteratorsMetric
 - shouldWriteBytesToInnerStoreAndRecordPutMetric
 - testMetrics
+org.apache.kafka.streams.state.internals.MeteredTimestampedKeyValueStoreWithHeadersTest:
+- shouldCommitInnerWhenCommitTimeRecords
+- shouldDelegateInit
+- shouldDeleteFromInnerStoreAndRecordDeleteMetric
+- shouldGetAllFromInnerStoreAndRecordAllMetric
+- shouldGetBytesFromInnerStoreAndReturnGetMetric
+- shouldGetRangeFromInnerStoreAndRecordRangeMetric
+- shouldNotSetFlushListenerOnWrappedNoneCachingStore
+- shouldNotThrowExceptionIfSerdesCorrectlySetFromConstructorParameters
+- shouldNotThrowExceptionIfSerdesCorrectlySetFromProcessorContext
+- shouldPassChangelogTopicNameToStateStoreSerde
+- shouldPassDefaultChangelogTopicNameToStateStoreSerdeIfLoggingDisabled
+- shouldPutAllToInnerStoreAndRecordPutAllMetric
+- shouldPutIfAbsentAndRecordPutIfAbsentMetric
+- shouldSetFlushListenerOnWrappedCachingStore
+- shouldTimeIteratorDuration
+- shouldTrackOldestOpenIteratorTimestamp
+- shouldTrackOpenIteratorsMetric
+- shouldWriteBytesToInnerStoreAndRecordPutMetric
+- testMetrics
 org.apache.kafka.streams.state.internals.MeteredTimestampedWindowStoreTest:
+- shouldCloseUnderlyingStore
+- shouldDelegateInit
+- shouldNotExceptionIfFetchReturnsNull
+- shouldNotThrowExceptionIfSerdesCorrectlySetFromConstructorParameters
+- shouldNotThrowExceptionIfSerdesCorrectlySetFromProcessorContext
+- shouldPassChangelogTopicNameToStateStoreSerde
+- shouldPassDefaultChangelogTopicNameToStateStoreSerdeIfLoggingDisabled
+org.apache.kafka.streams.state.internals.MeteredTimestampedWindowStoreWithHeadersTest:
 - shouldCloseUnderlyingStore
 - shouldDelegateInit
 - shouldNotExceptionIfFetchReturnsNull
@@ -4838,6 +4964,7 @@ org.apache.kafka.streams.state.internals.ReadOnlyWindowStoreFacadeTest:
 - shouldReturnPlainKeyValuePairsOnSingleKeyFetchInstantParameters
 - shouldReturnPlainKeyValuePairsOnSingleKeyFetchLongParameters
 org.apache.kafka.streams.state.internals.RecordConvertersTest:
+- shouldAddTimestampAndHeadersToValueOnConversionWhenValueIsNotNull
 - shouldAddTimestampToValueOnConversionWhenValueIsNotNull
 - shouldPreserveNullValueOnConversion
 org.apache.kafka.streams.state.internals.RocksDBGenericOptionsToDbOptionsColumnFamilyOptionsAdapterTest:
@@ -4845,6 +4972,86 @@ org.apache.kafka.streams.state.internals.RocksDBGenericOptionsToDbOptionsColumnF
 - shouldForwardAllDbOptionsCalls
 - shouldLogWarningWhenSettingWalOptions
 - shouldOverwriteAllOptionsMethods
+org.apache.kafka.streams.state.internals.RocksDBMigratingSessionStoreWithHeadersTest:
+- prefixScanShouldNotThrowConcurrentModificationException
+- shouldAddValueProvidersWithStatisticsToInjectedMetricsRecorderWhenRecordingLevelDebug
+- shouldAddValueProvidersWithoutStatisticsToInjectedMetricsRecorderWhenRecordingLevelInfo
+- shouldAllowCustomManagedIterators
+- shouldCallRocksDbConfigSetter
+- shouldCloseOpenRangeIteratorsWhenStoreClosedAndThrowInvalidStateStoreOnHasNextAndNext
+- shouldCloseStatisticsWhenUserProvidesNoStatistics
+- shouldCloseStatisticsWhenUserProvidesStatistics
+- shouldDeleteFromStore
+- shouldDeleteIfSerializedValueIsNull
+- shouldHandleDeletesAndPutBackOnRestoreAll
+- shouldHandleDeletesOnRestoreAll
+- shouldHandleToggleOfEnablingBloomFilters
+- shouldHandleTombstoneRecords
+- shouldMatchPositionAfterPut
+- shouldMigrateFromDefaultToHeadersAwareColumnFamily
+- shouldNotAllowOpenIteratorsWhenUsingAutoManagedIterators
+- shouldNotIncludeDeletedFromRangeResult
+- shouldNotSetCacheInValueProvidersWhenUserProvidesPlainTableFormatConfig
+- shouldNotSetStatisticsInValueProvidersWhenUserProvidesStatistics
+- shouldNotThrowConcurrentModificationException
+- shouldNotThrowExceptionOnRestoreWhenThereIsPreExistingRocksDbFiles
+- shouldNotThrowInvalidRangeExceptionWithFromLargerThanTo
+- shouldNotThrowInvalidRangeExceptionWithNegativeFromKey
+- shouldNotThrowInvalidReverseRangeExceptionWithFromLargerThanTo
+- shouldNotThrowInvalidReverseRangeExceptionWithNegativeFromKey
+- shouldNotThrowNullPointerExceptionOnPutAllNullKey
+- shouldNotThrowNullPointerExceptionOnPutIfAbsentNullValue
+- shouldNotThrowNullPointerExceptionOnPutNullValue
+- shouldNotThrowWhenRestoringOnMissingHeaders
+- shouldOpenExistingStoreInRegularMode
+- shouldOpenNewStoreInRegularMode
+- shouldPerformAllQueriesWithCachingDisabled
+- shouldPerformRangeQueriesWithCachingDisabled
+- shouldPutAll
+- shouldPutOnlyIfAbsentValue
+- shouldPutReverseAll
+- shouldRemoveValueProvidersFromInjectedMetricsRecorderOnClose
+- shouldRequireOpenIteratorsWhenUsingCustomManagedIterators
+- shouldRestoreAll
+- shouldRestoreRecordsAndConsistencyVectorMultipleTopics
+- shouldRestoreRecordsAndConsistencyVectorSingleTopic
+- shouldRestoreThenDeleteOnRestoreAll
+- shouldReturnKeysWithGivenPrefix
+- shouldReturnKeysWithGivenPrefixExcludingNextKeyLargestKey
+- shouldReturnNoKeys
+- shouldReturnSameResultsForGetAndRangeWithEqualKeys
+- shouldReturnSameResultsForGetAndReverseRangeWithEqualKeys
+- shouldReturnUUIDsWithStringPrefix
+- shouldReturnValueOnRange
+- shouldReturnValueOnRangeKeyToNull
+- shouldReturnValueOnRangeNullToKey
+- shouldReturnValueOnRangeNullToNull
+- shouldReturnValueOnReverseRangeKeyToNull
+- shouldReturnValueOnReverseRangeNullToKey
+- shouldReturnValueOnReverseRangeNullToNull
+- shouldSetStatisticsInValueProvidersWhenUserProvidesNoStatistics
+- shouldThrowNullPointerExceptionOnDelete
+- shouldThrowNullPointerExceptionOnDeleteNullKey
+- shouldThrowNullPointerExceptionOnGetNullKey
+- shouldThrowNullPointerExceptionOnNullGet
+- shouldThrowNullPointerExceptionOnNullPut
+- shouldThrowNullPointerExceptionOnNullPutAll
+- shouldThrowNullPointerExceptionOnPutAllNullKey
+- shouldThrowNullPointerExceptionOnPutIfAbsentNullKey
+- shouldThrowNullPointerExceptionOnPutNullKey
+- shouldThrowProcessorStateExceptionOnOpeningReadOnlyDir
+- shouldThrowProcessorStateExceptionOnPutDeletedDir
+- shouldThrowWhenUserProvidesNewBlockBasedTableFormatConfig
+- shouldVerifyThatMetricsRecordedFromPropertiesGetMeasurementsFromRocksDB
+- shouldVerifyThatMetricsRecordedFromStatisticsGetMeasurementsFromRocksDB
+- shouldVerifyThatPropertyBasedMetricsUseValidPropertyName
+- testPutGetRange
+- testPutGetReverseRange
+- testPutGetWithDefaultSerdes
+- testPutIfAbsent
+- testRestore
+- testRestoreWithDefaultSerdes
+- testSize
 org.apache.kafka.streams.state.internals.RocksDBRangeIteratorTest:
 - shouldCallCloseCallbackOnClose
 - shouldCloseIterator
@@ -4914,6 +5121,8 @@ org.apache.kafka.streams.state.internals.RocksDBSessionStoreTest:
 - shouldThrowNullPointerExceptionOnRemoveNullKey
 - testIteratorPeek
 - testIteratorPeekBackward
+org.apache.kafka.streams.state.internals.RocksDBSessionStoreWithHeadersTest:
+- shouldThrowUnsupportedOperationOnQuery
 org.apache.kafka.streams.state.internals.RocksDBStoreTest:
 - prefixScanShouldNotThrowConcurrentModificationException
 - shouldAddValueProvidersWithStatisticsToInjectedMetricsRecorderWhenRecordingLevelDebug
@@ -5064,6 +5273,9 @@ org.apache.kafka.streams.state.internals.RocksDBTimeOrderedSessionSchemaWithoutI
 - shouldRestoreToByteStoreForStandbyTask
 - shouldRollSegments
 - shouldSkipAndRemoveDanglingIndex
+org.apache.kafka.streams.state.internals.RocksDBTimeOrderedSessionStoreWithHeadersTest:
+- shouldThrowUnsupportedOperationOnQueryWithIndex
+- shouldThrowUnsupportedOperationOnQueryWithOutIndex
 org.apache.kafka.streams.state.internals.RocksDBTimeOrderedSessionStoreWithIndexTest:
 - shouldBackwardFetchAllSessionsWithSameRecordKey
 - shouldBackwardFetchAllSessionsWithinKeyRange
@@ -5284,6 +5496,26 @@ org.apache.kafka.streams.state.internals.RocksDBTimestampedSegmentedBytesStoreTe
 - shouldRestoreToByteStoreForActiveTask
 - shouldRestoreToByteStoreForStandbyTask
 - shouldRollSegments
+org.apache.kafka.streams.state.internals.RocksDBTimestampedSegmentedBytesStoreWithHeadersTest:
+- shouldBeAbleToWriteToReInitializedStore
+- shouldCreateWriteBatches
+- shouldFetchAllSegments
+- shouldFindValuesWithinRange
+- shouldGetAllSegments
+- shouldHandleTombstoneRecords
+- shouldLoadSegmentsWithOldStyleColonFormattedName
+- shouldLoadSegmentsWithOldStyleDateFormattedName
+- shouldMatchPositionAfterPut
+- shouldMeasureExpiredRecords
+- shouldNotThrowWhenRestoringOnMissingHeaders
+- shouldPutAndBackwardFetch
+- shouldPutAndFetch
+- shouldRemove
+- shouldRestoreRecordsAndConsistencyVectorMultipleTopics
+- shouldRestoreRecordsAndConsistencyVectorSingleTopic
+- shouldRestoreToByteStoreForActiveTask
+- shouldRestoreToByteStoreForStandbyTask
+- shouldRollSegments
 org.apache.kafka.streams.state.internals.RocksDBTimestampedStoreTest:
 - prefixScanShouldNotThrowConcurrentModificationException
 - shouldAddValueProvidersWithStatisticsToInjectedMetricsRecorderWhenRecordingLevelDebug
@@ -5305,6 +5537,7 @@ org.apache.kafka.streams.state.internals.RocksDBTimestampedStoreTest:
 - shouldNotIncludeDeletedFromRangeResult
 - shouldNotSetCacheInValueProvidersWhenUserProvidesPlainTableFormatConfig
 - shouldNotSetStatisticsInValueProvidersWhenUserProvidesStatistics
+- shouldNotSupportDowngradeFromTimestampedToPlainKeyValueStore
 - shouldNotThrowConcurrentModificationException
 - shouldNotThrowExceptionOnRestoreWhenThereIsPreExistingRocksDbFiles
 - shouldNotThrowInvalidRangeExceptionWithFromLargerThanTo
@@ -5353,6 +5586,90 @@ org.apache.kafka.streams.state.internals.RocksDBTimestampedStoreTest:
 - shouldThrowNullPointerExceptionOnPutNullKey
 - shouldThrowProcessorStateExceptionOnOpeningReadOnlyDir
 - shouldThrowProcessorStateExceptionOnPutDeletedDir
+- shouldThrowWhenUserProvidesNewBlockBasedTableFormatConfig
+- shouldVerifyThatMetricsRecordedFromPropertiesGetMeasurementsFromRocksDB
+- shouldVerifyThatMetricsRecordedFromStatisticsGetMeasurementsFromRocksDB
+- shouldVerifyThatPropertyBasedMetricsUseValidPropertyName
+- testPutGetRange
+- testPutGetReverseRange
+- testPutGetWithDefaultSerdes
+- testPutIfAbsent
+- testRestore
+- testRestoreWithDefaultSerdes
+- testSize
+org.apache.kafka.streams.state.internals.RocksDBTimestampedStoreWithHeadersTest:
+- prefixScanShouldNotThrowConcurrentModificationException
+- shouldAddValueProvidersWithStatisticsToInjectedMetricsRecorderWhenRecordingLevelDebug
+- shouldAddValueProvidersWithoutStatisticsToInjectedMetricsRecorderWhenRecordingLevelInfo
+- shouldAllowCustomManagedIterators
+- shouldCallRocksDbConfigSetter
+- shouldCloseOpenRangeIteratorsWhenStoreClosedAndThrowInvalidStateStoreOnHasNextAndNext
+- shouldCloseStatisticsWhenUserProvidesNoStatistics
+- shouldCloseStatisticsWhenUserProvidesStatistics
+- shouldDeleteFromStore
+- shouldDeleteIfSerializedValueIsNull
+- shouldFailToUpgradeDirectlyFromKeyValueStore
+- shouldHandleDeletesAndPutBackOnRestoreAll
+- shouldHandleDeletesOnRestoreAll
+- shouldHandleToggleOfEnablingBloomFilters
+- shouldHandleTombstoneRecords
+- shouldMatchPositionAfterPut
+- shouldMigrateFromTimestampedToHeadersAwareColumnFamily
+- shouldNotAllowOpenIteratorsWhenUsingAutoManagedIterators
+- shouldNotIncludeDeletedFromRangeResult
+- shouldNotSetCacheInValueProvidersWhenUserProvidesPlainTableFormatConfig
+- shouldNotSetStatisticsInValueProvidersWhenUserProvidesStatistics
+- shouldNotSupportDowngradeFromHeadersAwareToRegularStore
+- shouldNotSupportDowngradeFromHeadersAwareToTimestampedStore
+- shouldNotThrowConcurrentModificationException
+- shouldNotThrowExceptionOnRestoreWhenThereIsPreExistingRocksDbFiles
+- shouldNotThrowInvalidRangeExceptionWithFromLargerThanTo
+- shouldNotThrowInvalidRangeExceptionWithNegativeFromKey
+- shouldNotThrowInvalidReverseRangeExceptionWithFromLargerThanTo
+- shouldNotThrowInvalidReverseRangeExceptionWithNegativeFromKey
+- shouldNotThrowNullPointerExceptionOnPutAllNullKey
+- shouldNotThrowNullPointerExceptionOnPutIfAbsentNullValue
+- shouldNotThrowNullPointerExceptionOnPutNullValue
+- shouldNotThrowWhenRestoringOnMissingHeaders
+- shouldOpenExistingStoreInRegularMode
+- shouldOpenNewStoreInRegularMode
+- shouldPerformAllQueriesWithCachingDisabled
+- shouldPerformRangeQueriesWithCachingDisabled
+- shouldPutAll
+- shouldPutOnlyIfAbsentValue
+- shouldPutReverseAll
+- shouldRemoveValueProvidersFromInjectedMetricsRecorderOnClose
+- shouldRequireOpenIteratorsWhenUsingCustomManagedIterators
+- shouldRestoreAll
+- shouldRestoreRecordsAndConsistencyVectorMultipleTopics
+- shouldRestoreRecordsAndConsistencyVectorSingleTopic
+- shouldRestoreThenDeleteOnRestoreAll
+- shouldReturnKeysWithGivenPrefix
+- shouldReturnKeysWithGivenPrefixExcludingNextKeyLargestKey
+- shouldReturnNoKeys
+- shouldReturnSameResultsForGetAndRangeWithEqualKeys
+- shouldReturnSameResultsForGetAndReverseRangeWithEqualKeys
+- shouldReturnUUIDsWithStringPrefix
+- shouldReturnValueOnRange
+- shouldReturnValueOnRangeKeyToNull
+- shouldReturnValueOnRangeNullToKey
+- shouldReturnValueOnRangeNullToNull
+- shouldReturnValueOnReverseRangeKeyToNull
+- shouldReturnValueOnReverseRangeNullToKey
+- shouldReturnValueOnReverseRangeNullToNull
+- shouldSetStatisticsInValueProvidersWhenUserProvidesNoStatistics
+- shouldThrowNullPointerExceptionOnDelete
+- shouldThrowNullPointerExceptionOnDeleteNullKey
+- shouldThrowNullPointerExceptionOnGetNullKey
+- shouldThrowNullPointerExceptionOnNullGet
+- shouldThrowNullPointerExceptionOnNullPut
+- shouldThrowNullPointerExceptionOnNullPutAll
+- shouldThrowNullPointerExceptionOnPutAllNullKey
+- shouldThrowNullPointerExceptionOnPutIfAbsentNullKey
+- shouldThrowNullPointerExceptionOnPutNullKey
+- shouldThrowProcessorStateExceptionOnOpeningReadOnlyDir
+- shouldThrowProcessorStateExceptionOnPutDeletedDir
+- shouldThrowUnsupportedOperationExceptionOnQuery
 - shouldThrowWhenUserProvidesNewBlockBasedTableFormatConfig
 - shouldVerifyThatMetricsRecordedFromPropertiesGetMeasurementsFromRocksDB
 - shouldVerifyThatMetricsRecordedFromStatisticsGetMeasurementsFromRocksDB
@@ -5491,6 +5808,23 @@ org.apache.kafka.streams.state.internals.SessionKeySchemaTest:
 - testUpperBoundWithKeyBytesLargerThanFirstTimestampByte
 - testUpperBoundWithLargeTimestamps
 - testUpperBoundWithZeroTimestamp
+org.apache.kafka.streams.state.internals.SessionSegmentWithHeadersTest:
+- shouldBeEqualIfIdIsEqual
+- shouldCompareSegmentIdOnly
+- shouldDeleteStateDirectoryOnDestroy
+- shouldHashOnSegmentIdOnly
+org.apache.kafka.streams.state.internals.SessionSegmentsWithHeadersTest:
+- shouldCleanupSegmentsThatHaveExpired
+- shouldClearSegmentsOnClose
+- shouldCloseAllOpenSegments
+- shouldCreateSegments
+- shouldGetCorrectSegmentString
+- shouldGetSegmentForTimestamp
+- shouldGetSegmentIdsFromTimestamp
+- shouldGetSegmentNameFromId
+- shouldGetSegmentsWithinTimeRange
+- shouldNotCreateSegmentThatIsAlreadyExpired
+- shouldOpenExistingSegments
 org.apache.kafka.streams.state.internals.SessionStoreBuilderTest:
 - shouldHaveCachingAndChangeLoggingWhenBothEnabled
 - shouldHaveCachingStoreWhenEnabled
@@ -5712,7 +6046,33 @@ org.apache.kafka.streams.state.internals.TimestampedKeyValueStoreBuilderTest:
 - shouldThrowNullPointerIfMetricsScopeIsNull
 - shouldThrowNullPointerIfTimeIsNull
 - shouldWrapPlainKeyValueStoreAsTimestampStore
+org.apache.kafka.streams.state.internals.TimestampedKeyValueStoreBuilderWithHeadersTest:
+- shouldHaveCachingAndChangeLoggingWhenBothEnabled
+- shouldHaveCachingStoreWhenEnabled
+- shouldHaveChangeLoggingStoreByDefault
+- shouldHaveChangeLoggingStoreWhenLoggingEnabled
+- shouldHaveMeteredStoreAsOuterStore
+- shouldNotHaveChangeLoggingStoreWhenDisabled
+- shouldNotThrowNullPointerIfKeySerdeIsNull
+- shouldNotThrowNullPointerIfValueSerdeIsNull
+- shouldNotWrapTimestampedByteStore
+- shouldThrowNullPointerIfInnerIsNull
+- shouldThrowNullPointerIfMetricsScopeIsNull
+- shouldThrowNullPointerIfTimeIsNull
+- shouldThrowOnGetPositionForHeadersStoreAdapter
+- shouldThrowOnGetPositionForInMemoryStores
+- shouldThrowOnGetPositionForNativeHeadersStore
+- shouldThrowUsingIQv2ForInMemoryStores
+- shouldThrowUsingIQv2ForNativeHeadersStore
+- shouldThrowWhenPlainKeyValueStoreIsProvided
+- shouldThrowWhenUsingIQv2InHeadersStore
+- shouldWrapTimestampKeyValueStoreAsHeadersStore
 org.apache.kafka.streams.state.internals.TimestampedSegmentTest:
+- shouldBeEqualIfIdIsEqual
+- shouldCompareSegmentIdOnly
+- shouldDeleteStateDirectoryOnDestroy
+- shouldHashOnSegmentIdOnly
+org.apache.kafka.streams.state.internals.TimestampedSegmentWithHeadersTest:
 - shouldBeEqualIfIdIsEqual
 - shouldCompareSegmentIdOnly
 - shouldDeleteStateDirectoryOnDestroy
@@ -5737,6 +6097,18 @@ org.apache.kafka.streams.state.internals.TimestampedSegmentsTest:
 - shouldRollSegments
 - shouldUpdateSegmentFileNameFromOldColonFormatToNewFormat
 - shouldUpdateSegmentFileNameFromOldDateFormatToNewFormat
+org.apache.kafka.streams.state.internals.TimestampedSegmentsWithHeadersTest:
+- shouldCleanupSegmentsThatHaveExpired
+- shouldClearSegmentsOnClose
+- shouldCloseAllOpenSegments
+- shouldCreateSegments
+- shouldGetCorrectSegmentString
+- shouldGetSegmentForTimestamp
+- shouldGetSegmentIdsFromTimestamp
+- shouldGetSegmentNameFromId
+- shouldGetSegmentsWithinTimeRange
+- shouldNotCreateSegmentThatIsAlreadyExpired
+- shouldOpenExistingSegments
 org.apache.kafka.streams.state.internals.TimestampedWindowStoreBuilderTest:
 - shouldDisableCachingWithRetainDuplicates
 - shouldHaveCachingAndChangeLoggingWhenBothEnabled

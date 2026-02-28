@@ -312,6 +312,7 @@ org.apache.kafka.clients.admin.KafkaAdminClientTest:
 - testDescribeLogDirs
 - testDescribeLogDirsOfflineDir
 - testDescribeLogDirsPartialFailure
+- testDescribeLogDirsWithCordonedDir
 - testDescribeLogDirsWithVolumeBytes
 - testDescribeMetadataQuorumFailure
 - testDescribeMetadataQuorumRetriableError
@@ -826,6 +827,9 @@ org.apache.kafka.clients.consumer.KafkaConsumerTest:
 - testConstructorInvalidMetricReporters
 - testConsumerJmxPrefix
 - testCurrentLag
+- testCurrentLagClearsFlagOnFatalPartitionError
+- testCurrentLagClearsFlagOnRetriablePartitionError
+- testCurrentLagPreventsMultipleInFlightRequests
 - testDisableJmxAndClientTelemetryReporter
 - testEmptyGroupId
 - testEndOffsetsAuthenticationFailure

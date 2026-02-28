@@ -340,6 +340,8 @@ org.apache.kafka.clients.consumer.ShareConsumerTest:
 - testControlRecordsSkipped
 - testDeliveryCountDifferentBehaviorWhenClosingSessionWithExplicitAcknowledgement
 - testDescribeShareGroupOffsetsForEmptySharePartition
+- testDynamicDeliveryCountLimitDecreaseArchivesRecords
+- testDynamicDeliveryCountLimitIncreaseAllowsMoreDeliveries
 - testExplicitAcknowledgeCommitSuccess
 - testExplicitAcknowledgeOffsetThrowsNotException
 - testExplicitAcknowledgeOffsetThrowsParametersError
@@ -428,6 +430,11 @@ org.apache.kafka.clients.producer.ProducerIdExpirationTest:
 - testDynamicProducerIdExpirationMs
 - testProducerIdExpirationWithNoTransactions
 - testTransactionAfterTransactionIdExpiresButProducerIdRemains
+org.apache.kafka.clients.producer.ProducerIntegrationTest:
+- testTransactionWithAndWithoutSend
+- testTransactionWithInvalidSendAndEndTxnRequestSent
+- testTransactionWithSendOffset
+- testUniqueProducerIds
 org.apache.kafka.clients.producer.ProducerSendWhileDeletionTest:
 - testSendWhileTopicGetRecreated
 - testSendWithRecreatedTopic

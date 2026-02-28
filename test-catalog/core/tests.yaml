@@ -711,13 +711,9 @@ kafka.coordinator.group.CoordinatorPartitionWriterTest:
 - testRegisterDeregisterListener
 - testWriteRecords
 - testWriteRecordsWithFailure
+- testWriteRecordsWithFailureAndCustomErrorMessage
 - testWriteTransactionMarker
 - testWriteTransactionMarkerWithTVUnknownThrowsException
-kafka.coordinator.transaction.ProducerIntegrationTest:
-- testTransactionWithAndWithoutSend
-- testTransactionWithInvalidSendAndEndTxnRequestSent
-- testTransactionWithSendOffset
-- testUniqueProducerIds
 kafka.coordinator.transaction.TransactionCoordinatorConcurrencyTest:
 - testConcurrentContinuingInitProducerIdRequests
 - testConcurrentGoodPathSequence
@@ -945,8 +941,6 @@ kafka.log.LogCleanerIntegrationTest:
 - testIsThreadFailed
 - testMarksPartitionsAsOfflineAndPopulatesUncleanableMetrics
 - testMaxLogCompactionLag
-kafka.log.LogCleanerLagIntegrationTest:
-- cleanerTest
 kafka.log.LogCleanerParameterizedIntegrationTest:
 - cleanerConfigUpdateTest
 - cleanerTest
@@ -1093,10 +1087,12 @@ kafka.log.LogManagerTest:
 - testLoadLogRenameLogThatShouldBeStray
 - testLoadLogsSkipRemoteIndexCache
 - testLock
+- testLogManagerMetrics
 - testLogRecoveryMetrics
 - testLogRecoveryMetricsShouldBeRemovedAfterLogRecovered
 - testMetricsAreRemovedWhenMovingCurrentToFutureLog
 - testMetricsExistWhenLogIsRecreatedBeforeDeletion
+- testNextLogDirs
 - testRecoveryDirectoryMappingWithRelativeDirectory
 - testRecoveryDirectoryMappingWithTrailingSlash
 - testReplaceCurrentWithFutureLogDoesNotCloseSourceLog
@@ -1105,6 +1101,7 @@ kafka.log.LogManagerTest:
 - testTopicConfigChangeStopCleaningIfCompactIsRemoved
 - testTopicConfigChangeUpdatesLogConfig
 - testTwoLogManagersUsingSameDirFails
+- testUpdateCordonedLogDirs
 kafka.log.UnifiedLogTest:
 - testAbortedTransactionSpanningMultipleSegments
 - testActiveProducers
@@ -1445,6 +1442,34 @@ kafka.server.AbstractFetcherThreadTest:
 - testFollowerFetchOutOfRangeHigh
 - testFollowerFetchOutOfRangeLow
 - testIgnoreFetchResponseWhenLeaderEpochChanged
+- testLastTieredOffsetRetryableRemoteStorageException
+- testLastTieredOffsetStaleLocalLogOffsetFastUpload
+- testLastTieredOffsetStaleLocalLogOffsetFullUpload
+- testLastTieredOffsetStaleLocalLogOffsetNewLeader
+- testLastTieredOffsetStaleLocalLogOffsetSlowUpload
+- testLastTieredOffsetWithEmptyLeaderLog
+- testLastTieredOffsetWithEmptyLeaderLogNonZeroLSOOnNewLeader
+- testLastTieredOffsetWithEmptyLeaderLogStaleUploadOffset
+- testLastTieredOffsetWithFastPartialUpload
+- testLastTieredOffsetWithFastUploadNoLocalDeletion
+- testLastTieredOffsetWithFastUploadNonZeroLSO
+- testLastTieredOffsetWithFullUploadCompleted
+- testLastTieredOffsetWithFullUploadNoLocalDeletion
+- testLastTieredOffsetWithFullUploadNonZeroLSO
+- testLastTieredOffsetWithInactiveLeaderFullUpload
+- testLastTieredOffsetWithInactiveLeaderFullUploadNonZeroLSO
+- testLastTieredOffsetWithInactiveLeaderFullUploadNonZeroLSOOnNewLeader
+- testLastTieredOffsetWithInactiveLeaderFullUploadOnNewLeader
+- testLastTieredOffsetWithInactiveLeaderStaleUploadNonZeroLSO
+- testLastTieredOffsetWithNoSegmentsUploaded
+- testLastTieredOffsetWithNonZeroLSOOnNewLeader
+- testLastTieredOffsetWithNonZeroLSOStaleUploadOffset
+- testLastTieredOffsetWithPartialUploadAndStaleUploadOffset
+- testLastTieredOffsetWithPartialUploadOnNewLeader
+- testLastTieredOffsetWithPartialUploadOnNewLeaderNonZeroLSO
+- testLastTieredOffsetWithSlowPartialUpload
+- testLastTieredOffsetWithSlowUploadNoLocalDeletion
+- testLastTieredOffsetWithSlowUploadNonZeroLSO
 - testMaybeUpdateTopicIds
 - testMetricsRemovedOnShutdown
 - testParameterizedLeaderEpochChangeDuringFetchEpochsFromLeader
@@ -1539,11 +1564,13 @@ kafka.server.AutoTopicCreationManagerTest:
 - testTopicsInBackoffAreNotRetried
 - testTopicsOutOfBackoffCanBeRetried
 kafka.server.BrokerLifecycleManagerTest:
+- testAlwaysSendsAccumulatedCordonedDirs
 - testAlwaysSendsAccumulatedOfflineDirs
 - testControlledShutdown
 - testCreateAndClose
 - testCreateStartAndClose
 - testKraftJBODMetadataVersionUpdateEvent
+- testRegistrationIncludesCordonedDirs
 - testRegistrationIncludesDirs
 - testRegistrationTimeout
 - testSuccessfulRegistration
@@ -1776,6 +1803,7 @@ kafka.server.DynamicBrokerConfigTest:
 - testConnectionRateQuota
 - testCoordinatorCachedBufferMaxBytesUpdates
 - testDynamicListenerConfig
+- testDynamicLogConfigCordonedLogDirs
 - testDynamicLogConfigHandlesSynonymsCorrectly
 - testDynamicLogLocalRetentionMsConfig
 - testDynamicLogLocalRetentionSizeConfig
@@ -2201,6 +2229,7 @@ kafka.server.KafkaConfigTest:
 - testControllerListenerNamesValidForKRaftControllerOnly
 - testControllerListenersCanBeAdvertisedForKRaftCombined
 - testControllerQuorumVoterStringsToNodes
+- testCordonAllLogDirs
 - testCustomMetadataLogDir
 - testDefaultCompressionType
 - testDefaultMetadataLogDir
@@ -2226,6 +2255,7 @@ kafka.server.KafkaConfigTest:
 - testInvalidAdvertisedListenersProtocol
 - testInvalidAuthorizerClassName
 - testInvalidCompressionType
+- testInvalidCordonedLogDirs
 - testInvalidGzipCompressionLevel
 - testInvalidInterBrokerSecurityProtocol
 - testInvalidLz4CompressionLevel
@@ -2343,9 +2373,13 @@ kafka.server.ListOffsetsRequestWithRemoteStoreTest:
 - testResponseDefaultOffsetAndLeaderEpochForAllVersions
 - testResponseIncludesLeaderEpoch
 kafka.server.LocalLeaderEndPointTest:
+- testEarliestPendingUploadOffsetWhenBothStartOffsetsEqualAndDominateRemote
 - testEarliestPendingUploadOffsetWhenHighestRemoteOffsetKnown
 - testEarliestPendingUploadOffsetWhenLocalStartGreaterThanStart
+- testEarliestPendingUploadOffsetWhenLocalStartGreaterThanStartWithKnownRemoteOffset
+- testEarliestPendingUploadOffsetWhenLogStartGreaterThanLocalStartWithLowRemoteOffset
 - testEarliestPendingUploadOffsetWhenNoSegmentsUploaded
+- testEarliestPendingUploadOffsetWhenRemoteOffsetDominatesLogStart
 - testFetchEarliestLocalOffset
 - testFetchEarliestOffset
 - testFetchEpochEndOffsets
@@ -2482,6 +2516,7 @@ kafka.server.ReplicaManagerQuotasTest:
 kafka.server.ReplicaManagerTest:
 - checkRemoveMetricsCountMatchRegisterCount
 - testActiveProducerState
+- testAlterReplicaLogDirsToCordonedDir
 - testAppendRecordsToLeader
 - testApplyDeltaShouldHandleReplicaAssignedToLostDirectory
 - testApplyDeltaShouldHandleReplicaAssignedToOnlineDirectory
@@ -2803,6 +2838,8 @@ kafka.server.share.ShareFetchUtilsTest:
 - testAccumulateAcquiredRecordsNoMerging
 - testAccumulateAcquiredRecordsSingleRecord
 - testAccumulateAcquiredRecordsWithRanges
+- testDeliveryCountLimitOrDefaultWithGroupConfig
+- testDeliveryCountLimitOrDefaultWithoutGroupConfig
 - testProcessFetchResponse
 - testProcessFetchResponseWhenNoRecordsAreAcquired
 - testProcessFetchResponseWithEmptyRecords
@@ -2990,6 +3027,8 @@ kafka.server.share.SharePartitionTest:
 - testDeliveryCompleteCountOnLockExpiryAndWriteFailureOnOffsetLastDelivery
 - testDeliveryCompleteCountWhenStaleBatchesAreArchived
 - testDeliveryCompleteCountWhenStaleOffsetsAreArchived
+- testDynamicDeliveryCountDecreaseCausesArchival
+- testDynamicDeliveryCountIncreaseAllowsMoreDeliveries
 - testFetchAbortedTransactionRecordBatchesForAbortedAndCommittedTransactions
 - testFetchAbortedTransactionRecordBatchesForOnlyAbortedTransactions
 - testFetchAckTypeMapForBatch
@@ -3023,12 +3062,14 @@ kafka.server.share.SharePartitionTest:
 - testLsoMovementWithPendingAcknowledgementsForBatches
 - testLsoMovementWithPerOffsetRenewal
 - testLsoMovementWithWriteStateRPCFailuresInAcknowledgement
+- testMaxDeliveryCountFallsBackToDefaultWhenNoGroupConfig
 - testMaxDeliveryCountLimitExceededForRecordBatch
 - testMaxDeliveryCountLimitExceededForRecordsSubset
 - testMaxDeliveryCountLimitExceededForRecordsSubsetAndCachedStateNotCleared
 - testMaxDeliveryCountLimitExceededForRecordsSubsetCacheCleared
 - testMaxDeliveryCountLimitNotExceededForRecordsSubsetAfterReleaseAcquiredRecords
 - testMaxDeliveryCountLimitNotExceededForRecordsSubsetAfterReleaseAcquiredRecordsSubset
+- testMaxDeliveryCountUsesGroupConfigWhenPresent
 - testMaybeAcquireAndReleaseFetchLock
 - testMaybeInitialize
 - testMaybeInitializeAndAcquire
@@ -3121,28 +3162,6 @@ kafka.server.share.SharePartitionTest:
 - testWriteShareGroupStateWithNullResponse
 - testWriteShareGroupStateWithNullTopicsData
 - testWriteShareGroupStateWithWriteException
-kafka.tools.DumpLogSegmentsTest:
-- testBatchAndRecordMetadataOutput
-- testDumpControlRecord
-- testDumpEmptyIndex
-- testDumpIndexMismatches
-- testDumpMetadataRecords
-- testDumpMetadataSnapshot
-- testDumpRemoteLogMetadataEmpty
-- testDumpRemoteLogMetadataIoException
-- testDumpRemoteLogMetadataMultipleRecordsMultipleBatches
-- testDumpRemoteLogMetadataMultipleRecordsOneBatch
-- testDumpRemoteLogMetadataNoFilesFlag
-- testDumpRemoteLogMetadataNoSuchFileException
-- testDumpRemoteLogMetadataNonZeroStartingOffset
-- testDumpRemoteLogMetadataOneRecordOneBatch
-- testDumpRemoteLogMetadataWithCorruption
-- testDumpTimeIndexErrors
-- testOffsetsMessageParser
-- testPrintDataLog
-- testPrintDataLogPartialBatches
-- testShareGroupStateMessageParser
-- testTransactionLogMessageParser
 kafka.tools.StorageToolTest:
 - testBootstrapScramRecords
 - testConfigToLogDirectories
