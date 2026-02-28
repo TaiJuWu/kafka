@@ -78,6 +78,8 @@ public class ConfigurationControlManagerTest {
             define("foo.bar", ConfigDef.Type.LIST, "1", ConfigDef.Importance.HIGH, "foo bar").
             define("baz", ConfigDef.Type.STRING, ConfigDef.Importance.HIGH, "baz").
             define("quux", ConfigDef.Type.INT, ConfigDef.Importance.HIGH, "quux").
+            define("log.segment.bytes", ConfigDef.Type.INT, 1024 * 1024 * 1024,
+                ConfigDef.Range.atLeast(1024 * 1024), ConfigDef.Importance.HIGH, "log.segment.bytes").
             define(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG,
                 ConfigDef.Type.INT, "1", ConfigDef.Importance.HIGH, "min.isr"));
 
@@ -98,6 +100,7 @@ public class ConfigurationControlManagerTest {
         SYNONYMS.put("def", List.of(new ConfigSynonym("baz")));
         SYNONYMS.put("quuux", List.of(new ConfigSynonym("quux", HOURS_TO_MILLISECONDS)));
         SYNONYMS.put(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, List.of(new ConfigSynonym(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG)));
+        SYNONYMS.put(TopicConfig.SEGMENT_BYTES_CONFIG, List.of(new ConfigSynonym("log.segment.bytes")));
     }
 
     static final KafkaConfigSchema SCHEMA = new KafkaConfigSchema(CONFIGS, SYNONYMS);
@@ -780,6 +783,118 @@ public class ConfigurationControlManagerTest {
             false,
             0);
         assertEquals(Errors.NONE, result.response().error());
+    }
+
+    @Test
+    public void testAlterTopicConfigBlockedByMvConstraint() {
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.IBP_4_3_IV1.featureLevel()));
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // topic config segment.bytes = 2MB should be blocked by IBP_4_3_IV1 (requires >= 3MB)
+        ControllerResult<Map<ConfigResource, ApiError>> result = manager.incrementalAlterConfigs(
+            toMap(entry(MYTOPIC, toMap(
+                entry(TopicConfig.SEGMENT_BYTES_CONFIG, entry(SET, String.valueOf(2 * 1024 * 1024)))))),
+            true);
+        assertEquals(Errors.INVALID_CONFIG, result.response().get(MYTOPIC).error());
+        assertTrue(result.response().get(MYTOPIC).message().contains("log.segment.bytes"));
+    }
+
+    @Test
+    public void testAlterBrokerConfigBlockedByMvConstraint() {
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.IBP_4_3_IV1.featureLevel()));
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // broker config log.segment.bytes = 2MB should be blocked
+        ControllerResult<Map<ConfigResource, ApiError>> result = manager.incrementalAlterConfigs(
+            toMap(entry(BROKER0, toMap(
+                entry("log.segment.bytes", entry(SET, String.valueOf(2 * 1024 * 1024)))))),
+            true);
+        assertEquals(Errors.INVALID_CONFIG, result.response().get(BROKER0).error());
+        assertTrue(result.response().get(BROKER0).message().contains("log.segment.bytes"));
+    }
+
+    @Test
+    public void testAlterConfigPassesMvConstraint() {
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.IBP_4_3_IV1.featureLevel()));
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // segment.bytes = 4MB should pass (>= 3MB)
+        ControllerResult<Map<ConfigResource, ApiError>> result = manager.incrementalAlterConfigs(
+            toMap(entry(MYTOPIC, toMap(
+                entry(TopicConfig.SEGMENT_BYTES_CONFIG, entry(SET, String.valueOf(4 * 1024 * 1024)))))),
+            true);
+        assertEquals(ApiError.NONE, result.response().get(MYTOPIC));
+    }
+
+    @Test
+    public void testAlterConfigPassesWhenMvNotInitialized() {
+        // FeatureControlManager with no MV replayed → metadataVersion() returns Optional.empty()
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().build();
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // segment.bytes = 2MB — would normally be blocked, but MV is uninitialized
+        ControllerResult<Map<ConfigResource, ApiError>> result = manager.incrementalAlterConfigs(
+            toMap(entry(MYTOPIC, toMap(
+                entry(TopicConfig.SEGMENT_BYTES_CONFIG, entry(SET, String.valueOf(2 * 1024 * 1024)))))),
+            true);
+        assertEquals(ApiError.NONE, result.response().get(MYTOPIC));
+    }
+
+    @Test
+    public void testLegacyAlterConfigBlockedByMvConstraint() {
+        FeatureControlManager featureManager = new FeatureControlManager.Builder().
+            setQuorumFeatures(new QuorumFeatures(0,
+                QuorumFeatures.defaultSupportedFeatureMap(true),
+                List.of())).
+            build();
+        featureManager.replay(new FeatureLevelRecord().
+            setName(MetadataVersion.FEATURE_NAME).
+            setFeatureLevel(MetadataVersion.IBP_4_3_IV1.featureLevel()));
+        ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
+            setFeatureControl(featureManager).
+            setKafkaConfigSchema(SCHEMA).
+            build();
+
+        // Legacy alter with segment.bytes = 2MB should also be blocked
+        ControllerResult<Map<ConfigResource, ApiError>> result = manager.legacyAlterConfigs(
+            toMap(entry(MYTOPIC, toMap(
+                entry(TopicConfig.SEGMENT_BYTES_CONFIG, String.valueOf(2 * 1024 * 1024))))),
+            true);
+        assertEquals(Errors.INVALID_CONFIG, result.response().get(MYTOPIC).error());
+        assertTrue(result.response().get(MYTOPIC).message().contains("log.segment.bytes"));
     }
 
     private FeatureControlManager createFeatureControlManager() {

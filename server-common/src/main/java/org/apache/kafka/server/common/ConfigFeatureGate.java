@@ -17,6 +17,7 @@
 package org.apache.kafka.server.common;
 
 import org.apache.kafka.common.errors.InvalidConfigurationException;
+import org.apache.kafka.server.config.ServerTopicConfigSynonyms;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -39,8 +40,15 @@ public class ConfigFeatureGate {
         });
     }
 
+    private static String resolveToRegisteredKey(String key) {
+        if (VALIDATORS.containsKey(key)) return key;
+        String brokerSynonym = ServerTopicConfigSynonyms.TOPIC_CONFIG_SYNONYMS.get(key);
+        if (brokerSynonym != null && VALIDATORS.containsKey(brokerSynonym)) return brokerSynonym;
+        return key;
+    }
+
     public static void validate(MetadataVersion mv, String key, String value) {
-        ConfigValidator validator = VALIDATORS.get(key);
+        ConfigValidator validator = VALIDATORS.get(resolveToRegisteredKey(key));
         if (validator != null) {
             validator.validate(value, mv);
         }

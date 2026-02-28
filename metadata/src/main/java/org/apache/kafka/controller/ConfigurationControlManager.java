@@ -371,6 +371,22 @@ public class ConfigurationControlManager {
             // As per KAFKA-14195, do not include implicit deletions caused by using the legacy AlterConfigs API
             // in the list passed to the policy in order to maintain backwards compatibility
         }
+        // MV-aware config validation
+        Optional<MetadataVersion> currentMv = featureControl != null
+            ? featureControl.metadataVersion() : Optional.empty();
+        if (currentMv.isPresent()) {
+            for (ApiMessageAndVersion newRecord : recordsExplicitlyAltered) {
+                ConfigRecord configRecord = (ConfigRecord) newRecord.message();
+                if (configRecord.value() != null) {
+                    try {
+                        ConfigFeatureGate.validate(currentMv.get(),
+                            configRecord.name(), configRecord.value());
+                    } catch (Exception e) {
+                        return new ApiError(INVALID_CONFIG, e.getMessage());
+                    }
+                }
+            }
+        }
         try {
             validator.validate(configResource, allConfigs, existingConfigsMap);
             if (!newlyCreatedResource) {
