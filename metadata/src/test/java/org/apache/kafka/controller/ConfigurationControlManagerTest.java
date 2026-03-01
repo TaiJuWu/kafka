@@ -561,7 +561,6 @@ public class ConfigurationControlManagerTest {
         }
     }
 
-<<<<<<< HEAD
     @Test
     public void testUpdateFeaturesPassesWhenConfigsAreValid() {
         FeatureControlManager featureManager = new FeatureControlManager.Builder().
@@ -879,26 +878,27 @@ public class ConfigurationControlManagerTest {
     @Test
     public void testLegacyAlterConfigBlockedByMvConstraint() {
         FeatureControlManager featureManager = new FeatureControlManager.Builder().
-            setQuorumFeatures(new QuorumFeatures(0,
-                QuorumFeatures.defaultSupportedFeatureMap(true),
-                List.of())).
-            build();
+                setQuorumFeatures(new QuorumFeatures(0,
+                        QuorumFeatures.defaultSupportedFeatureMap(true),
+                        List.of())).
+                build();
         featureManager.replay(new FeatureLevelRecord().
-            setName(MetadataVersion.FEATURE_NAME).
-            setFeatureLevel(MetadataVersion.IBP_4_3_IV1.featureLevel()));
+                setName(MetadataVersion.FEATURE_NAME).
+                setFeatureLevel(MetadataVersion.IBP_4_3_IV1.featureLevel()));
         ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
-            setFeatureControl(featureManager).
-            setKafkaConfigSchema(SCHEMA).
-            build();
+                setFeatureControl(featureManager).
+                setKafkaConfigSchema(SCHEMA).
+                build();
 
         // Legacy alter with segment.bytes = 2MB should also be blocked
         ControllerResult<Map<ConfigResource, ApiError>> result = manager.legacyAlterConfigs(
-            toMap(entry(MYTOPIC, toMap(
-                entry(TopicConfig.SEGMENT_BYTES_CONFIG, String.valueOf(2 * 1024 * 1024))))),
-            true);
+                toMap(entry(MYTOPIC, toMap(
+                        entry(TopicConfig.SEGMENT_BYTES_CONFIG, String.valueOf(2 * 1024 * 1024))))),
+                true);
         assertEquals(Errors.INVALID_CONFIG, result.response().get(MYTOPIC).error());
         assertTrue(result.response().get(MYTOPIC).message().contains("log.segment.bytes"));
-=======
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     public void testCordonedLogDirsFeature(boolean enabled) {
@@ -920,7 +920,6 @@ public class ConfigurationControlManagerTest {
                 true);
 
         assertEquals(enabled ? ApiError.NONE : DISALLOWED_CORDONED_LOG_DIRS_ERROR, result.response());
->>>>>>> trunk
     }
 
     private FeatureControlManager createFeatureControlManager() {

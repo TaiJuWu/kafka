@@ -67,11 +67,7 @@ public class FeatureCommandTest {
                 outputWithoutEpoch(features.get(2))
         );
         assertFeatureOutput(
-<<<<<<< HEAD
                 "metadata.version", "3.3-IV3", "4.3-IV1", "3.3-IV3",
-=======
-                "metadata.version", "3.3-IV3", "4.4-IV0", "3.3-IV3",
->>>>>>> trunk
                 outputWithoutEpoch(features.get(3))
         );
         assertFeatureOutput(
@@ -111,11 +107,7 @@ public class FeatureCommandTest {
                 outputWithoutEpoch(features.get(2))
         );
         assertFeatureOutput(
-<<<<<<< HEAD
                 "metadata.version", "3.3-IV3", "4.3-IV1", "3.7-IV0",
-=======
-                "metadata.version", "3.3-IV3", "4.4-IV0", "3.7-IV0",
->>>>>>> trunk
                 outputWithoutEpoch(features.get(3))
         );
         assertFeatureOutput(
@@ -172,11 +164,7 @@ public class FeatureCommandTest {
                 outputWithoutEpoch(featuresWithUnstable.get(2))
         );
         assertFeatureOutput(
-<<<<<<< HEAD
                 "metadata.version", "3.3-IV3", "4.3-IV1", "3.7-IV0",
-=======
-                "metadata.version", "3.3-IV3", "4.4-IV0", "3.7-IV0",
->>>>>>> trunk
                 outputWithoutEpoch(featuresWithUnstable.get(3))
         );
         assertFeatureOutput(
@@ -270,11 +258,7 @@ public class FeatureCommandTest {
                 outputWithoutEpoch(featuresWithUnstable.get(2))
         );
         assertFeatureOutput(
-<<<<<<< HEAD
                 "metadata.version", "3.3-IV3", "4.3-IV1", "3.7-IV0",
-=======
-                "metadata.version", "3.3-IV3", "4.4-IV0", "3.7-IV0",
->>>>>>> trunk
                 outputWithoutEpoch(featuresWithUnstable.get(3))
         );
         assertFeatureOutput(

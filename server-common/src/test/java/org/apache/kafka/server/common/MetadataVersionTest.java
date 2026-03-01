@@ -244,11 +244,9 @@ class MetadataVersionTest {
     @EnumSource(value = MetadataVersion.class)
     public void testRegisterBrokerRecordVersion(MetadataVersion metadataVersion) {
         final short expectedVersion;
-<<<<<<< HEAD
-        if (metadataVersion.isStaticConfigReportingSupported()) {
-=======
-        if (metadataVersion.isAtLeast(IBP_4_3_IV0)) {
->>>>>>> trunk
+        if (metadataVersion.isAtLeast(MetadataVersion.IBP_4_3_IV1)) {
+            expectedVersion = 5;
+        } else if (metadataVersion.isAtLeast(MetadataVersion.IBP_4_3_IV0)) {
             expectedVersion = 4;
         } else if (metadataVersion.isAtLeast(MetadataVersion.IBP_3_7_IV2)) {
             expectedVersion = 3;

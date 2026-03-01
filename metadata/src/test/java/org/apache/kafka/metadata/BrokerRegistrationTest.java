@@ -118,34 +118,22 @@ public class BrokerRegistrationTest {
             "incarnationId=3MfdxWlNSn2UDYsmDP1pYg, listeners=[Endpoint(" +
             "listenerName='INTERNAL', securityProtocol=PLAINTEXT, " +
             "host='localhost', port=9091)], supportedFeatures={foo: 1-2}, " +
-<<<<<<< HEAD
-            "rack=Optional.empty, fenced=true, inControlledShutdown=false, isMigratingZkBroker=false, directories=[], staticConfigs={})",
-=======
             "rack=Optional.empty, fenced=true, inControlledShutdown=false, isMigratingZkBroker=false, " +
-            "directories=[], cordonedDirectories=[])",
->>>>>>> trunk
+            "directories=[], cordonedDirectories=[], staticConfigs={})",
             REGISTRATIONS.get(1).toString());
         assertEquals("BrokerRegistration(id=2, epoch=0, " +
             "incarnationId=eY7oaG1RREie5Kk9uy1l6g, listeners=[Endpoint(" +
             "listenerName='INTERNAL', securityProtocol=PLAINTEXT, " +
             "host='localhost', port=9092)], supportedFeatures={bar: 1-4, foo: 2-3}, " +
-<<<<<<< HEAD
-            "rack=Optional[myrack], fenced=false, inControlledShutdown=true, isMigratingZkBroker=false, directories=[], staticConfigs={})",
-=======
             "rack=Optional[myrack], fenced=false, inControlledShutdown=true, isMigratingZkBroker=false, " +
-            "directories=[], cordonedDirectories=[])",
->>>>>>> trunk
+            "directories=[], cordonedDirectories=[], staticConfigs={})",
             REGISTRATIONS.get(2).toString());
         assertEquals("BrokerRegistration(id=3, epoch=0, " +
             "incarnationId=1t8VyWx2TCSTpUWuqj-FOw, listeners=[Endpoint(" +
             "listenerName='INTERNAL', securityProtocol=PLAINTEXT, " +
             "host='localhost', port=9093)], supportedFeatures={metadata.version: 7}, " +
             "rack=Optional.empty, fenced=false, inControlledShutdown=true, isMigratingZkBroker=true, " +
-<<<<<<< HEAD
-            "directories=[r4HpEsMuST6nQ4rznIEJVA], staticConfigs={})",
-=======
-            "directories=[r4HpEsMuST6nQ4rznIEJVA], cordonedDirectories=[r4HpEsMuST6nQ4rznIEJVA])",
->>>>>>> trunk
+            "directories=[r4HpEsMuST6nQ4rznIEJVA], cordonedDirectories=[r4HpEsMuST6nQ4rznIEJVA], staticConfigs={})",
             REGISTRATIONS.get(3).toString());
     }
 

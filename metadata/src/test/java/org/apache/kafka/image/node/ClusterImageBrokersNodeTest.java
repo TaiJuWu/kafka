@@ -70,11 +70,8 @@ public class ClusterImageBrokersNodeTest {
             "inControlledShutdown=false, " +
             "isMigratingZkBroker=false, " +
             "directories=[JsnDDNVyTL289kYk6sPzig, anCdBWcFTlu8gE1wP6bh3g], " +
-<<<<<<< HEAD
+            "cordonedDirectories=[])" +
             "staticConfigs={})",
-=======
-            "cordonedDirectories=[])",
->>>>>>> trunk
             child.stringify());
     }
 
