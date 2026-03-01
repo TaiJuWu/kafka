@@ -34,8 +34,8 @@ public class ConfigFeatureGate {
     static {
         VALIDATORS.put("log.segment.bytes", (value, mv) -> {
             int val = Integer.parseInt(value);
-            if (mv.isAtLeast(MetadataVersion.IBP_4_3_IV1) && val < 3 * 1024 * 1024) {
-                throw new InvalidConfigurationException("log.segment.bytes should be at least 3 MB for IBP_4_3_IV1");
+            if (mv.isAtLeast(MetadataVersion.IBP_4_4_IV1) && val < 3 * 1024 * 1024) {
+                throw new InvalidConfigurationException("log.segment.bytes should be at least 3 MB for IBP_4_4_IV1");
             }
         });
     }

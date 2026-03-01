@@ -776,10 +776,10 @@ public class ConfigurationControlManagerTest {
             setResourceType(TOPIC.id()).setResourceName("testTopic").
             setName(TopicConfig.SEGMENT_BYTES_CONFIG).setValue(String.valueOf(1536 * 1024)));
 
-        // Upgrade to IBP_4_3_IV1 → should pass (already past 4.3 threshold)
+        // Upgrade to IBP_4_4_IV1 → should pass (already past 4.3 threshold)
         ControllerResult<ApiError> result = manager.updateFeatures(
             Map.of(MetadataVersion.FEATURE_NAME,
-                MetadataVersion.IBP_4_3_IV1.featureLevel()),
+                MetadataVersion.IBP_4_4_IV1.featureLevel()),
             Map.of(MetadataVersion.FEATURE_NAME,
                 FeatureUpdate.UpgradeType.UPGRADE),
             false,
@@ -796,13 +796,13 @@ public class ConfigurationControlManagerTest {
             build();
         featureManager.replay(new FeatureLevelRecord().
             setName(MetadataVersion.FEATURE_NAME).
-            setFeatureLevel(MetadataVersion.IBP_4_3_IV1.featureLevel()));
+            setFeatureLevel(MetadataVersion.IBP_4_4_IV1.featureLevel()));
         ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
             setFeatureControl(featureManager).
             setKafkaConfigSchema(SCHEMA).
             build();
 
-        // topic config segment.bytes = 2MB should be blocked by IBP_4_3_IV1 (requires >= 3MB)
+        // topic config segment.bytes = 2MB should be blocked by IBP_4_4_IV1 (requires >= 3MB)
         ControllerResult<Map<ConfigResource, ApiError>> result = manager.incrementalAlterConfigs(
             toMap(entry(MYTOPIC, toMap(
                 entry(TopicConfig.SEGMENT_BYTES_CONFIG, entry(SET, String.valueOf(2 * 1024 * 1024)))))),
@@ -820,7 +820,7 @@ public class ConfigurationControlManagerTest {
             build();
         featureManager.replay(new FeatureLevelRecord().
             setName(MetadataVersion.FEATURE_NAME).
-            setFeatureLevel(MetadataVersion.IBP_4_3_IV1.featureLevel()));
+            setFeatureLevel(MetadataVersion.IBP_4_4_IV1.featureLevel()));
         ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
             setFeatureControl(featureManager).
             setKafkaConfigSchema(SCHEMA).
@@ -844,7 +844,7 @@ public class ConfigurationControlManagerTest {
             build();
         featureManager.replay(new FeatureLevelRecord().
             setName(MetadataVersion.FEATURE_NAME).
-            setFeatureLevel(MetadataVersion.IBP_4_3_IV1.featureLevel()));
+            setFeatureLevel(MetadataVersion.IBP_4_4_IV1.featureLevel()));
         ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
             setFeatureControl(featureManager).
             setKafkaConfigSchema(SCHEMA).
@@ -884,7 +884,7 @@ public class ConfigurationControlManagerTest {
                 build();
         featureManager.replay(new FeatureLevelRecord().
                 setName(MetadataVersion.FEATURE_NAME).
-                setFeatureLevel(MetadataVersion.IBP_4_3_IV1.featureLevel()));
+                setFeatureLevel(MetadataVersion.IBP_4_4_IV1.featureLevel()));
         ConfigurationControlManager manager = new ConfigurationControlManager.Builder().
                 setFeatureControl(featureManager).
                 setKafkaConfigSchema(SCHEMA).

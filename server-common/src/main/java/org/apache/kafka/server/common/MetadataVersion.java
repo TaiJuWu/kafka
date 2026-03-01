@@ -124,16 +124,17 @@ public enum MetadataVersion {
     // BrokerRegistrationChangeRecord and RegisterBrokerRecord are updated
     IBP_4_3_IV0(30, "4.3", "IV0", true),
 
-    // Support for broker static config reporting in BrokerRegistration (KIP-TBD).
-    IBP_4_3_IV1(31, "4.3", "IV1", false),
-
     //
     // NOTE: MetadataVersions after this point are unstable and may be changed.
     // If users attempt to use an unstable MetadataVersion, they will get an error unless
     // they have set the configuration unstable.feature.versions.enable=true.
     // Please move this comment when updating the LATEST_PRODUCTION constant.
     //
-    IBP_4_4_IV0(31, "4.4", "IV0", false);
+    IBP_4_4_IV0(31, "4.4", "IV0", false),
+
+    // Support for broker static config reporting in BrokerRegistration (KIP-TBD).
+    IBP_4_4_IV1(32, "4.4", "IV1", true);
+
 
     // NOTES when adding a new version:
     //   Update the default version in @ClusterTest annotation to point to the latest version
@@ -222,7 +223,7 @@ public enum MetadataVersion {
     }
 
     public boolean isStaticConfigReportingSupported() {
-        return this.isAtLeast(IBP_4_3_IV1);
+        return this.isAtLeast(IBP_4_4_IV1);
     }
 
     public short registerBrokerRecordVersion() {

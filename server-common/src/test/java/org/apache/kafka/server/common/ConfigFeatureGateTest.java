@@ -29,7 +29,7 @@ public class ConfigFeatureGateTest {
     public void testTopicSynonymResolvesToBrokerValidator() {
         // "segment.bytes" (topic config name) should resolve to "log.segment.bytes" validator
         assertThrows(InvalidConfigurationException.class, () ->
-            ConfigFeatureGate.validate(MetadataVersion.IBP_4_3_IV1,
+            ConfigFeatureGate.validate(MetadataVersion.IBP_4_4_IV1,
                 "segment.bytes", String.valueOf(2 * 1024 * 1024)));
     }
 
@@ -37,13 +37,13 @@ public class ConfigFeatureGateTest {
     public void testBrokerConfigDirectHit() {
         // "log.segment.bytes" should directly match
         assertThrows(InvalidConfigurationException.class, () ->
-            ConfigFeatureGate.validate(MetadataVersion.IBP_4_3_IV1,
+            ConfigFeatureGate.validate(MetadataVersion.IBP_4_4_IV1,
                 "log.segment.bytes", String.valueOf(2 * 1024 * 1024)));
     }
 
     @Test
     public void testValidationPassesWhenMvBelowThreshold() {
-        // MV below IBP_4_3_IV1 → no constraint, should pass
+        // MV below IBP_4_4_IV1 → no constraint, should pass
         assertDoesNotThrow(() ->
             ConfigFeatureGate.validate(MetadataVersion.IBP_4_0_IV0,
                 "log.segment.bytes", String.valueOf(2 * 1024 * 1024)));
@@ -53,7 +53,7 @@ public class ConfigFeatureGateTest {
     public void testValidationPassesForValidValue() {
         // 4MB >= 3MB threshold → should pass
         assertDoesNotThrow(() ->
-            ConfigFeatureGate.validate(MetadataVersion.IBP_4_3_IV1,
+            ConfigFeatureGate.validate(MetadataVersion.IBP_4_4_IV1,
                 "log.segment.bytes", String.valueOf(4 * 1024 * 1024)));
     }
 
@@ -61,7 +61,7 @@ public class ConfigFeatureGateTest {
     public void testUnregisteredConfigDoesNotThrow() {
         // Unknown config name → no validator, should not throw
         assertDoesNotThrow(() ->
-            ConfigFeatureGate.validate(MetadataVersion.IBP_4_3_IV1,
+            ConfigFeatureGate.validate(MetadataVersion.IBP_4_4_IV1,
                 "unknown.config", "anyvalue"));
     }
 }

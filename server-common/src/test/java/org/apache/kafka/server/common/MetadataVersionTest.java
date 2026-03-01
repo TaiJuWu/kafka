@@ -96,7 +96,7 @@ class MetadataVersionTest {
         assertEquals(IBP_4_2_IV1, MetadataVersion.fromVersionString("4.2-IV1", true));
 
         assertEquals(IBP_4_3_IV0, MetadataVersion.fromVersionString("4.3-IV0", true));
-        assertEquals(IBP_4_3_IV1, MetadataVersion.fromVersionString("4.3-IV1", true));
+        assertEquals(IBP_4_4_IV1, MetadataVersion.fromVersionString("4.4-IV1", true));
 
         // Throws exception when unstableFeatureVersionsEnabled is false
         assertEquals("Unknown metadata.version '4.4-IV0'. Supported metadata.version are: 3.3-IV3, 3.4-IV0, 3.5-IV0, 3.5-IV1, 3.5-IV2, "
@@ -137,7 +137,8 @@ class MetadataVersionTest {
         assertEquals("4.2", IBP_4_2_IV0.shortVersion());
         assertEquals("4.2", IBP_4_2_IV1.shortVersion());
         assertEquals("4.3", IBP_4_3_IV0.shortVersion());
-        assertEquals("4.3", IBP_4_3_IV1.shortVersion());
+        assertEquals("4.4", IBP_4_4_IV0.shortVersion());
+        assertEquals("4.4", IBP_4_4_IV1.shortVersion());
     }
 
     @Test
@@ -166,7 +167,8 @@ class MetadataVersionTest {
         assertEquals("4.2-IV0", IBP_4_2_IV0.version());
         assertEquals("4.2-IV1", IBP_4_2_IV1.version());
         assertEquals("4.3-IV0", IBP_4_3_IV0.version());
-        assertEquals("4.3-IV1", IBP_4_3_IV1.version());
+        assertEquals("4.4-IV0", IBP_4_4_IV0.version());
+        assertEquals("4.4-IV1", IBP_4_4_IV1.version());
     }
 
     @Test
@@ -244,7 +246,7 @@ class MetadataVersionTest {
     @EnumSource(value = MetadataVersion.class)
     public void testRegisterBrokerRecordVersion(MetadataVersion metadataVersion) {
         final short expectedVersion;
-        if (metadataVersion.isAtLeast(MetadataVersion.IBP_4_3_IV1)) {
+        if (metadataVersion.isAtLeast(MetadataVersion.IBP_4_4_IV1)) {
             expectedVersion = 5;
         } else if (metadataVersion.isAtLeast(MetadataVersion.IBP_4_3_IV0)) {
             expectedVersion = 4;

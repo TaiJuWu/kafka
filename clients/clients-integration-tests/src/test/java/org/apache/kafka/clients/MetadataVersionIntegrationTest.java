@@ -84,8 +84,8 @@ public class MetadataVersionIntegrationTest {
         try (var admin = clusterInstance.admin()) {
             admin.createTopics(List.of(new NewTopic("test-topic", 1, (short) 1))).all().get();
 
-            // Upgrade metadata.version to IBP_4_3_IV1 — should succeed
-            short targetVersion = MetadataVersion.IBP_4_3_IV1.featureLevel();
+            // Upgrade metadata.version to IBP_4_4_IV1 — should succeed
+            short targetVersion = MetadataVersion.IBP_4_4_IV1.featureLevel();
             admin.updateFeatures(Map.of(
                 MetadataVersion.FEATURE_NAME,
                 new FeatureUpdate(targetVersion, FeatureUpdate.UpgradeType.UPGRADE)
@@ -103,11 +103,11 @@ public class MetadataVersionIntegrationTest {
         }
     }
 
-    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_3_IV1)
+    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_4_IV1)
     public void testAlterClusterConfigBlockedByMvConstraint(ClusterInstance clusterInstance) throws Exception {
         try (var admin = clusterInstance.admin()) {
             // Setting log.segment.bytes = 2MB on cluster-wide config should be blocked
-            // because IBP_4_3_IV1 requires >= 3MB
+            // because IBP_4_4_IV1 requires >= 3MB
             TestUtils.assertFutureThrows(InvalidConfigurationException.class,
                 admin.incrementalAlterConfigs(Map.of(
                     new ConfigResource(ConfigResource.Type.BROKER, ""),
@@ -115,7 +115,7 @@ public class MetadataVersionIntegrationTest {
                         new ConfigEntry("log.segment.bytes", String.valueOf(2 * 1024 * 1024)),
                         AlterConfigOp.OpType.SET))
                 )).all(),
-                "log.segment.bytes should be at least 3 MB for IBP_4_3_IV1");
+                "log.segment.bytes should be at least 3 MB for IBP_4_4_IV1");
         }
     }
 
@@ -124,9 +124,9 @@ public class MetadataVersionIntegrationTest {
     )
     public void testMetadataVersionUpgradeWithInValidStaticConfigs(ClusterInstance clusterInstance) throws Exception {
         try (var admin = clusterInstance.admin()) {
-            // Upgrade metadata.version to IBP_4_3_IV1 — should succeed
+            // Upgrade metadata.version to IBP_4_4_IV1 — should succeed
             // because static configs are not checked by upgrade-path validation
-            short targetVersion = MetadataVersion.IBP_4_3_IV1.featureLevel();
+            short targetVersion = MetadataVersion.IBP_4_4_IV1.featureLevel();
             admin.updateFeatures(Map.of(
                     MetadataVersion.FEATURE_NAME,
                     new FeatureUpdate(targetVersion, FeatureUpdate.UpgradeType.UPGRADE)
@@ -145,11 +145,11 @@ public class MetadataVersionIntegrationTest {
     }
 
 
-    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_3_IV1)
+    @ClusterTest(types = Type.KRAFT, metadataVersion = MetadataVersion.IBP_4_4_IV1)
     public void testAlterBrokerDynamicConfigBlockedByMvConstraint(ClusterInstance clusterInstance) throws Exception {
         try (var admin = clusterInstance.admin()) {
             // Setting log.segment.bytes = 2MB on a specific broker should be blocked
-            // because IBP_4_3_IV1 requires >= 3MB
+            // because IBP_4_4_IV1 requires >= 3MB
             TestUtils.assertFutureThrows(InvalidConfigurationException.class,
                 admin.incrementalAlterConfigs(Map.of(
                     new ConfigResource(ConfigResource.Type.BROKER, "0"),
@@ -157,7 +157,7 @@ public class MetadataVersionIntegrationTest {
                         new ConfigEntry("log.segment.bytes", String.valueOf(2 * 1024 * 1024)),
                         AlterConfigOp.OpType.SET))
                 )).all(),
-                "log.segment.bytes should be at least 3 MB for IBP_4_3_IV1");
+                "log.segment.bytes should be at least 3 MB for IBP_4_4_IV1");
         }
     }
 
