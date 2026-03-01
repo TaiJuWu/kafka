@@ -449,9 +449,12 @@ public class ClusterControlManager {
         }
 
         // Store broker static configs in-memory (always available for pre-upgrade validation)
+        // Skip sensitive configs — their values are null
         Map<String, String> statics = new HashMap<>();
         for (BrokerRegistrationRequestData.StaticConfig sc : request.staticConfigs()) {
-            statics.put(sc.name(), sc.value());
+            if (!sc.isSensitive()) {
+                statics.put(sc.name(), sc.value());
+            }
         }
         brokerStaticConfigs.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(brokerId)), Map.copyOf(statics));
 
@@ -460,7 +463,8 @@ public class ClusterControlManager {
             for (BrokerRegistrationRequestData.StaticConfig sc : request.staticConfigs()) {
                 record.staticConfigs().add(new RegisterBrokerRecord.BrokerStaticConfig()
                     .setName(sc.name())
-                    .setValue(sc.value()));
+                    .setValue(sc.isSensitive() ? null : sc.value())
+                    .setIsSensitive(sc.isSensitive()));
             }
         }
         if (!request.incarnationId().equals(prevIncarnationId)) {
@@ -624,9 +628,12 @@ public class ClusterControlManager {
                 setCordonedDirectories(record.cordonedLogDirs()).
                     build());
         // Restore static configs from metadata log (for controller failover)
+        // Skip sensitive configs — their values are null
         Map<String, String> replayedStatics = new HashMap<>();
         for (RegisterBrokerRecord.BrokerStaticConfig sc : record.staticConfigs()) {
-            replayedStatics.put(sc.name(), sc.value());
+            if (!sc.isSensitive()) {
+                replayedStatics.put(sc.name(), sc.value());
+            }
         }
         brokerStaticConfigs.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(record.brokerId())), Map.copyOf(replayedStatics));
 

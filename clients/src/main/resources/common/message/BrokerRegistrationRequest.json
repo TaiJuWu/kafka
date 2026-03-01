@@ -69,8 +69,10 @@
       "about": "Non-default static configs from the broker's server.properties.", "fields": [
       { "name": "Name", "type": "string", "versions": "6+",
         "about": "The config name." },
-      { "name": "Value", "type": "string", "versions": "6+",
-        "about": "The config value." }
+      { "name": "Value", "type": "string", "versions": "6+", "nullableVersions": "6+",
+        "about": "The config value. Null if the config is sensitive." },
+      { "name": "IsSensitive", "type": "bool", "versions": "6+", "default": "false",
+        "about": "True if this configuration is sensitive (e.g. a password)." }
     ]}
   ]
 }

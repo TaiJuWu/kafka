@@ -226,7 +226,9 @@ public class BrokerRegistration {
         }
         Map<String, String> staticConfigs = new HashMap<>();
         for (BrokerStaticConfig sc : record.staticConfigs()) {
-            staticConfigs.put(sc.name(), sc.value());
+            if (!sc.isSensitive()) {
+                staticConfigs.put(sc.name(), sc.value());
+            }
         }
         return new BrokerRegistration(record.brokerId(),
             record.brokerEpoch(),
@@ -378,7 +380,8 @@ public class BrokerRegistration {
             for (Entry<String, String> entry : staticConfigs.entrySet()) {
                 registrationRecord.staticConfigs().add(new BrokerStaticConfig().
                     setName(entry.getKey()).
-                    setValue(entry.getValue()));
+                    setValue(entry.getValue()).
+                    setIsSensitive(false));
             }
         }
 

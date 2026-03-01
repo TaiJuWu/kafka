@@ -35,6 +35,7 @@ import org.apache.kafka.queue.EventQueue;
 import org.apache.kafka.queue.KafkaEventQueue;
 import org.apache.kafka.server.common.ControllerRequestCompletionHandler;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
+import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.server.config.AbstractKafkaConfig;
 
 import org.slf4j.Logger;
@@ -518,13 +519,14 @@ public class BrokerLifecycleManager {
         List<Uuid> sortedLogDirs = new ArrayList<>(logDirs);
         sortedLogDirs.sort(Uuid::compareTo);
         List<BrokerRegistrationRequestData.StaticConfig> staticConfigs = new ArrayList<>();
-        // we send all static config to controller even if the value is null
         for (Map.Entry<String, ?> entry : config.values().entrySet()) {
+            ConfigDef.Type type = config.typeOf(entry.getKey());
+            boolean isSensitive = type == null || type == ConfigDef.Type.PASSWORD;
             staticConfigs.add(new BrokerRegistrationRequestData.StaticConfig()
                 .setName(entry.getKey())
-                .setValue(String.valueOf(entry.getValue())));
+                .setValue(isSensitive ? null : String.valueOf(entry.getValue()))
+                .setIsSensitive(isSensitive));
         }
-        System.err.println("llll " + staticConfigs);
         BrokerRegistrationRequestData data = new BrokerRegistrationRequestData()
             .setBrokerId(nodeId)
             .setIsMigratingZkBroker(false)

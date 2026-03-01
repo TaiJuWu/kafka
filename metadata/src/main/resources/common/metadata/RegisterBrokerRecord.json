@@ -68,8 +68,10 @@
       "about": "Non-default static configs reported by the broker.", "fields": [
       { "name": "Name", "type": "string", "versions": "5+",
         "about": "The config name." },
-      { "name": "Value", "type": "string", "versions": "5+",
-        "about": "The config value." }
+      { "name": "Value", "type": "string", "versions": "5+", "nullableVersions": "5+",
+        "about": "The config value. Null if the config is sensitive." },
+      { "name": "IsSensitive", "type": "bool", "versions": "5+", "default": "false",
+        "about": "True if this configuration is sensitive." }
     ]}
   ]
 }

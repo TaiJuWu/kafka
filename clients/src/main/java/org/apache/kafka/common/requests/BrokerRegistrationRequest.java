@@ -49,7 +49,7 @@ public class BrokerRegistrationRequest extends AbstractRequest {
                 BrokerRegistrationRequestData newData = data.duplicate();
                 newData.features().removeIf(feature -> feature.minSupportedVersion() == 0);
                 return new BrokerRegistrationRequest(newData, version);
-            } else if (version < 5) {
+            } else if (version < 6) {
                 BrokerRegistrationRequestData newData = data.duplicate();
                 newData.setStaticConfigs(new java.util.ArrayList<>());
                 return new BrokerRegistrationRequest(newData, version);
