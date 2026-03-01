@@ -18,6 +18,7 @@ package org.apache.kafka.server;
 
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerHeartbeatResponseData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
@@ -35,7 +36,6 @@ import org.apache.kafka.queue.EventQueue;
 import org.apache.kafka.queue.KafkaEventQueue;
 import org.apache.kafka.server.common.ControllerRequestCompletionHandler;
 import org.apache.kafka.server.common.NodeToControllerChannelManager;
-import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.server.config.AbstractKafkaConfig;
 
 import org.slf4j.Logger;
