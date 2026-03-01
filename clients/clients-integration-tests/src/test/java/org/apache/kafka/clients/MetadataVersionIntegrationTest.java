@@ -115,7 +115,7 @@ public class MetadataVersionIntegrationTest {
                         new ConfigEntry("log.segment.bytes", String.valueOf(2 * 1024 * 1024)),
                         AlterConfigOp.OpType.SET))
                 )).all(),
-                "log.segment.bytes should be at least 3 MB for IBP_4_4_IV1");
+                "Value must be at least 3145728");
         }
     }
 
@@ -157,7 +157,7 @@ public class MetadataVersionIntegrationTest {
                         new ConfigEntry("log.segment.bytes", String.valueOf(2 * 1024 * 1024)),
                         AlterConfigOp.OpType.SET))
                 )).all(),
-                "log.segment.bytes should be at least 3 MB for IBP_4_4_IV1");
+                "Value must be at least 3145728");
         }
     }
 

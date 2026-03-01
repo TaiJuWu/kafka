@@ -17,6 +17,8 @@
 package org.apache.kafka.server.common;
 
 
+import org.apache.kafka.common.config.ConfigDef;
+
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -133,7 +135,8 @@ public enum MetadataVersion {
     IBP_4_4_IV0(31, "4.4", "IV0", false),
 
     // Support for broker static config reporting in BrokerRegistration (KIP-TBD).
-    IBP_4_4_IV1(32, "4.4", "IV1", true);
+    IBP_4_4_IV1(32, "4.4", "IV1", true,
+        Map.of("log.segment.bytes", ConfigDef.Range.atLeast(3 * 1024 * 1024)));
 
 
     // NOTES when adding a new version:
@@ -170,8 +173,14 @@ public enum MetadataVersion {
     private final String release;
     private final String ibpVersion;
     private final boolean didMetadataChange;
+    private final Map<String, ConfigDef.Validator> configConstraints;
 
     MetadataVersion(int featureLevel, String release, String subVersion, boolean didMetadataChange) {
+        this(featureLevel, release, subVersion, didMetadataChange, Map.of());
+    }
+
+    MetadataVersion(int featureLevel, String release, String subVersion, boolean didMetadataChange,
+                    Map<String, ConfigDef.Validator> configConstraints) {
         this.featureLevel = (short) featureLevel;
         this.release = release;
         if (subVersion.isEmpty()) {
@@ -180,6 +189,11 @@ public enum MetadataVersion {
             this.ibpVersion = String.format("%s-%s", release, subVersion);
         }
         this.didMetadataChange = didMetadataChange;
+        this.configConstraints = configConstraints;
+    }
+
+    public Map<String, ConfigDef.Validator> configConstraints() {
+        return configConstraints;
     }
 
     public String featureName() {

@@ -314,6 +314,16 @@ public class KafkaConfigSchema {
             configKey.documentation);
     }
 
+    /**
+     * Returns the ConfigDef.Type for the given resource type and config key, or null if unknown.
+     */
+    public ConfigDef.Type getConfigType(ConfigResource.Type resourceType, String key) {
+        ConfigDef configDef = configDefs.get(resourceType);
+        if (configDef == null) return null;
+        ConfigDef.ConfigKey configKey = configDef.configKeys().get(key);
+        return configKey != null ? configKey.type : null;
+    }
+
     public int getStaticallyConfiguredMinInsyncReplicas(Map<String, ?> staticNodeConfig) {
         String minInsyncReplicasString = Objects.requireNonNull(
             getStaticOrDefaultConfig(MIN_IN_SYNC_REPLICAS_CONFIG, staticNodeConfig));

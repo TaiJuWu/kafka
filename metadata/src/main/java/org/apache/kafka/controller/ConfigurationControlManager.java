@@ -20,6 +20,7 @@ package org.apache.kafka.controller;
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.FeatureUpdate;
+import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
@@ -32,9 +33,9 @@ import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.metadata.KafkaConfigSchema;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
-import org.apache.kafka.server.common.ConfigFeatureGate;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
 import org.apache.kafka.server.common.MetadataVersion;
+import org.apache.kafka.server.config.ServerTopicConfigSynonyms;
 import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
 import org.apache.kafka.server.policy.AlterConfigPolicy.RequestMetadata;
@@ -384,7 +385,7 @@ public class ConfigurationControlManager {
                 ConfigRecord configRecord = (ConfigRecord) newRecord.message();
                 if (configRecord.value() != null) {
                     try {
-                        ConfigFeatureGate.validate(currentMv.get(),
+                        validateConfigValue(currentMv.get(),
                             configRecord.name(), configRecord.value());
                     } catch (Exception e) {
                         return new ApiError(INVALID_CONFIG, e.getMessage());
@@ -725,10 +726,53 @@ public class ConfigurationControlManager {
         return Optional.empty();
     }
 
+    private static String resolveToRegisteredKey(String key) {
+        String brokerSynonym = ServerTopicConfigSynonyms.TOPIC_CONFIG_SYNONYMS.get(key);
+        return brokerSynonym != null ? brokerSynonym : key;
+    }
+
+    private Object parseConfigValue(String key, String value) {
+        ConfigDef.Type type = configSchema.getConfigType(BROKER, key);
+        if (type != null) {
+            return ConfigDef.parseType(key, value, type);
+        }
+        return value;
+    }
+
+    /**
+     * Validate a config value against the constraints defined at the given metadata version.
+     * Used when altering configs at the current MV.
+     */
+    private void validateConfigValue(MetadataVersion mv, String key, String value) {
+        String resolvedKey = resolveToRegisteredKey(key);
+        ConfigDef.Validator validator = mv.configConstraints().get(resolvedKey);
+        if (validator != null) {
+            validator.ensureValid(resolvedKey, parseConfigValue(resolvedKey, value));
+        }
+    }
+
+    /**
+     * Validate a config value against only the constraints newly crossed during an MV upgrade.
+     * Only checks constraints where currentMv &lt; version &lt;= proposedMv.
+     */
+    private void validateConfigForUpgrade(
+            MetadataVersion currentMv, MetadataVersion proposedMv, String key, String value) {
+        String resolvedKey = resolveToRegisteredKey(key);
+        Object parsedValue = parseConfigValue(resolvedKey, value);
+        for (MetadataVersion version : MetadataVersion.VERSIONS) {
+            if (proposedMv.isAtLeast(version) && currentMv.isLessThan(version)) {
+                ConfigDef.Validator validator = version.configConstraints().get(resolvedKey);
+                if (validator != null) {
+                    validator.ensureValid(resolvedKey, parsedValue);
+                }
+            }
+        }
+    }
+
     /**
      * Validate that all existing configurations are compatible with a proposed metadata version
-     * upgrade. Uses MV-specific constraints when available, falling back to ConfigDef validators
-     * only when crossing the initial threshold (< IBP_4_0_IV0 to >= IBP_4_0_IV0).
+     * upgrade. Uses range-based validation to only check constraints newly crossed
+     * (currentMV &lt; version &lt;= proposedMV).
      *
      * @param proposedLevel  The proposed metadata version feature level.
      * @return               An error if any config value is invalid, or empty if all are valid.
@@ -739,6 +783,8 @@ public class ConfigurationControlManager {
         }
 
         MetadataVersion proposedMV = MetadataVersion.fromFeatureLevel(proposedLevel);
+        MetadataVersion currentMV = featureControl.metadataVersion()
+            .orElse(MetadataVersion.MINIMUM_VERSION);
 
         Map<ConfigResource, String> violations = new HashMap<>();
 
@@ -755,21 +801,49 @@ public class ConfigurationControlManager {
                     ConfigEntry configEntry = entry.getValue();
 
                     try {
-                        ConfigFeatureGate.validate(proposedMV, name, configEntry.value());
+                        validateConfigForUpgrade(currentMV, proposedMV, name, configEntry.value());
                     } catch (Exception e) {
                         String errorMessage = String.format("Broker %d config '%s' is invalid (Source: %s): %s",
                                 brokerId, name, configEntry.source(), e.getMessage());
                         brokerViolations.add(errorMessage);
                     }
-                }                if (!brokerViolations.isEmpty()) {
+                }
+                if (!brokerViolations.isEmpty()) {
                     violations.put(brokerResource, String.join(", ", brokerViolations));
                 }
             }
         }
 
+        // Validate topic configs
+        for (Entry<ConfigResource, TimelineHashMap<String, String>> entry : configData.entrySet()) {
+            ConfigResource resource = entry.getKey();
+            if (resource.type() != Type.TOPIC) continue;
+
+            String topicName = resource.name();
+            List<String> topicViolations = new ArrayList<>();
+            for (Entry<String, String> configEntry : entry.getValue().entrySet()) {
+                try {
+                    validateConfigForUpgrade(currentMV, proposedMV,
+                        configEntry.getKey(), configEntry.getValue());
+                } catch (Exception e) {
+                    topicViolations.add(String.format("Topic '%s' config '%s': %s",
+                        topicName, configEntry.getKey(), e.getMessage()));
+                }
+            }
+            if (!topicViolations.isEmpty()) {
+                violations.put(resource, String.join(", ", topicViolations));
+            }
+        }
+
         if (!violations.isEmpty()) {
             String errorMessage = violations.entrySet().stream()
-                    .map(entry -> "NodeId=" + entry.getKey().name() + " -> " + entry.getValue())
+                    .map(e -> {
+                        ConfigResource res = e.getKey();
+                        String prefix = res.type() == Type.TOPIC
+                            ? "Topic=" + res.name()
+                            : "NodeId=" + res.name();
+                        return prefix + " -> " + e.getValue();
+                    })
                     .collect(Collectors.joining("; "));
 
             return Optional.of(new ApiError(Errors.INVALID_CONFIG,
