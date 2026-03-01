@@ -272,11 +272,6 @@ public class ClusterControlManager {
     private final TimelineHashMap<Uuid, Integer> directoryToBroker;
 
     /**
-     * Maps broker IDs to their non-default static configs reported during registration.
-     */
-    private final Map<ConfigResource, Map<String, String>> brokerStaticConfigs;
-
-    /**
      * Manages the kafka.controller:type=KafkaController,name=TimeSinceLastHeartbeatReceivedMs,broker=<brokerId> metrics.
      */
     private final QuorumControllerMetrics metrics;
@@ -305,7 +300,6 @@ public class ClusterControlManager {
         this.featureControl = featureControl;
         this.controllerRegistrations = new TimelineHashMap<>(snapshotRegistry, 0);
         this.directoryToBroker = new TimelineHashMap<>(snapshotRegistry, 0);
-        this.brokerStaticConfigs = new HashMap<>();
         this.brokerShutdownHandler = brokerShutdownHandler;
         this.metrics = metrics;
     }
@@ -348,7 +342,14 @@ public class ClusterControlManager {
     }
 
     public Map<ConfigResource, Map<String, String>> brokerStaticConfigs() {
-        return Collections.unmodifiableMap(brokerStaticConfigs);
+        Map<ConfigResource, Map<String, String>> result = new HashMap<>();
+        for (Map.Entry<Integer, BrokerRegistration> entry : brokerRegistrations.entrySet()) {
+            Map<String, String> statics = entry.getValue().staticConfigs();
+            if (!statics.isEmpty()) {
+                result.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(entry.getKey())), statics);
+            }
+        }
+        return Collections.unmodifiableMap(result);
     }
 
     Map<Integer, ControllerRegistration> controllerRegistrations() {
@@ -447,16 +448,6 @@ public class ClusterControlManager {
         if (featureControl.metadataVersionOrThrow().isCordonedLogDirsSupported()) {
             record.setCordonedLogDirs(request.cordonedLogDirs());
         }
-
-        // Store broker static configs in-memory (always available for pre-upgrade validation)
-        // Skip sensitive configs — their values are null
-        Map<String, String> statics = new HashMap<>();
-        for (BrokerRegistrationRequestData.StaticConfig sc : request.staticConfigs()) {
-            if (!sc.isSensitive()) {
-                statics.put(sc.name(), sc.value());
-            }
-        }
-        brokerStaticConfigs.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(brokerId)), Map.copyOf(statics));
 
         // Write static configs to the record when MV supports it
         if (featureControl.metadataVersionOrThrow().isStaticConfigReportingSupported()) {
@@ -612,6 +603,13 @@ public class ClusterControlManager {
             features.put(feature.name(), VersionRange.of(
                 feature.minSupportedVersion(), feature.maxSupportedVersion()));
         }
+        // Parse static configs from record, skipping sensitive ones (their values are null)
+        Map<String, String> staticConfigs = new HashMap<>();
+        for (RegisterBrokerRecord.BrokerStaticConfig sc : record.staticConfigs()) {
+            if (!sc.isSensitive()) {
+                staticConfigs.put(sc.name(), sc.value());
+            }
+        }
         // Update broker registrations.
         BrokerRegistration prevRegistration = brokerRegistrations.put(brokerId,
             new BrokerRegistration.Builder().
@@ -626,16 +624,8 @@ public class ClusterControlManager {
                 setIsMigratingZkBroker(record.isMigratingZkBroker()).
                 setDirectories(record.logDirs()).
                 setCordonedDirectories(record.cordonedLogDirs()).
+                setStaticConfigs(staticConfigs).
                     build());
-        // Restore static configs from metadata log (for controller failover)
-        // Skip sensitive configs — their values are null
-        Map<String, String> replayedStatics = new HashMap<>();
-        for (RegisterBrokerRecord.BrokerStaticConfig sc : record.staticConfigs()) {
-            if (!sc.isSensitive()) {
-                replayedStatics.put(sc.name(), sc.value());
-            }
-        }
-        brokerStaticConfigs.put(new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(record.brokerId())), Map.copyOf(replayedStatics));
 
         updateDirectories(brokerId, prevRegistration == null ? null : prevRegistration.directories(), record.logDirs());
         if (heartbeatManager != null) {
