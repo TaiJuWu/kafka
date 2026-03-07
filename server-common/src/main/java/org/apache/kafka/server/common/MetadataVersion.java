@@ -130,7 +130,9 @@ public enum MetadataVersion {
     // they have set the configuration unstable.feature.versions.enable=true.
     // Please move this comment when updating the LATEST_PRODUCTION constant.
     //
-    IBP_4_4_IV0(31, "4.4", "IV0", false);
+    IBP_4_4_IV0(31, "4.4", "IV0", false),
+
+    IBP_4_4_IV1(32, "4.4", "IV1", true);
 
 
     // NOTES when adding a new version:
@@ -219,8 +221,14 @@ public enum MetadataVersion {
         return this.isAtLeast(MetadataVersion.IBP_4_3_IV0);
     }
 
+    public boolean isStaticConfigReportingSupported() {
+        return this.isAtLeast(MetadataVersion.IBP_4_4_IV1);
+    }
+
     public short registerBrokerRecordVersion() {
-        if (isCordonedLogDirsSupported()) {
+        if (isStaticConfigReportingSupported()) {
+            return (short) 5;
+        } else if (isCordonedLogDirsSupported()) {
             // new cordonedLogDirs field
             return (short) 4;
         } else if (isDirectoryAssignmentSupported()) {

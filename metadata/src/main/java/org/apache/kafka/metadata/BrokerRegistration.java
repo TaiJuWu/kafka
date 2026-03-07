@@ -24,6 +24,7 @@ import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord.BrokerEndpoint;
 import org.apache.kafka.common.metadata.RegisterBrokerRecord.BrokerFeature;
+import org.apache.kafka.common.metadata.RegisterBrokerRecord.BrokerStaticConfig;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.image.writer.ImageWriterOptions;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
@@ -55,6 +56,7 @@ public class BrokerRegistration {
         private boolean isMigratingZkBroker;
         private List<Uuid> directories;
         private List<Uuid> cordonedDirectories;
+        private Map<String, String> staticConfigs;
 
         public Builder() {
             this.id = 0;
@@ -68,6 +70,7 @@ public class BrokerRegistration {
             this.isMigratingZkBroker = false;
             this.directories = List.of();
             this.cordonedDirectories = List.of();
+            this.staticConfigs = Map.of();
         }
 
         public Builder setId(int id) {
@@ -135,6 +138,11 @@ public class BrokerRegistration {
             return this;
         }
 
+        public Builder setStaticConfigs(Map<String, String> staticConfigs) {
+            this.staticConfigs = staticConfigs;
+            return this;
+        }
+
         public BrokerRegistration build() {
             return new BrokerRegistration(
                 id,
@@ -147,7 +155,8 @@ public class BrokerRegistration {
                 inControlledShutdown,
                 isMigratingZkBroker,
                 directories,
-                cordonedDirectories);
+                cordonedDirectories,
+                staticConfigs);
         }
     }
 
@@ -162,6 +171,7 @@ public class BrokerRegistration {
     private final boolean isMigratingZkBroker;
     private final List<Uuid> directories;
     private final List<Uuid> cordonedDirectories;
+    private final Map<String, String> staticConfigs;
 
     private BrokerRegistration(
         int id,
@@ -174,7 +184,8 @@ public class BrokerRegistration {
         boolean inControlledShutdown,
         boolean isMigratingZkBroker,
         List<Uuid> directories,
-        List<Uuid> cordonedDirectories
+        List<Uuid> cordonedDirectories,
+        Map<String, String> staticConfigs
     ) {
         this.id = id;
         this.epoch = epoch;
@@ -197,6 +208,7 @@ public class BrokerRegistration {
         directories.sort(Uuid::compareTo);
         this.directories = Collections.unmodifiableList(directories);
         this.cordonedDirectories = Collections.unmodifiableList(cordonedDirectories);
+        this.staticConfigs = Collections.unmodifiableMap(staticConfigs);
     }
 
     public static BrokerRegistration fromRecord(RegisterBrokerRecord record) {
@@ -212,6 +224,10 @@ public class BrokerRegistration {
             supportedFeatures.put(feature.name(), VersionRange.of(
                 feature.minSupportedVersion(), feature.maxSupportedVersion()));
         }
+        Map<String, String> staticConfigs = new HashMap<>();
+        for (BrokerStaticConfig sc : record.staticConfigs()) {
+            staticConfigs.put(sc.name(), sc.value());
+        }
         return new BrokerRegistration(record.brokerId(),
             record.brokerEpoch(),
             record.incarnationId(),
@@ -222,7 +238,8 @@ public class BrokerRegistration {
             record.inControlledShutdown(),
             record.isMigratingZkBroker(),
             record.logDirs(),
-            record.cordonedLogDirs());
+            record.cordonedLogDirs(),
+            staticConfigs);
     }
 
     public int id() {
@@ -275,6 +292,10 @@ public class BrokerRegistration {
 
     public List<Uuid> cordonedDirectories() {
         return cordonedDirectories;
+    }
+
+    public Map<String, String> staticConfigs() {
+        return staticConfigs;
     }
 
     public boolean hasOnlineDir(Uuid dir) {
@@ -353,6 +374,14 @@ public class BrokerRegistration {
                 setMaxSupportedVersion(entry.getValue().max()));
         }
 
+        if (options.metadataVersion().isStaticConfigReportingSupported()) {
+            for (Entry<String, String> entry : staticConfigs.entrySet()) {
+                registrationRecord.staticConfigs().add(new BrokerStaticConfig().
+                        setName(entry.getKey()).
+                        setValue(entry.getValue()));
+            }
+        }
+
         return new ApiMessageAndVersion(registrationRecord,
             options.metadataVersion().registerBrokerRecordVersion());
     }
@@ -360,7 +389,7 @@ public class BrokerRegistration {
     @Override
     public int hashCode() {
         return Objects.hash(id, epoch, incarnationId, listeners, supportedFeatures,
-            rack, fenced, inControlledShutdown, isMigratingZkBroker, directories, cordonedDirectories);
+                rack, fenced, inControlledShutdown, isMigratingZkBroker, directories, cordonedDirectories, staticConfigs);
     }
 
     @Override
@@ -376,7 +405,8 @@ public class BrokerRegistration {
             other.inControlledShutdown == inControlledShutdown &&
             other.isMigratingZkBroker == isMigratingZkBroker &&
             other.directories.equals(directories) &&
-            other.cordonedDirectories.equals(cordonedDirectories);
+            other.cordonedDirectories.equals(cordonedDirectories) &&
+            other.staticConfigs.equals(staticConfigs);
     }
 
     @Override
@@ -399,6 +429,7 @@ public class BrokerRegistration {
                 ", isMigratingZkBroker=" + isMigratingZkBroker +
                 ", directories=" + directories +
                 ", cordonedDirectories=" + cordonedDirectories +
+                ", staticConfigs=" + staticConfigs +
                 ")";
     }
 
@@ -430,7 +461,8 @@ public class BrokerRegistration {
             newInControlledShutdownChange,
             isMigratingZkBroker,
             newDirectories,
-            newCordonedDirectories
+            newCordonedDirectories,
+            staticConfigs
         );
     }
 }

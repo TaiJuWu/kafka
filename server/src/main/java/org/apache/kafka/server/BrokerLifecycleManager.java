@@ -517,6 +517,16 @@ public class BrokerLifecycleManager {
         );
         List<Uuid> sortedLogDirs = new ArrayList<>(logDirs);
         sortedLogDirs.sort(Uuid::compareTo);
+        List<BrokerRegistrationRequestData.StaticConfig> staticConfigs = new ArrayList<>();
+        for (Map.Entry<String, ?> entry : config.nonInternalValues().entrySet()) {
+            String configName = entry.getKey();
+            String configValue = config.typeOf(configName).isSensitive()
+                ? null
+                : String.valueOf(entry.getValue());
+            staticConfigs.add(new BrokerRegistrationRequestData.StaticConfig()
+                .setName(configName)
+                .setValue(configValue));
+        }
         BrokerRegistrationRequestData data = new BrokerRegistrationRequestData()
             .setBrokerId(nodeId)
             .setIsMigratingZkBroker(false)
@@ -527,7 +537,8 @@ public class BrokerLifecycleManager {
             .setRack(rack.orElse(null))
             .setPreviousBrokerEpoch(previousBrokerEpoch.orElse(-1L))
             .setLogDirs(sortedLogDirs)
-            .setCordonedLogDirs(cordonedLogDirs.entrySet().stream().filter(Map.Entry::getValue).map(Map.Entry::getKey).toList());
+            .setCordonedLogDirs(cordonedLogDirs.entrySet().stream().filter(Map.Entry::getValue).map(Map.Entry::getKey).toList())
+            .setStaticConfigs(staticConfigs);
         if (logger.isDebugEnabled()) {
             logger.debug("Sending broker registration {}", data);
         }
