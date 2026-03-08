@@ -32,7 +32,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableMap;
+import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -155,7 +158,7 @@ public class ConfigDef {
      */
     public ConfigDef define(String name, Type type, Object defaultValue, Validator validator, Importance importance, String documentation,
                             String group, int orderInGroup, Width width, String displayName, List<String> dependents, Recommender recommender) {
-        return define(new ConfigKey(name, type, defaultValue, validator, importance, documentation, group, orderInGroup, width, displayName, dependents, recommender, false, null));
+        return define(new ConfigKey(name, type, defaultValue, validator, null, importance, documentation, group, orderInGroup, width, displayName, dependents, recommender, false, null));
     }
 
     /**
@@ -178,7 +181,7 @@ public class ConfigDef {
     public ConfigDef define(String name, Type type, Object defaultValue, Validator validator, Importance importance, String documentation,
                             String group, int orderInGroup, Width width, String displayName, List<String> dependents, Recommender recommender,
                             String alternativeString) {
-        return define(new ConfigKey(name, type, defaultValue, validator, importance, documentation, group, orderInGroup, width, displayName, dependents, recommender, false, alternativeString));
+        return define(new ConfigKey(name, type, defaultValue, validator, null, importance, documentation, group, orderInGroup, width, displayName, dependents, recommender, false, alternativeString));
     }
 
     /**
@@ -403,6 +406,27 @@ public class ConfigDef {
     }
 
     /**
+     * Define a new configuration with both a base validator and MV-specific validators.
+     * @param name          the name of the config parameter
+     * @param type          the type of the config
+     * @param defaultValue  the default value to use if this config isn't present
+     * @param validator     the base validator to use in checking the correctness of the config
+     * @param mvValidators  a sorted map from metadata version feature level to the validator
+     *                      that applies once that version is reached
+     * @param importance    the importance of this config
+     * @param documentation the documentation string for the config
+     * @return This ConfigDef so you can chain calls
+     */
+    public ConfigDef define(String name, Type type, Object defaultValue,
+                            Validator validator,
+                            NavigableMap<Short, Validator> mvValidators,
+                            Importance importance, String documentation) {
+        return define(new ConfigKey(name, type, defaultValue, validator, mvValidators,
+                importance, documentation, null, -1, Width.NONE, name,
+                Collections.emptyList(), null, false, null));
+    }
+
+    /**
      * Define a new configuration with no special validation logic
      * @param name          The name of the config parameter
      * @param type          The type of the config
@@ -452,7 +476,7 @@ public class ConfigDef {
      * @return This ConfigDef so you can chain calls
      */
     public ConfigDef defineInternal(final String name, final Type type, final Object defaultValue, final Importance importance) {
-        return define(new ConfigKey(name, type, defaultValue, null, importance, "", "", -1, Width.NONE, name, Collections.emptyList(), null, true, null));
+        return define(new ConfigKey(name, type, defaultValue, null, null, importance, "", "", -1, Width.NONE, name, Collections.emptyList(), null, true, null));
     }
 
     /**
@@ -467,7 +491,7 @@ public class ConfigDef {
      * @return This ConfigDef so you can chain calls
      */
     public ConfigDef defineInternal(final String name, final Type type, final Object defaultValue, final Validator validator, final Importance importance, final String documentation) {
-        return define(new ConfigKey(name, type, defaultValue, validator, importance, documentation, "", -1, Width.NONE, name, Collections.emptyList(), null, true, null));
+        return define(new ConfigKey(name, type, defaultValue, validator, null, importance, documentation, "", -1, Width.NONE, name, Collections.emptyList(), null, true, null));
     }
 
     /**
@@ -476,6 +500,22 @@ public class ConfigDef {
      */
     public Map<String, ConfigKey> configKeys() {
         return configKeys;
+    }
+
+    /**
+     * Look up the MV-specific validator for a config key at a given feature level.
+     * Uses floor semantics: returns the validator registered at the highest threshold
+     * that is <= featureLevel, if any.
+     *
+     * @param name         the config key name
+     * @param featureLevel the metadata version feature level to check
+     * @return the applicable validator, or empty if none registered
+     */
+    public Optional<Validator> getMvValidator(String name, short featureLevel) {
+        ConfigKey key = configKeys.get(name);
+        if (key == null || key.mvValidators == null) return Optional.empty();
+        Map.Entry<Short, Validator> entry = key.mvValidators.floorEntry(featureLevel);
+        return entry != null ? Optional.of(entry.getValue()) : Optional.empty();
     }
 
     /**
@@ -1307,6 +1347,7 @@ public class ConfigDef {
         public final String documentation;
         public final Object defaultValue;
         public final Validator validator;
+        public final NavigableMap<Short, Validator> mvValidators;
         public final Importance importance;
         public final String group;
         public final int orderInGroup;
@@ -1323,12 +1364,12 @@ public class ConfigDef {
                          int orderInGroup, Width width, String displayName,
                          List<String> dependents, Recommender recommender,
                          boolean internalConfig) {
-            this(name, type, defaultValue, validator, importance, documentation, group, orderInGroup, width, displayName,
+            this(name, type, defaultValue, validator, null, importance, documentation, group, orderInGroup, width, displayName,
                 dependents, recommender, internalConfig, null);
         }
 
         private ConfigKey(String name, Type type, Object defaultValue, Validator validator,
-                         Importance importance, String documentation, String group,
+                         NavigableMap<Short, Validator> mvValidators, Importance importance, String documentation, String group,
                          int orderInGroup, Width width, String displayName,
                          List<String> dependents, Recommender recommender,
                          boolean internalConfig, String alternativeString) {
@@ -1337,6 +1378,7 @@ public class ConfigDef {
             boolean hasDefault = !NO_DEFAULT_VALUE.equals(defaultValue);
             this.defaultValue = hasDefault ? parseType(name, defaultValue, type) : NO_DEFAULT_VALUE;
             this.validator = validator;
+            this.mvValidators = mvValidators;
             this.importance = importance;
             if (this.validator != null && hasDefault)
                 this.validator.ensureValid(name, this.defaultValue);
@@ -1633,6 +1675,7 @@ public class ConfigDef {
                     key.type,
                     key.defaultValue,
                     embeddedValidator(keyPrefix, key.validator),
+                    embeddedMvValidators(keyPrefix, key.mvValidators),
                     key.importance,
                     key.documentation,
                     groupPrefix + (key.group == null ? "" : ": " + key.group),
@@ -1653,6 +1696,14 @@ public class ConfigDef {
         if (base == null) return null;
         return ConfigDef.LambdaValidator.with(
             (name, value) -> base.ensureValid(name.substring(keyPrefix.length()), value), base::toString);
+    }
+
+    private static NavigableMap<Short, Validator> embeddedMvValidators(
+            final String keyPrefix, final NavigableMap<Short, Validator> base) {
+        if (base == null) return null;
+        NavigableMap<Short, Validator> result = new TreeMap<>();
+        base.forEach((level, v) -> result.put(level, embeddedValidator(keyPrefix, v)));
+        return result;
     }
 
     /**

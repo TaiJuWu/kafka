@@ -20,6 +20,7 @@ package org.apache.kafka.controller;
 import org.apache.kafka.clients.admin.AlterConfigOp.OpType;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.FeatureUpdate;
+import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.ConfigResource.Type;
@@ -365,6 +366,8 @@ public class ConfigurationControlManager {
             // As per KAFKA-14195, do not include implicit deletions caused by using the legacy AlterConfigs API
             // in the list passed to the policy in order to maintain backwards compatibility
         }
+        ApiError mvError = validateConfigsAgainstCurrentMv(configResource, allConfigs);
+        if (mvError.isFailure()) return mvError;
         try {
             validator.validate(configResource, allConfigs, existingConfigsMap);
             if (!newlyCreatedResource) {
@@ -691,6 +694,13 @@ public class ConfigurationControlManager {
         boolean validateOnly,
         int currentClaimEpoch
     ) {
+        if (updates.containsKey(MetadataVersion.FEATURE_NAME)) {
+            ApiError preCheckError = validateAllConfigsForMvUpgrade(
+                updates.get(MetadataVersion.FEATURE_NAME));
+            if (preCheckError.isFailure()) {
+                return ControllerResult.of(List.of(), preCheckError);
+            }
+        }
         ControllerResult<ApiError> result = featureControl.updateFeatures(updates, upgradeTypes, validateOnly, currentClaimEpoch);
         if (result.response().isSuccess() &&
             !validateOnly &&
@@ -705,6 +715,114 @@ public class ConfigurationControlManager {
             return ControllerResult.atomicOf(records, ApiError.NONE);
         }
         return result;
+    }
+
+    /**
+     * Validate configs against the current metadata version's MV-specific validators.
+     * Called during alterConfig to block configs that violate the current MV constraints.
+     */
+    private ApiError validateConfigsAgainstCurrentMv(
+            ConfigResource resource, Map<String, String> allConfigs) {
+        Optional<MetadataVersion> mvOpt = featureControl.metadataVersion();
+        if (mvOpt.isEmpty()) return ApiError.NONE;
+        short featureLevel = mvOpt.get().featureLevel();
+        for (Map.Entry<String, String> entry : allConfigs.entrySet()) {
+            if (entry.getValue() == null) continue;
+            Optional<ConfigDef.Validator> v =
+                configSchema.getMvValidator(resource.type(), entry.getKey(), featureLevel);
+            if (v.isEmpty()) continue;
+            try {
+                v.get().ensureValid(entry.getKey(), entry.getValue());
+            } catch (ConfigException e) {
+                return new ApiError(INVALID_CONFIG, e.getMessage());
+            }
+        }
+        return ApiError.NONE;
+    }
+
+    /**
+     * Pre-check all effective configs before a metadata version upgrade.
+     * Returns an error if any config would violate a new MV constraint introduced by the upgrade.
+     */
+    ApiError validateAllConfigsForMvUpgrade(short newVersionLevel) {
+        MetadataVersion currentMv = featureControl.metadataVersionOrThrow();
+        MetadataVersion newMv;
+        try {
+            newMv = MetadataVersion.fromFeatureLevel(newVersionLevel);
+        } catch (IllegalArgumentException e) {
+            return ApiError.NONE;
+        }
+        if (newMv.compareTo(currentMv) <= 0) return ApiError.NONE;
+
+        short currentLevel = currentMv.featureLevel();
+        short newLevel = newMv.featureLevel();
+
+        // 1a. Validate effective config for topics that have explicit dynamic overrides
+        for (Entry<ConfigResource, TimelineHashMap<String, String>> resourceEntry : configData.entrySet()) {
+            if (resourceEntry.getKey().type() != Type.TOPIC) continue;
+            Map<String, ConfigEntry> effective = computeEffectiveTopicConfigs(resourceEntry.getValue());
+            for (Entry<String, ConfigEntry> e : effective.entrySet()) {
+                ApiError err = checkMvConstraintCrossed(
+                    Type.TOPIC, e.getKey(), e.getValue().value(), currentLevel, newLevel, newMv);
+                if (err.isFailure()) return err;
+            }
+        }
+
+        // 1b. Validate effective config for topics with no explicit dynamic overrides.
+        // Such topics do not appear in configData; they inherit their values from cluster
+        // defaults, static config, and ConfigDef defaults, all of which are captured here.
+        Map<String, ConfigEntry> baseTopicConfig = computeEffectiveTopicConfigs(Map.of());
+        for (Entry<String, ConfigEntry> e : baseTopicConfig.entrySet()) {
+            if (e.getValue().value() == null) continue;
+            ApiError err = checkMvConstraintCrossed(
+                Type.TOPIC, e.getKey(), e.getValue().value(), currentLevel, newLevel, newMv);
+            if (err.isFailure()) return err;
+        }
+
+        // 2. Validate effective broker config for cluster-level defaults (DEFAULT_NODE)
+        ApiError clusterErr = validateEffectiveBrokerConfig(Map.of(), currentLevel, newLevel, newMv);
+        if (clusterErr.isFailure()) return clusterErr;
+
+        // 3. Validate effective broker config for each broker that has dynamic per-broker config
+        for (Integer brokerId : brokersWithConfigs) {
+            TimelineHashMap<String, String> perBrokerMap =
+                configData.get(new ConfigResource(BROKER, brokerId.toString()));
+            Map<String, String> perBroker = perBrokerMap != null ? perBrokerMap : Map.of();
+            ApiError err = validateEffectiveBrokerConfig(perBroker, currentLevel, newLevel, newMv);
+            if (err.isFailure()) return err;
+        }
+
+        return ApiError.NONE;
+    }
+
+    private ApiError validateEffectiveBrokerConfig(
+            Map<String, String> dynamicNodeConfigs,
+            short currentLevel, short newLevel, MetadataVersion newMv) {
+        Map<String, ConfigEntry> effective = configSchema.resolveEffectiveBrokerConfigs(
+            staticConfig, clusterConfig(), dynamicNodeConfigs);
+        for (Entry<String, ConfigEntry> e : effective.entrySet()) {
+            ApiError err = checkMvConstraintCrossed(
+                BROKER, e.getKey(), e.getValue().value(), currentLevel, newLevel, newMv);
+            if (err.isFailure()) return err;
+        }
+        return ApiError.NONE;
+    }
+
+    private ApiError checkMvConstraintCrossed(
+            Type type, String key, String value,
+            short currentLevel, short newLevel, MetadataVersion newMv) {
+        Optional<ConfigDef.Validator> atNew = configSchema.getMvValidator(type, key, newLevel);
+        Optional<ConfigDef.Validator> atCurrent = configSchema.getMvValidator(type, key, currentLevel);
+        // Only validate when the new MV introduces a new or different constraint
+        if (atNew.isEmpty() || atNew.equals(atCurrent)) return ApiError.NONE;
+        try {
+            atNew.get().ensureValid(key, value);
+        } catch (ConfigException e) {
+            return new ApiError(INVALID_CONFIG,
+                "Cannot upgrade metadata.version to " + newMv + ": config " + key
+                + " violates new constraint: " + e.getMessage());
+        }
+        return ApiError.NONE;
     }
 
     /**

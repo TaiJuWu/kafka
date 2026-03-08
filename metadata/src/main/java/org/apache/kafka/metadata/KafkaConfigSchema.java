@@ -31,6 +31,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 
 import static org.apache.kafka.common.config.TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG;
@@ -272,6 +273,57 @@ public class KafkaConfigSchema {
             List.of(), // we don't populate synonyms, for now.
             translateConfigType(configKey.type()),
             configKey.documentation);
+    }
+
+    /**
+     * Look up the MV-specific validator for a config key at a given feature level.
+     *
+     * @param type         the resource type
+     * @param key          the config key name
+     * @param featureLevel the metadata version feature level
+     * @return the applicable validator, or empty if none registered
+     */
+    public Optional<ConfigDef.Validator> getMvValidator(
+            ConfigResource.Type type, String key, short featureLevel) {
+        ConfigDef configDef = configDefs.get(type);
+        if (configDef == null) return Optional.empty();
+        return configDef.getMvValidator(key, featureLevel);
+    }
+
+    /**
+     * Resolve the effective broker configs for a single node by merging static, cluster-level
+     * dynamic, and per-node dynamic configs, in order of increasing precedence.
+     *
+     * @param staticNodeConfig      the static (file-based) node configuration
+     * @param dynamicClusterConfigs the cluster-wide dynamic config (DEFAULT_NODE)
+     * @param dynamicNodeConfigs    the per-broker dynamic config for this node
+     * @return a map of config name to effective ConfigEntry (including source metadata)
+     */
+    public Map<String, ConfigEntry> resolveEffectiveBrokerConfigs(
+            Map<String, Object> staticNodeConfig,
+            Map<String, String> dynamicClusterConfigs,
+            Map<String, String> dynamicNodeConfigs) {
+        ConfigDef configDef = configDefs.getOrDefault(ConfigResource.Type.BROKER, EMPTY_CONFIG_DEF);
+        Map<String, ConfigEntry> result = new HashMap<>();
+        for (ConfigDef.ConfigKey configKey : configDef.configKeys().values()) {
+            if (configKey.internalConfig) continue;
+            ConfigEntry entry;
+            if (dynamicNodeConfigs.containsKey(configKey.name)) {
+                entry = toConfigEntry(configKey, dynamicNodeConfigs.get(configKey.name),
+                    ConfigEntry.ConfigSource.DYNAMIC_BROKER_CONFIG, Function.identity());
+            } else if (dynamicClusterConfigs.containsKey(configKey.name)) {
+                entry = toConfigEntry(configKey, dynamicClusterConfigs.get(configKey.name),
+                    ConfigEntry.ConfigSource.DYNAMIC_DEFAULT_BROKER_CONFIG, Function.identity());
+            } else if (staticNodeConfig.containsKey(configKey.name)) {
+                entry = toConfigEntry(configKey, staticNodeConfig.get(configKey.name),
+                    ConfigEntry.ConfigSource.STATIC_BROKER_CONFIG, Function.identity());
+            } else {
+                entry = toConfigEntry(configKey, configKey.hasDefault() ? configKey.defaultValue : null,
+                    ConfigEntry.ConfigSource.DEFAULT_CONFIG, Function.identity());
+            }
+            if (entry.value() != null) result.put(configKey.name, entry);
+        }
+        return result;
     }
 
     public int getStaticallyConfiguredMinInsyncReplicas(Map<String, ?> staticNodeConfig) {
