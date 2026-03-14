@@ -2,6 +2,7 @@ org.apache.kafka.coordinator.group.GroupConfigManagerTest:
 - testGetNonExistentGroupConfig
 - testUpdateConfigWithInvalidGroupId
 - testUpdateGroupConfig
+- testValidateUsesAllGroupTypeDefaults
 org.apache.kafka.coordinator.group.GroupConfigTest:
 - testFromPropsInvalid
 - testFromPropsWithDefaultValue
@@ -477,6 +478,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testReplayStreamsGroupMemberMetadata
 - testReplayStreamsGroupMemberMetadataTombstoneExisting
 - testReplayStreamsGroupMemberMetadataTombstoneNotExisting
+- testReplayStreamsGroupMemberMetadataWithSimpleClassicGroup
 - testReplayStreamsGroupMetadata
 - testReplayStreamsGroupTargetAssignmentMember
 - testReplayStreamsGroupTargetAssignmentMemberTombstoneExisting
