@@ -1,25 +1,52 @@
 org.apache.kafka.coordinator.group.GroupConfigManagerTest:
+- testClampWithCustomBrokerBounds
 - testGetNonExistentGroupConfig
+- testGroupIsRemovedWhenDynamicConfigsAreRemoved
 - testUpdateConfigWithInvalidGroupId
+- testUpdateConfigWithNullGroupId
 - testUpdateGroupConfig
-- testValidateUsesAllGroupTypeDefaults
 org.apache.kafka.coordinator.group.GroupConfigTest:
+- testAllFieldsAbsentWhenNotConfigured
+- testAllFieldsPresentWhenConfigured
+- testAllGroupConfigSynonyms
+- testDLQBlankTopicNameIsValid
+- testDLQConfigCustomValues
+- testDLQConfigDefaults
+- testDLQTopicNameCannotStartWithDoubleUnderscore
+- testEvaluateDoesNotModifyInput
+- testEvaluateEmptyPropsReturnsEmpty
+- testEvaluateMaxBoundedValueAboveMaxIsCapped
+- testEvaluateMinBoundedValueBelowMinIsCapped
+- testEvaluateValueAboveMaxIsCapped
+- testEvaluateValueBelowMinIsCapped
 - testFromPropsInvalid
 - testFromPropsWithDefaultValue
 - testInvalidConfigName
 - testInvalidProps
+- testNotValidatedWhenNotConfigured
 - testValidShareAutoOffsetResetValues
 - testValidShareIsolationLevelValues
+- testValidateWithAllGroupTypeConfigs
 org.apache.kafka.coordinator.group.GroupCoordinatorConfigTest:
 - testAppendLingerMs
+- testClampDynamicConfigs
 - testConfigs
 - testConsumerGroupAssignorFullClassNames
 - testConsumerGroupAssignors
-- testInvalidConfigs
+- testDLQAutoCreateTopicsEnableCustomValue
+- testDLQAutoCreateTopicsEnableDefaultValue
+- testDLQTopicNamePrefixCustomValue
+- testDLQTopicNamePrefixDefaultValue
+- testInvalidConsumerConfigs
+- testInvalidStreamsConfigs
 - testShareGroupAssignorFullClassNames
 - testShareGroupAssignors
 - testStreamsGroupInitialRebalanceDelayCustomValue
 - testStreamsGroupInitialRebalanceDelayDefaultValue
+- testStreamsGroupMinTaskOffsetIntervalCustomValue
+- testStreamsGroupMinTaskOffsetIntervalDefaultValue
+- testStreamsGroupTaskOffsetIntervalCustomValue
+- testStreamsGroupTaskOffsetIntervalDefaultValue
 org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
 - testEmptyGroupMetadataRecord
 - testNewConsumerGroupCurrentAssignmentRecord
@@ -31,8 +58,8 @@ org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
 - testNewConsumerGroupRegularExpressionRecord
 - testNewConsumerGroupRegularExpressionTombstone
 - testNewConsumerGroupSubscriptionMetadataTombstoneRecord
-- testNewConsumerGroupTargetAssignmentEpochRecord
-- testNewConsumerGroupTargetAssignmentEpochTombstoneRecord
+- testNewConsumerGroupTargetAssignmentMetadataRecord
+- testNewConsumerGroupTargetAssignmentMetadataTombstoneRecord
 - testNewConsumerGroupTargetAssignmentRecord
 - testNewConsumerGroupTargetAssignmentTombstoneRecord
 - testNewGroupMetadataRecord
@@ -205,6 +232,7 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 - testInitiateDeleteShareGroupOffsetsSuccess
 - testInitiateDeleteShareGroupOffsetsSuccessWithErrorTopics
 - testOnLoaded
+- testOnMetadataUpdate
 - testOnTopicsDeleted
 - testOnUnloaded
 - testReplayConsumerGroupCurrentMemberAssignment
@@ -251,8 +279,12 @@ org.apache.kafka.coordinator.group.GroupCoordinatorShardTest:
 - testSharePartitionDeleteRequestsNonEmptyShareGroup
 - testStreamsGroupHeartbeat
 org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
+- testCanComputeNextTargetAssignment
+- testCanComputeNextTargetAssignmentWithNoPreviousAssignmentTimestamp
+- testCanComputeNextTargetAssignmentWithZeroAssignmentIntervalMs
 - testClassicGroupCompletedRebalanceSensor
 - testClassicGroupDelete
+- testClassicGroupHeartbeatToConsumerGroupDuringAssignmentDelay
 - testClassicGroupHeartbeatToConsumerGroupMaintainsSession
 - testClassicGroupHeartbeatToConsumerGroupRebalanceInProgress
 - testClassicGroupHeartbeatToConsumerWithFencedInstanceId
@@ -276,6 +308,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testClassicGroupOnUnloadedEmptyAndPreparingRebalance
 - testClassicGroupSyncOnShareGroup
 - testClassicGroupSyncOnStreamsGroup
+- testClassicGroupSyncToConsumerGroupDuringAssignmentDelay
 - testClassicGroupSyncToConsumerGroupRebalanceInProgress
 - testClassicGroupSyncToConsumerGroupWithAllConsumerProtocolVersions
 - testClassicGroupSyncToConsumerGroupWithFencedInstanceId
@@ -288,6 +321,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testCompleteJoinPhaseInEmptyStateSkipsRebalance
 - testCompleteJoinPhaseNoMembersRejoinedExtendsJoinPhase
 - testCompleteJoinRemoveNotYetRejoinedDynamicMembers
+- testConsumerGroupAssignmentInterval
 - testConsumerGroupDelete
 - testConsumerGroupDescribeBeforeAndAfterCommittingOffset
 - testConsumerGroupDescribeNoErrors
@@ -295,6 +329,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testConsumerGroupDescribeOnStreamsGroup
 - testConsumerGroupDescribeWithErrors
 - testConsumerGroupDynamicConfigs
+- testConsumerGroupEvaluatedConfigs
 - testConsumerGroupHeartbeatFromExistingClassicStaticMember
 - testConsumerGroupHeartbeatFullResponse
 - testConsumerGroupHeartbeatOnShareGroup
@@ -337,6 +372,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testDuplicateFullHeartbeatInUnreleasedPartitionsState
 - testDuplicateFullHeartbeatInUnrevokedPartitionsState
 - testDuplicateFullHeartbeatWithRevocationAck
+- testDynamicBrokerAndGroupConfigs
 - testDynamicMembersCanRejoinGroupWithMaxSizeWhileRebalancing
 - testDynamicMembersJoinGroupWithMaxSizeAndNotRequiredKnownMember
 - testDynamicMembersJoinGroupWithMaxSizeAndRequiredKnownMember
@@ -396,6 +432,8 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testLastConsumerProtocolMemberSessionTimeoutInConsumerGroup
 - testLastJoiningMembersAreKickedOutWhenRejoiningGroupWithMaxSize
 - testLastStaticConsumerProtocolMemberReplacedByClassicProtocolMember
+- testLastStaticConsumerProtocolMemberReplacedByClassicProtocolMemberWhenTargetAssignmentIsMissing
+- testLastStaticConsumerProtocolMemberReplacedByClassicProtocolMemberWhenTargetAssignmentIsStale
 - testLeaderFailureInSyncGroup
 - testLeaveDeadGroup
 - testLeaveGroupInvalidGroup
@@ -467,7 +505,11 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testReplayConsumerGroupTargetAssignmentMemberTombstone
 - testReplayConsumerGroupTargetAssignmentMetadata
 - testReplayConsumerGroupTargetAssignmentMetadataTombstone
+- testReplayConsumerGroupTargetAssignmentMetadataTombstoneExisting
 - testReplayGroupMetadataRecords
+- testReplayShareGroupTargetAssignmentMetadata
+- testReplayShareGroupTargetAssignmentMetadataTombstone
+- testReplayShareGroupTargetAssignmentMetadataTombstoneExisting
 - testReplayStreamsGroupCurrentMemberAssignment
 - testReplayStreamsGroupCurrentMemberAssignmentTombstoneExisting
 - testReplayStreamsGroupCurrentMemberAssignmentTombstoneNotExisting
@@ -497,6 +539,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testSessionTimeoutExpirationForShareMember
 - testSessionTimeoutExpirationStaticMember
 - testSessionTimeoutLifecycle
+- testShareGroupAssignmentInterval
 - testShareGroupDeleteRequestNoDeletingTopics
 - testShareGroupDeleteRequestWithAlreadyDeletingTopics
 - testShareGroupDeleteRequestWithAlreadyDeletingTopicsButMetadataIsEmpty
@@ -507,6 +550,8 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testShareGroupDescribeOnStreamsGroup
 - testShareGroupDescribeRequest
 - testShareGroupDynamicConfigs
+- testShareGroupEvaluatedConfigs
+- testShareGroupHeartbeatDoesNotBumpGroupEpochDuringAssignmentDelay
 - testShareGroupHeartbeatInitializeOnPartitionUpdate
 - testShareGroupHeartbeatOnConsumerGroup
 - testShareGroupHeartbeatOnStreamsGroup
@@ -567,8 +612,10 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStaticMembersFencedInstanceBatchLeaveGroup
 - testStaticMembersJoinGroupWithMaxSize
 - testStaticMembersLeaveUnknownGroup
+- testStaticMembersRejoinWithNewServerAssignor
 - testStaticMembersUnknownInstanceBatchLeaveGroup
 - testStaticMembersValidBatchLeaveGroup
+- testStreamsGroupAssignmentInterval
 - testStreamsGroupDeleteCancelsInitialRebalanceTimer
 - testStreamsGroupDescribeBeforeAndAfterCommittingOffset
 - testStreamsGroupDescribeNoErrors
@@ -579,6 +626,7 @@ org.apache.kafka.coordinator.group.GroupMetadataManagerTest:
 - testStreamsGroupEndpointInformationIncludesNewMember
 - testStreamsGroupEndpointInformationOnlyWhenEpochGreater
 - testStreamsGroupEpochIncreaseWithAssignmentConfigChanges
+- testStreamsGroupEvaluatedConfigs
 - testStreamsGroupHeartbeatAlwaysSetsStatus
 - testStreamsGroupHeartbeatOnConsumerGroup
 - testStreamsGroupHeartbeatOnShareGroup
@@ -653,10 +701,12 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testCleanupExpiredOffsetsWithPendingTransactionalOffsetsOnly
 - testConsumerGroupOffsetCommit
 - testConsumerGroupOffsetCommitFromAdminClient
+- testConsumerGroupOffsetCommitResolvesTopicId
 - testConsumerGroupOffsetCommitWithIllegalGenerationId
 - testConsumerGroupOffsetCommitWithOffsetMetadataTooLarge
 - testConsumerGroupOffsetCommitWithStaleMemberEpoch
 - testConsumerGroupOffsetCommitWithUnknownMemberId
+- testConsumerGroupOffsetCommitWithZeroTopicId
 - testConsumerGroupOffsetDelete
 - testConsumerGroupOffsetDeleteWithErrors
 - testConsumerGroupOffsetDeleteWithPendingTransactionalOffsets
@@ -666,8 +716,10 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testConsumerGroupOffsetFetchWithStaleMemberEpoch
 - testConsumerGroupOffsetFetchWithUnknownMemberId
 - testConsumerGroupTransactionalOffsetCommit
+- testConsumerGroupTransactionalOffsetCommitResolvesTopicId
 - testConsumerGroupTransactionalOffsetCommitWithStaleMemberEpoch
 - testConsumerGroupTransactionalOffsetCommitWithUnknownMemberId
+- testConsumerGroupTransactionalOffsetCommitWithUnresolvedTopicId
 - testDeleteGroupAllOffsets
 - testDeleteGroupAllOffsetsWithPendingTransactionalOffsets
 - testFetchAllOffsetsAtDifferentCommittedOffset
@@ -736,6 +788,9 @@ org.apache.kafka.coordinator.group.ShareGroupAutoOffsetResetStrategyTest:
 - testTimestamp
 - testValidator
 org.apache.kafka.coordinator.group.UtilsTest:
+- testAssignmentFromTopicPartitionsWithEpochsProvided
+- testAssignmentFromTopicPartitionsWithNegativeDefaultEpoch
+- testAssignmentFromTopicPartitionsWithUnequalEpochLength
 - testComputeGroupHashWithDifferentOrder
 - testComputeGroupHashWithEmptyMap
 - testComputeGroupHashWithSameKeyButDifferentValue
@@ -947,13 +1002,16 @@ org.apache.kafka.coordinator.group.modern.UnionSetTest:
 - testUnion
 org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupMemberTest:
 - testAsConsumerGroupDescribeMember
+- testAsConsumerGroupDescribeMemberWithSameTopicPendingRevocation
 - testAsConsumerGroupDescribeWithTargetAssignmentNull
 - testAsConsumerGroupDescribeWithTopicNameNotFound
+- testAssignedAndPendingRevocationEpoch
 - testClassicProtocolListFromJoinRequestProtocolCollection
 - testEquals
 - testNewMember
 - testUpdateMember
 - testUpdateWithConsumerGroupCurrentMemberAssignmentValue
+- testUpdateWithConsumerGroupCurrentMemberAssignmentValueWithNegativeEpoch
 - testUpdateWithConsumerGroupMemberMetadataValue
 org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupTest:
 - testAddPartitionEpochs
@@ -996,6 +1054,9 @@ org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupTest:
 - testUpdatingMemberUpdatesPartitionEpochWhenPartitionIsReassignedBeforeBeingRevoked
 - testValidateDeleteGroup
 - testValidateOffsetCommit
+- testValidateOffsetCommitWithClassicProtocolMember
+- testValidateOffsetCommitWithEpochValidation
+- testValidateOffsetCommitWithUnassignedTopicOrPartition
 - testValidateOffsetFetch
 - testValidateTransactionalOffsetCommit
 - testWaitingOnUnreleasedPartition
@@ -1032,6 +1093,17 @@ org.apache.kafka.coordinator.group.modern.share.ShareGroupAssignmentBuilderTest:
 - testStableToStable
 - testStableToStableWithAssignmentTopicsNoLongerInSubscription
 - testStableToStableWithNewPartitions
+org.apache.kafka.coordinator.group.modern.share.ShareGroupConfigProviderTest:
+- testAutoOffsetResetWithGroupConfig
+- testAutoOffsetResetWithoutGroupConfig
+- testDeliveryCountLimitOrDefaultWithGroupConfig
+- testDeliveryCountLimitOrDefaultWithoutGroupConfig
+- testIsRenewAcknowledgeDisabledWithGroupConfig
+- testIsRenewAcknowledgeEnabledWithoutGroupConfig
+- testPartitionMaxRecordLocksOrDefaultWithGroupConfig
+- testPartitionMaxRecordLocksOrDefaultWithoutGroupConfig
+- testRecordLockDurationMsOrDefaultWithGroupConfig
+- testRecordLockDurationMsOrDefaultWithoutGroupConfig
 org.apache.kafka.coordinator.group.modern.share.ShareGroupConfigTest:
 - testConfigs
 - testInvalidConfigs
@@ -1106,10 +1178,10 @@ org.apache.kafka.coordinator.group.streams.StreamsCoordinatorRecordHelpersTest:
 - testNewStreamsGroupMetadataRecord
 - testNewStreamsGroupMetadataRecordNullGroupId
 - testNewStreamsGroupMetadataRecordWithNullAssignmentConfig
-- testNewStreamsGroupTargetAssignmentEpochRecord
-- testNewStreamsGroupTargetAssignmentEpochRecordNullGroupId
-- testNewStreamsGroupTargetAssignmentEpochTombstoneRecord
-- testNewStreamsGroupTargetAssignmentEpochTombstoneRecordNullGroupId
+- testNewStreamsGroupTargetAssignmentMetadataRecord
+- testNewStreamsGroupTargetAssignmentMetadataRecordNullGroupId
+- testNewStreamsGroupTargetAssignmentMetadataTombstoneRecord
+- testNewStreamsGroupTargetAssignmentMetadataTombstoneRecordNullGroupId
 - testNewStreamsGroupTargetAssignmentRecord
 - testNewStreamsGroupTargetAssignmentRecordNullAssignment
 - testNewStreamsGroupTargetAssignmentRecordNullGroupId

@@ -227,6 +227,16 @@ org.apache.kafka.server.MetadataRequestTest:
 - testTopicIdsInResponse
 org.apache.kafka.server.MonitorablePluginsIntegrationTest:
 - testMonitorableServerPlugins
+org.apache.kafka.server.NodeToControllerRequestThreadTest:
+- testAuthenticationExceptionHandling
+- testControllerChanged
+- testEnvelopeResponseWithNotControllerError
+- testNotController
+- testRequestsSent
+- testRetryTimeout
+- testRetryTimeoutWhileControllerNotAvailable
+- testThreadNotStarted
+- testUnsupportedVersionHandling
 org.apache.kafka.server.ReconfigurableQuorumIntegrationTest:
 - testControllersAutoJoinStandaloneVoter
 - testCreateAndDestroyNonReconfigurableCluster
@@ -236,16 +246,32 @@ org.apache.kafka.server.ReconfigurableQuorumIntegrationTest:
 - testRemoveAndAddVoterWithInconsistentClusterId
 - testRemoveAndAddVoterWithValidClusterId
 - testRemoveController
+org.apache.kafka.server.UncleanLeaderElectionTest:
+- testTopicUncleanLeaderElectionEnableWithAlterTopicConfigsClassic
+- testTopicUncleanLeaderElectionEnableWithAlterTopicConfigsConsumer
+- testUncleanLeaderElectionDisabledByTopicOverrideClassic
+- testUncleanLeaderElectionDisabledByTopicOverrideConsumer
+- testUncleanLeaderElectionDisabledClassic
+- testUncleanLeaderElectionDisabledConsumer
+- testUncleanLeaderElectionEnabledByTopicOverrideClassic
+- testUncleanLeaderElectionEnabledByTopicOverrideConsumer
+- testUncleanLeaderElectionEnabledClassic
+- testUncleanLeaderElectionEnabledConsumer
+- testUncleanLeaderElectionInvalidTopicOverride
 org.apache.kafka.server.config.AbstractKafkaConfigTest:
 - testPopulateSynonymsOnEmptyMap
 - testPopulateSynonymsOnMapWithoutBrokerId
 - testPopulateSynonymsOnMapWithoutNodeId
+org.apache.kafka.server.config.DefaultSupportedConfigCheckerTest:
+- testIsSupported
 org.apache.kafka.server.config.DelegationTokenManagerConfigsTest:
 - testDefaults
 - testInvalidProperty
 - testOverride
 org.apache.kafka.server.config.DynamicBrokerConfigTest:
 - testBrokerConfigSynonyms
+org.apache.kafka.server.config.DynamicConfigTest:
+- testGroupIsRemovedWhenDynamicConfigsAreRemoved
 org.apache.kafka.server.config.MinInSyncReplicasConfigTest:
 - testDefaultKafkaConfig
 org.apache.kafka.server.metrics.BrokerServerMetricsTest:
@@ -288,6 +314,24 @@ org.apache.kafka.server.metrics.LinuxIoMetricsCollectorTest:
 - testUnableToReadNonexistentProcFile
 org.apache.kafka.server.metrics.NodeMetricsTest:
 - testMetricsExported
+org.apache.kafka.server.partition.AlterPartitionManagerTest:
+- testAuthorizationFailed
+- testBasic
+- testBasicSentLeaderRecoveryState
+- testBasicWithBrokerEpoch
+- testInvalidRequest
+- testInvalidUpdateVersion
+- testNotLeaderOrFollower
+- testOneInFlight
+- testOverwriteWithinBatch
+- testPartitionMissingInResponse
+- testRetryOnAuthenticationFailure
+- testRetryOnUnsupportedVersionError
+- testSingleBatch
+- testStaleBrokerEpoch
+- testSubmitFromCallback
+- testUnknownServer
+- testUnknownTopicPartition
 org.apache.kafka.server.purgatory.DelayedFutureTest:
 - testDelayedFuture
 org.apache.kafka.server.quota.ClientQuotasRequestTest:
@@ -310,6 +354,10 @@ org.apache.kafka.server.quota.ClientSensorsTest:
 - testConstructorThrowsExceptionWhenThrottleTimeSensorIsNull
 - testConstructorWithEmptyMap
 - testConstructorWithValidParameters
+org.apache.kafka.server.quota.ReplicationQuotaManagerTest:
+- shouldExceedQuotaThenReturnBackBelowBoundAsTimePasses
+- shouldSupportWildcardThrottledReplicas
+- shouldThrottleOnlyDefinedReplicas
 org.apache.kafka.server.quota.ThrottledChannelExpirationTest:
 - testCallbackInvocationAfterExpiration
 - testThrottledChannelDelay

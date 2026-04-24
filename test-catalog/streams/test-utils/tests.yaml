@@ -2,13 +2,18 @@ org.apache.kafka.streams.KeyValueStoreFacadeTest:
 - shouldDeleteAndReturnPlainValue
 - shouldForwardClose
 - shouldForwardCommit
+- shouldForwardFlush
 - shouldForwardInit
 - shouldPutAllWithUnknownTimestamp
 - shouldPutIfAbsentWithUnknownTimestamp
 - shouldPutWithUnknownTimestamp
+- shouldReturnCommitOffsets
 - shouldReturnIsOpen
 - shouldReturnIsPersistent
+- shouldReturnManagedOffsets
 - shouldReturnName
+- shouldReturnPosition
+- shouldReturnQueryResult
 org.apache.kafka.streams.MockProcessorContextTest:
 - fullConstructorShouldSetAllExpectedAttributes
 - shouldCaptureAnchoredPunctuator
@@ -140,13 +145,21 @@ org.apache.kafka.streams.TopologyTestDriverEosTest:
 - shouldUseSinkSpecificSerializers
 - shouldUseSourceSpecificDeserializers
 org.apache.kafka.streams.WindowStoreFacadeTest:
+- shouldFetchAllTimeRangeAndConvertValues
+- shouldFetchKeyRangeTimeRangeAndConvertValues
+- shouldFetchTimeRangeAndConvertValues
 - shouldForwardClose
 - shouldForwardCommit
+- shouldForwardFlush
 - shouldForwardInit
 - shouldPutWindowStartTimestampWithUnknownTimestamp
+- shouldReturnCommitOffsets
 - shouldReturnIsOpen
 - shouldReturnIsPersistent
+- shouldReturnManagedOffsets
 - shouldReturnName
+- shouldReturnPosition
+- shouldReturnQueryResult
 org.apache.kafka.streams.test.MockProcessorContextAPITest:
 - fullConstructorShouldSetAllExpectedAttributes
 - shouldCaptureApplicationAndRecordMetadata
@@ -156,7 +169,7 @@ org.apache.kafka.streams.test.MockProcessorContextAPITest:
 - shouldCaptureRecordsOutputToChildByName
 - shouldStoreAndReturnStateStores
 org.apache.kafka.streams.test.MockProcessorContextStateStoreTest:
-- shouldEitherInitOrThrow
+- shouldWorkForAllStoreTypeAndSetups
 org.apache.kafka.streams.test.TestRecordTest:
 - testConsumerRecord
 - testEqualsAndHashCode

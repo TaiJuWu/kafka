@@ -63,15 +63,20 @@ org.apache.kafka.tools.ClusterToolTest:
 org.apache.kafka.tools.ConfigCommandIntegrationTest:
 - testAddConfigKeyValuesUsingCommand
 - testAlterReadOnlyConfigInKRaftThenShouldFail
+- testAlterStreamsGroupHeartbeatInterval
 - testAlterStreamsGroupNumOfStandbyReplicas
+- testAlterStreamsGroupSessionTimeout
+- testAlterStreamsGroupTaskOffsetInterval
 - testBrokerLoggerConfigUpdate
 - testClientMetricsConfigUpdate
+- testDeleteNonExistentConfigIsIdempotent
 - testDescribeGroupWithoutDynamicConfigs
 - testDescribeNonExistentConfigResource
 - testDescribeStreamsGroupConfigs
 - testDynamicBrokerConfigUpdateUsingKraft
 - testExitWithNonZeroStatusOnUpdatingUnallowedConfig
 - testGroupConfigUpdateUsingKraft
+- testIntervalMsParser
 - testNullStatusOnKraftCommandAlterClientMetrics
 - testNullStatusOnKraftCommandAlterGroup
 - testNullStatusOnKraftCommandAlterUserQuota
@@ -87,6 +92,7 @@ org.apache.kafka.tools.ConfigCommandTest:
 - shouldAddBrokerLoggerConfig
 - shouldAddClientConfig
 - shouldAddDefaultBrokerDynamicConfig
+- shouldAllowDeletingNonExistingConfig
 - shouldAlterClientMetricsConfig
 - shouldAlterGroupConfig
 - shouldAlterTopicConfig
@@ -116,7 +122,6 @@ org.apache.kafka.tools.ConfigCommandTest:
 - shouldNotUpdateBrokerConfigIfMalformedBracketConfig
 - shouldNotUpdateBrokerConfigIfMalformedConfig
 - shouldNotUpdateBrokerConfigIfMalformedEntityName
-- shouldNotUpdateConfigIfNonExistingConfigIsDeleted
 - shouldParseArgumentsForBrokerLoggersEntityTypeWithBrokerBootstrap
 - shouldParseArgumentsForBrokerLoggersEntityTypeWithControllerBootstrap
 - shouldParseArgumentsForBrokersEntityTypeWithBrokerBootstrap
@@ -224,9 +229,13 @@ org.apache.kafka.tools.DumpLogSegmentsTest:
 - testBatchAndRecordMetadataOutput
 - testDumpControlRecord
 - testDumpEmptyIndex
+- testDumpFileWithNoDotInName
 - testDumpIndexMismatches
 - testDumpMetadataRecords
 - testDumpMetadataSnapshot
+- testDumpProducerIdSnapshot
+- testDumpProducerIdSnapshotCorrupt
+- testDumpProducerIdSnapshotWithBatchMetadata
 - testDumpRemoteLogMetadataEmpty
 - testDumpRemoteLogMetadataIoException
 - testDumpRemoteLogMetadataMultipleRecordsMultipleBatches
@@ -237,11 +246,18 @@ org.apache.kafka.tools.DumpLogSegmentsTest:
 - testDumpRemoteLogMetadataOneRecordOneBatch
 - testDumpRemoteLogMetadataWithCorruption
 - testDumpTimeIndexErrors
+- testDumpTxnIndex
+- testDumpUnknownFileSuffix
+- testIndexSanityCheck
+- testInvalidDecoderClass
 - testLegacyRecordBatchOutputFormat
 - testOffsetsMessageParser
 - testPrintDataLog
 - testPrintDataLogPartialBatches
+- testPrintTrailingBytes
 - testShareGroupStateMessageParser
+- testTimeIndexDumpErrorsPrintErrors
+- testTimeIndexVerifyOnly
 - testTransactionLogMessageParser
 org.apache.kafka.tools.EndToEndLatencyTest:
 - shouldFailWhenConsumerRecordsIsEmpty
@@ -473,6 +489,7 @@ org.apache.kafka.tools.ProducerPerformanceTest:
 - testGenerateRandomPayloadByRecordSize
 - testGenerateRandomPayloadException
 - testInvalidConfigPostProcessor
+- testMultipleProducerProperty
 - testMutuallyExclusiveGroup
 - testNoTransactionRelatedConfigs
 - testNumberOfCallsForSendAndClose
@@ -1022,6 +1039,8 @@ org.apache.kafka.tools.streams.StreamsGroupCommandTest:
 - testExitCodeOnIllegalArguments
 - testExitCodeOnInterruptedException
 - testExitCodeOnInvalidOption
+- testGetCommittedOffsetsIncludesRepartitionTopics
+- testGetCommittedOffsetsWithMultipleSubtopologies
 - testGroupStatesFromString
 - testListStreamsGroups
 - testListStreamsGroupsWithStates
