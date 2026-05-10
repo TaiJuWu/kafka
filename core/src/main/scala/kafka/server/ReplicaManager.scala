@@ -1296,7 +1296,8 @@ class ReplicaManager(val config: KafkaConfig,
   def deleteRecords(timeout: Long,
                     offsetPerPartition: Map[TopicPartition, Long],
                     responseCallback: Map[TopicPartition, DeleteRecordsPartitionResult] => Unit,
-                    allowInternalTopicDeletion: Boolean = false): Unit = {
+                    allowInternalTopicDeletion: Boolean = false,
+                    acks: Short = -1): Unit = {
     val timeBeforeLocalDeleteRecords = time.milliseconds
     val localDeleteRecordsResults = deleteRecordsOnLocalLog(offsetPerPartition, allowInternalTopicDeletion)
     debug("Delete records on local log in %d ms".format(time.milliseconds - timeBeforeLocalDeleteRecords))
@@ -1311,7 +1312,9 @@ class ReplicaManager(val config: KafkaConfig,
             .setPartitionIndex(topicPartition.partition)) // response status
     }
 
-    if (delayedDeleteRecordsRequired(localDeleteRecordsResults)) {
+    // acks=1: respond immediately after local truncation, do not wait for replicas.
+    // acks=-1 (default): wait for every alive replica to truncate via the purgatory.
+    if (acks != 1 && delayedDeleteRecordsRequired(localDeleteRecordsResults)) {
       def onAcks(topicPartition: TopicPartition, status: DeleteRecordsPartitionStatus): Unit = {
         val (lowWatermarkReached, error, lw) = getPartition(topicPartition) match {
           case online: HostedPartition.Online[Partition] =>

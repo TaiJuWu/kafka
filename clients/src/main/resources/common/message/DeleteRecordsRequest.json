@@ -21,7 +21,10 @@
   // Version 1 is the same as version 0.
 
   // Version 2 is the first flexible version.
-  "validVersions": "0-2",
+
+  // Version 3 adds the Acks field (KIP-XXXX) to allow callers to opt into
+  // leader-only acknowledgement.
+  "validVersions": "0-3",
   "flexibleVersions": "2+",
   "fields": [
     { "name": "Topics", "type": "[]DeleteRecordsTopic", "versions": "0+",
@@ -37,6 +40,8 @@
       ]}
     ]},
     { "name": "TimeoutMs", "type": "int32", "versions": "0+",
-      "about": "How long to wait for the deletion to complete, in milliseconds." }
+      "about": "How long to wait for the deletion to complete, in milliseconds." },
+    { "name": "Acks", "type": "int16", "versions": "3+", "default": "-1",
+      "about": "The acknowledgement level. -1 (default) waits for every alive replica to truncate; 1 returns as soon as the leader has truncated locally." }
   ]
 }

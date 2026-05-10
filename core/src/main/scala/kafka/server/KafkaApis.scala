@@ -1536,6 +1536,12 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleDeleteRecordsRequest(request: RequestChannel.Request): Unit = {
     val deleteRecordsRequest = request.body[DeleteRecordsRequest]
 
+    val acks = deleteRecordsRequest.data.acks
+    if (acks != -1 && acks != 1) {
+      requestHelper.sendErrorResponseMaybeThrottle(request, Errors.INVALID_REQUIRED_ACKS.exception)
+      return
+    }
+
     val unauthorizedTopicResponses = mutable.Map[TopicPartition, DeleteRecordsPartitionResult]()
     val nonExistingTopicResponses = mutable.Map[TopicPartition, DeleteRecordsPartitionResult]()
     val authorizedForDeleteTopicOffsets = mutable.Map[TopicPartition, Long]()
@@ -1594,7 +1600,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       replicaManager.deleteRecords(
         deleteRecordsRequest.data.timeoutMs.toLong,
         authorizedForDeleteTopicOffsets,
-        sendResponseCallback)
+        sendResponseCallback,
+        acks = acks)
     }
   }
 
