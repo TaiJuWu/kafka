@@ -3274,7 +3274,7 @@ public class KafkaAdminClient extends AdminClient {
         if (options.timeoutMs() != null) {
             timeoutMs = options.timeoutMs();
         }
-        DeleteRecordsHandler handler = new DeleteRecordsHandler(recordsToDelete, logContext, timeoutMs);
+        DeleteRecordsHandler handler = new DeleteRecordsHandler(recordsToDelete, logContext, timeoutMs, options.acks());
         invokeDriver(handler, future, options.timeoutMs);
 
         return new DeleteRecordsResult(future.all());

@@ -415,7 +415,8 @@ class CoordinatorPartitionWriterTest {
       ArgumentMatchers.anyLong(),
       ArgumentMatchers.any(),
       callbackCapture.capture(),
-      ArgumentMatchers.eq(true)
+      ArgumentMatchers.eq(true),
+      ArgumentMatchers.anyShort()
     )).thenAnswer { _ =>
       callbackCapture.getValue.apply(Map(
         new TopicPartition("random-topic", 0) -> new DeleteRecordsPartitionResult()
@@ -435,7 +436,8 @@ class CoordinatorPartitionWriterTest {
       ArgumentMatchers.anyLong(),
       ArgumentMatchers.any(),
       callbackCapture.capture(),
-      ArgumentMatchers.eq(true)
+      ArgumentMatchers.eq(true),
+      ArgumentMatchers.anyShort()
     )).thenAnswer { _ =>
       callbackCapture.getValue.apply(Map[TopicPartition, DeleteRecordsPartitionResult]())
     }
@@ -463,7 +465,8 @@ class CoordinatorPartitionWriterTest {
       ArgumentMatchers.anyLong(),
       ArgumentMatchers.any(),
       callbackCapture.capture(),
-      ArgumentMatchers.eq(true)
+      ArgumentMatchers.eq(true),
+      ArgumentMatchers.anyShort()
     )).thenAnswer { _ =>
       callbackCapture.getValue.apply(Map(
         new TopicPartition("random-topic", 0) -> new DeleteRecordsPartitionResult()

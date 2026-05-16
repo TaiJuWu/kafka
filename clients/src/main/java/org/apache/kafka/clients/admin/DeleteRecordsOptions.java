@@ -24,4 +24,32 @@ import java.util.Map;
  */
 public class DeleteRecordsOptions extends AbstractOptions<DeleteRecordsOptions> {
 
+    private short acks = -1;
+
+    /**
+     * The acknowledgement level the broker should use before responding.
+     *
+     * <ul>
+     *   <li>{@code -1} (default): the broker waits for every alive replica to advance its
+     *       log start offset past the requested offset. This is the historical behavior and
+     *       is required for use cases that rely on cross-replica deletion guarantees
+     *       (e.g. privacy / compliance flows).</li>
+     *   <li>{@code 1}: the broker responds as soon as the leader has truncated locally,
+     *       without waiting for follower acknowledgement. Suitable when deletion is an
+     *       operational optimization rather than a correctness guarantee.</li>
+     * </ul>
+     *
+     * @throws IllegalArgumentException if {@code acks} is not {@code -1} or {@code 1}
+     */
+    public DeleteRecordsOptions acks(short acks) {
+        if (acks != -1 && acks != 1) {
+            throw new IllegalArgumentException("acks must be -1 or 1, got " + acks);
+        }
+        this.acks = acks;
+        return this;
+    }
+
+    public short acks() {
+        return acks;
+    }
 }
