@@ -16,6 +16,46 @@ org.apache.kafka.network.SocketServerConfigsTest:
 - testListenerListToEndPointsWithOneEndpoint
 - testListenerListToEndPointsWithUnderscores
 - testListenerListToEndPointsWithWildcard
+org.apache.kafka.security.authorizer.AuthorizerTest:
+- testAccessAllowedIfAllowAclExistsOnPrefixedResource
+- testAccessAllowedIfAllowAclExistsOnWildcardResource
+- testAclConfigWithWhitespace
+- testAclInheritance
+- testAclManagementAPIs
+- testAclsFilter
+- testAddAclsOnLiteralResource
+- testAddAclsOnPrefixedResource
+- testAddAclsOnWildcardResource
+- testAllowAccessWithCustomPrincipal
+- testAllowAllAccess
+- testAuthorizeByResourceTypeDenyTakesPrecedence
+- testAuthorizeByResourceTypeIsolationUnrelatedDenyWontDominateAllow
+- testAuthorizeByResourceTypeMultipleAddAndRemove
+- testAuthorizeByResourceTypeNoAclFoundOverride
+- testAuthorizeByResourceTypePrefixedResourceDenyDominate
+- testAuthorizeByResourceTypeSuperUserHasAccess
+- testAuthorizeByResourceTypeWildcardResourceDenyDominate
+- testAuthorizeByResourceTypeWithAllHostAce
+- testAuthorizeByResourceTypeWithAllOperationAce
+- testAuthorizeByResourceTypeWithAllPrincipalAce
+- testAuthorizeThrowsOnNonLiteralResource
+- testAuthorizeWithEmptyResourceName
+- testAuthorizeWithPrefixedResource
+- testDeleteAclOnPrefixedResource
+- testDeleteAclOnWildcardResource
+- testDeleteAllAclOnPrefixedResource
+- testDeleteAllAclOnWildcardResource
+- testDenyTakesPrecedence
+- testEmptyAclThrowsException
+- testGetAclsPrincipal
+- testLocalConcurrentModificationOfResourceAcls
+- testNoAclFound
+- testNoAclFoundOverride
+- testSingleCharacterResourceAcls
+- testSuperUserHasAccess
+- testSuperUserWithCustomPrincipalHasAccess
+- testTopicAcl
+- testWildCardAcls
 org.apache.kafka.security.authorizer.AuthorizerUtilsTest:
 - testCreateAuthorizer
 org.apache.kafka.server.AssignmentTest:
@@ -119,11 +159,18 @@ org.apache.kafka.server.ClientMetricsManagerTest:
 - testUpdateSubscriptionWithPropertiesDeletion
 org.apache.kafka.server.CordonedLogDirsIntegrationTest:
 - testCordonUncordonLogDirs
+- testCordonUnknownLogDirs
 - testDecommissionBroker
 - testFeatureNotEnabled
 - testFeatureNotEnabledStaticConfig
 - testReassignWithCordonedLogDirs
 - testStaticCordonUncordonLogDirs
+- testUpdateCordonedDirsViaController
+org.apache.kafka.server.DefaultApiVersionManagerTest:
+- testApiScope
+- testControllerApiIntersection
+- testDisabledApis
+- testEnvelopeDisabledForKRaftBroker
 org.apache.kafka.server.EligibleLeaderReplicasIntegrationTest:
 - testElrMemberCanBeElected
 - testElrMemberShouldBeKickOutWhenUncleanShutdown
@@ -210,6 +257,15 @@ org.apache.kafka.server.KRaftTopicCreatorTest:
 org.apache.kafka.server.LogManagerIntegrationTest:
 - testIOExceptionOnLogSegmentCloseResultsInRecovery
 - testRestartBrokerNoErrorIfMissingPartitionMetadata
+org.apache.kafka.server.LogOffsetTest:
+- testEmptyLogsGetOffsets
+- testFetchOffsetByTimestampForMaxTimestampAfterTruncate
+- testFetchOffsetByTimestampForMaxTimestampWithEmptyLog
+- testFetchOffsetByTimestampForMaxTimestampWithUnorderedTimestamps
+- testGetOffsetsAfterDeleteRecords
+- testGetOffsetsBeforeEarliestTime
+- testGetOffsetsBeforeLatestTime
+- testGetOffsetsForUnknownTopic
 org.apache.kafka.server.MetadataRequestTest:
 - testAliveBrokersWithNoTopics
 - testAllTopicsRequest
@@ -237,6 +293,8 @@ org.apache.kafka.server.NodeToControllerRequestThreadTest:
 - testRetryTimeoutWhileControllerNotAvailable
 - testThreadNotStarted
 - testUnsupportedVersionHandling
+org.apache.kafka.server.RaftClusterSnapshotTest:
+- testSnapshotsGenerated
 org.apache.kafka.server.ReconfigurableQuorumIntegrationTest:
 - testControllersAutoJoinStandaloneVoter
 - testCreateAndDestroyNonReconfigurableCluster
@@ -371,6 +429,13 @@ org.apache.kafka.server.replica.ReplicaTest:
 - testResetReplicaStateWhenNewLeaderIsElectedAndReplicaIsInSync
 - testResetReplicaStateWhenNewLeaderIsElectedAndReplicaIsNotInSync
 - testUpdateFetchState
+org.apache.kafka.server.requests.ProduceRequestTest:
+- testCorruptLz4ProduceRequest
+- testProduceToNonReplica
+- testProduceWithTimestampTooNew
+- testProduceWithTimestampTooOld
+- testSimpleProduceRequest
+- testZSTDProduceRequest
 org.apache.kafka.server.share.CachedSharePartitionTest:
 - testCachedSharePartitionEqualsAndHashCode
 org.apache.kafka.server.share.fetch.DelayedShareFetchKeyTest:

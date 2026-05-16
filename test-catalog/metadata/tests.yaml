@@ -93,6 +93,8 @@ org.apache.kafka.controller.ConfigurationControlManagerTest:
 - testIncrementalAlterConfigsWithPolicy
 - testIncrementalAlterConfigsWithoutExistence
 - testIncrementalAlterMultipleConfigValues
+- testIsCordonedLogDirsDisabled
+- testIsCordonedLogDirsInvalid
 - testLegacyAlterConfigs
 - testMaybeGenerateElrSafetyRecords
 - testRejectMinIsrChangeWhenElrEnabled
@@ -414,10 +416,22 @@ org.apache.kafka.image.AclsImageTest:
 - testImage1RoundTrip
 - testImage2RoundTrip
 org.apache.kafka.image.ClientQuotasImageTest:
+- client
+- ip
 - testApplyDelta1
+- testDescribeNonStrictEmptyRequest
+- testDescribeWithDefaultMatchNonNullMatch
+- testDescribeWithDuplicateEntityType
+- testDescribeWithEmptyEntityType
+- testDescribeWithExactMatchNullMatch
+- testDescribeWithNonStrictTypeMatch
+- testDescribeWithSpecifiedMatchNonNullMatch
+- testDescribeWithStrictMode
+- testDescribeWithUnknownMatchType
 - testEmptyImageRoundTrip
 - testImage1RoundTrip
 - testImage2RoundTrip
+- user
 org.apache.kafka.image.ClusterImageTest:
 - testApplyDelta1
 - testApplyDelta2
@@ -657,6 +671,9 @@ org.apache.kafka.metadata.BrokerRegistrationInControlledShutdownChangeTest:
 - testValueRoundTrip
 - testValues
 org.apache.kafka.metadata.BrokerRegistrationTest:
+- testCordonedDirChanged
+- testCordonedDirectories
+- testCordonedLogDirsRoundTrip
 - testDirectoriesAreSorted
 - testEquals
 - testFromRecordAndToRecord
@@ -724,6 +741,22 @@ org.apache.kafka.metadata.ListenerInfoTest:
 - testToControllerRegistrationRequestFailsOnNullHost
 - testToControllerRegistrationRequestFailsOnZeroPort
 - testToString
+org.apache.kafka.metadata.MetadataCacheTest:
+- getAliveBrokersShouldNotBeMutatedByUpdateCache
+- getTopicMetadata
+- getTopicMetadataIsrNotAvailable
+- getTopicMetadataNonExistingTopics
+- getTopicMetadataPartitionLeaderNotAvailable
+- getTopicMetadataPartitionListenerNotAvailableOnLeader
+- getTopicMetadataReplicaNotAvailable
+- getTopicMetadataWithNonSupportedSecurityProtocol
+- testDescribeTopicResponse
+- testGetLeaderAndIsr
+- testGetLiveBrokerEpoch
+- testGetOfflineReplicasConsidersDirAssignment
+- testGetPartitionReplicaEndpoints
+- testIsBrokerFenced
+- testIsBrokerInControlledShutdown
 org.apache.kafka.metadata.MetadataRecordSerdeTest:
 - testDeserializeWithUnhandledFrameVersion
 - testParsingMalformedFrameVersionVarint

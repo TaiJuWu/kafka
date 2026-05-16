@@ -232,8 +232,10 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldAcceptAtLeastOnce
 - shouldAcceptBuiltInMetricsLatestVersion
 - shouldAcceptDslStoreFormatCaseInsensitively
+- shouldAcceptInteractiveQueryIsolationLevelCaseInsensitively
 - shouldAcceptValidDslStoreFormatDefault
 - shouldAcceptValidDslStoreFormatHeaders
+- shouldAcceptValidInteractiveQueryIsolationLevels
 - shouldAllowConfiguringProcessorWrapperWithClass
 - shouldAllowConfiguringProcessorWrapperWithClassName
 - shouldAllowMultipleOptimizations
@@ -246,11 +248,13 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldBeSupportNonPrefixedRestoreConsumerConfigs
 - shouldDefaultToEmptyListIfRackAwareAssignmentTagsIsNotSet
 - shouldDisableMetricCollectionForAllInternalClients
+- shouldDisableTransactionalStateStoresByDefault
 - shouldEnableAllOptimizationsWithOptimizeConfig
 - shouldEnableMetricCollectionForAllInternalClientsByDefault
 - shouldEnableMetricsForMainConsumerWhenConsumerPrefixDisabledMetricsPushEnabled
 - shouldEnableMetricsForMainConsumerWhenStreamMetricsPushDisabledButMainConsumerEnabled
 - shouldEnableSelfJoin
+- shouldEnableTransactionalStateStoresWhenConfigured
 - shouldEnsureExplicitInternalResourceNaming
 - shouldForwardCustomConfigsWithNoPrefixToAllClients
 - shouldGetClientTagsMapWhenSet
@@ -336,6 +340,7 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldThrowConfigExceptionConsumerMetricsEnabledButMainConsumerAndAdminMetricsDisabled
 - shouldThrowConfigExceptionConsumerMetricsEnabledButMainConsumerMetricsDisabled
 - shouldThrowConfigExceptionForInvalidDslStoreFormat
+- shouldThrowConfigExceptionForInvalidInteractiveQueryIsolationLevel
 - shouldThrowConfigExceptionIfAcceptableRecoveryLagIsOutsideBounds
 - shouldThrowConfigExceptionIfMaxInFlightRequestsPerConnectionIsInvalidStringIfEosV2Enabled
 - shouldThrowConfigExceptionIfMaxWarmupReplicasIsOutsideBounds
@@ -371,6 +376,7 @@ org.apache.kafka.streams.StreamsConfigTest:
 - shouldThrowStreamsExceptionIfValueSerdeConfigFails
 - shouldUseCacheMaxBytesBufferingConfigWhenOnlyDeprecatedConfigIsSet
 - shouldUseCorrectDefaultsWhenNoneSpecified
+- shouldUseDefaultInteractiveQueryIsolationLevelWhenNotSpecified
 - shouldUseDefaultStateStoreCacheMaxBytesConfigWhenNoConfigIsSet
 - shouldUseDefaultStoreFormatWhenNotSpecified
 - shouldUseNewConfigsWhenPresent
@@ -2287,6 +2293,7 @@ org.apache.kafka.streams.processor.internals.ProcessorStateManagerTest:
 - shouldLoadMissingFileAsEmptyPosition
 - shouldLogAWarningIfCheckpointThrowsAnIOException
 - shouldNotThrowTaskCorruptedExceptionAfterCheckpointing
+- shouldNotThrowTaskCorruptedWithoutCheckpointAndNonEmptyDirWhenTransactional
 - shouldNotThrowTaskCorruptedWithoutInMemoryStoreCheckpointAndNonEmptyDir
 - shouldNotWriteCheckpointForStoresWithoutChangelogTopic
 - shouldNotWriteDowngradeCheckpointOnCloseWhenUpgradeFromIsNull
@@ -2298,6 +2305,7 @@ org.apache.kafka.streams.processor.internals.ProcessorStateManagerTest:
 - shouldRegisterPersistentStores
 - shouldRegisterPersistentUnloggedStore
 - shouldReportChangelogAsSource
+- shouldReportHasCorruptedStores
 - shouldReportTaskType
 - shouldRestoreNonTimestampedStoreWithNoConverter
 - shouldRestoreStoreWithRestoreCallback
@@ -2558,6 +2566,7 @@ org.apache.kafka.streams.processor.internals.StandbyTaskTest:
 - shouldInitTaskTimeoutAndEventuallyThrow
 - shouldNotCommitAndThrowOnCloseDirty
 - shouldNotThrowFromStateManagerCloseInCloseDirty
+- shouldNotWipeStateDirOnDirtyCloseWithEosAndTransactionalStateStores
 - shouldPrepareRecycleSuspendedTask
 - shouldRecordRestoredRecords
 - shouldRequireSuspendingCreatedTasksBeforeClose
@@ -2654,6 +2663,8 @@ org.apache.kafka.streams.processor.internals.StateManagerUtilTest:
 - testCloseStateManagerClean
 - testCloseStateManagerThrowsExceptionWhenClean
 - testCloseStateManagerThrowsExceptionWhenDirty
+- testCloseStateManagerTransactionalDoesNotWipeWhenNoCorruptedStores
+- testCloseStateManagerTransactionalWipesWhenStoresAreCorrupted
 - testCloseStateManagerWithStateStoreWipeOut
 - testCloseStateManagerWithStateStoreWipeOutRethrowWrappedIOException
 - testRegisterStateStoreFailToLockStateDirectory
@@ -2684,6 +2695,9 @@ org.apache.kafka.streams.processor.internals.StoreChangelogReaderTest:
 - shouldRestoreFromPositionAndCheckForCompletion
 - shouldRestoreMultipleChangelogs
 - shouldRestoreToLimitInStandbyState
+- shouldSeekByTimestampForWindowedStoreWithoutCheckpoint
+- shouldSeekToBeginningForNonWindowedStoreWithoutCheckpoint
+- shouldSeekToBeginningWhenBrokerReturnsNullForOffsetsForTimes
 - shouldSupportUnregisterChangelogAfterCompletion
 - shouldSupportUnregisterChangelogBeforeCompletion
 - shouldSupportUnregisterChangelogBeforeInitialization
@@ -2713,6 +2727,7 @@ org.apache.kafka.streams.processor.internals.StreamTaskTest:
 - shouldBeProcessableIfAllPartitionsBuffered
 - shouldBeRecordIdlingTimeIfSuspended
 - shouldCallPunctuateOnPassedInProcessorNode
+- shouldCheckpointOnPostCommitInRunningStateWithEosAndTransactionalStateStores
 - shouldClearCommitStatusesInCloseDirty
 - shouldClearTaskTimeout
 - shouldCloseStateManagerEvenDuringFailureOnUncleanTaskClose
@@ -2731,6 +2746,7 @@ org.apache.kafka.streams.processor.internals.StreamTaskTest:
 - shouldLogNotReadyWhenStaleAfterThreshold
 - shouldMaybeReturnOffsetsForRepartitionTopicsForPurging
 - shouldNotAttemptToLockIfNoStores
+- shouldNotCheckpointOnPostCommitInRunningStateWithEosAndNotEnforced
 - shouldNotCommitAfterRestorationWhenExactlyOnceEnabled
 - shouldNotCommitOnCloseCreated
 - shouldNotGetOffsetsIfPrepareCommitDirty
@@ -3148,7 +3164,7 @@ org.apache.kafka.streams.processor.internals.TaskManagerTest:
 - shouldLockActiveOnHandleAssignmentWithProcessingThreads
 - shouldLockAffectedTasksOnHandleRevocation
 - shouldLockAllTasksOnCorruptionWithProcessingThreads
-- shouldLockCommitableTasksOnCorruptionWithProcessingThreads
+- shouldLockCommittableTasksOnCorruptionWithProcessingThreads
 - shouldLockTasksOnClose
 - shouldMaybeCommitAllActiveTasksThatNeedCommit
 - shouldMoveReassignedSuspendedActiveTaskToStateUpdater
@@ -3794,6 +3810,7 @@ org.apache.kafka.streams.query.PositionTest:
 org.apache.kafka.streams.query.StateQueryResultTest:
 - getOnlyPartitionResultMultipleResults
 - getOnlyPartitionResultNoResultsTest
+- getOnlyPartitionResultWithSingleFailureResultTest
 - getOnlyPartitionResultWithSingleResultTest
 org.apache.kafka.streams.query.VersionedKeyQueryTest:
 - shouldThrowNPEWithNullAsOftimestamp
@@ -4249,6 +4266,10 @@ org.apache.kafka.streams.state.internals.ChangeLoggingWindowBytesStoreTest:
 - shouldLogPutsWithPosition
 - shouldRetainDuplicatesWhenSet
 org.apache.kafka.streams.state.internals.CompositeReadOnlyKeyValueStoreTest:
+- readOnlyOverrideShouldBeatProviderDefault
+- readOnlyShouldPropagateLevelToUnderlyingStore
+- readOnlyShouldRejectNullLevel
+- readOnlyShouldReturnNewInstanceWithOverride
 - shouldFindValueForKeyWhenMultiStores
 - shouldGetApproximateEntriesAcrossAllStores
 - shouldNotGetValuesFromOtherStores
@@ -4288,6 +4309,10 @@ org.apache.kafka.streams.state.internals.CompositeReadOnlyKeyValueStoreTest:
 - shouldThrowUnsupportedOperationExceptionWhileRemove
 - shouldThrowUnsupportedOperationExceptionWhileReverseRange
 org.apache.kafka.streams.state.internals.CompositeReadOnlySessionStoreTest:
+- readOnlyOverrideShouldBeatProviderDefault
+- readOnlyShouldPropagateLevelToUnderlyingStore
+- readOnlyShouldRejectNullLevel
+- readOnlyShouldReturnNewInstanceWithOverride
 - shouldFetchKeyRangeAcrossStores
 - shouldFetchKeyRangeAcrossStoresWithNullKeyFrom
 - shouldFetchKeyRangeAcrossStoresWithNullKeyFromKeyTo
@@ -4307,6 +4332,10 @@ org.apache.kafka.streams.state.internals.CompositeReadOnlyWindowStoreTest:
 - emptyIteratorAlwaysReturnsFalse
 - emptyIteratorNextShouldThrowNoSuchElementException
 - emptyIteratorPeekNextKeyShouldThrowNoSuchElementException
+- readOnlyOverrideShouldBeatProviderDefault
+- readOnlyShouldPropagateLevelToUnderlyingStore
+- readOnlyShouldRejectNullLevel
+- readOnlyShouldReturnNewInstanceWithOverride
 - shouldBackwardFetchAllAcrossStores
 - shouldBackwardFetchKeyRangeAcrossStores
 - shouldBackwardFetchKeyRangeAcrossStoresWithNullKeyFrom
@@ -4350,6 +4379,7 @@ org.apache.kafka.streams.state.internals.DualColumnFamilyAccessorTest:
 - shouldCloseBothColumnFamilies
 - shouldCommitOffsets
 - shouldCommitPosition
+- shouldCommitStagedWritesWhenCommittingOffsets
 - shouldCreateAllIteratorForward
 - shouldCreateAllIteratorReverse
 - shouldCreatePrefixScanIterator
@@ -4363,11 +4393,17 @@ org.apache.kafka.streams.state.internals.DualColumnFamilyAccessorTest:
 - shouldGetValueFromOldColumnFamilyAndConvert
 - shouldGetValueWithReadOptions
 - shouldIgnoreExceptionAfterUncleanClose
+- shouldMergeEntriesFromBothColumnFamiliesInForwardOrder
+- shouldMergeEntriesFromBothColumnFamiliesInReverseOrder
 - shouldOpenClean
+- shouldPreferNewFormatValueWhenSameKeyExistsInBothColumnFamilies
 - shouldPrepareBatchWithMultipleEntries
 - shouldPutValueToNewColumnFamilyAndDeleteFromOld
+- shouldRespectPrefixScanAcrossBothColumnFamilies
+- shouldRespectRangeBoundsAcrossBothColumnFamilies
 - shouldReturnNullWhenKeyNotFoundInEitherColumnFamily
 - shouldReturnSumOfEntriesFromBothColumnFamilies
+- shouldSkipPersistingStateOnCloseWhenStoreIsAlreadyClosed
 - shouldThrowNPEWhenBatchEntryHasNullKey
 - shouldThrowOnOpenAfterAUncleanClose
 - shouldThrowProcessorStateExceptionWhenDeleteFailsOnNewColumnFamilyWithNullValue
@@ -5200,6 +5236,7 @@ org.apache.kafka.streams.state.internals.PlainToHeadersWindowStoreAdapterTest:
 - shouldNotCollectExecutionInfoWhenNotRequested
 org.apache.kafka.streams.state.internals.QueryableStoreProviderTest:
 - shouldFindGlobalStores
+- shouldResolveDefaultIsolationLevelAtQueryTime
 - shouldReturnKVStoreWhenItExists
 - shouldReturnKVStoreWithPartitionWhenItExists
 - shouldReturnWindowStoreWhenItExists
@@ -6247,6 +6284,11 @@ org.apache.kafka.streams.state.internals.SessionToHeadersStoreAdapterTest:
 - shouldWrapFindSessionsIterator
 - shouldWrapFindSessionsWithKeyRangeIterator
 org.apache.kafka.streams.state.internals.StoreQueryUtilsTest:
+- shouldPassIsolationLevelToReadOnlyForKeyQuery
+- shouldPassIsolationLevelToReadOnlyForRangeQuery
+- shouldPassIsolationLevelToReadOnlyForSessionWindowRangeQuery
+- shouldPassIsolationLevelToReadOnlyForWindowKeyQuery
+- shouldPassIsolationLevelToReadOnlyForWindowRangeQuery
 - shouldReturnErrorOnBoundViolation
 - shouldReturnErrorOnNullContext
 org.apache.kafka.streams.state.internals.StoreSerdeInitializerTest:
@@ -6459,7 +6501,6 @@ org.apache.kafka.streams.state.internals.TimeOrderedWindowStoreTest:
 org.apache.kafka.streams.state.internals.TimeOrderedWindowStoreUpgradeTest:
 - shouldMigrateFromWithIndexToWithIndexAndHeaders
 - shouldMigrateFromWithoutHeadersToWithHeaders
-- shouldMigrateFromWithoutIndexToWithIndexAndHeaders
 org.apache.kafka.streams.state.internals.TimestampedKeyAndJoinSideDeserializerTest:
 - shouldPassHeadersToUnderlyingDeserializer
 org.apache.kafka.streams.state.internals.TimestampedKeyAndJoinSideSerializerTest:
@@ -6625,9 +6666,7 @@ org.apache.kafka.streams.state.internals.ValueTimestampHeadersDeserializerTest:
 - shouldExtractEmptyHeaders
 - shouldExtractHeaders
 - shouldExtractTimestamp
-- shouldExtractValue
 - shouldPassHeadersToDeserializer
-- shouldReturnNullForRawValueWhenInputIsNull
 - shouldReturnNullWhenExtractingHeadersFromNull
 - shouldReturnNullWhenSerializingNullValue
 - shouldThrowExceptionWhenDataIsTooShort
@@ -6690,8 +6729,10 @@ org.apache.kafka.streams.state.internals.WindowStoreBuilderTest:
 org.apache.kafka.streams.state.internals.WindowStoreFetchTest:
 - testStoreConfig
 org.apache.kafka.streams.state.internals.WrappingStoreProviderTest:
+- shouldDefaultToReadUncommittedWhenIsolationLevelNotSpecified
 - shouldFindKeyValueStores
 - shouldFindWindowStores
+- shouldPropagateConfiguredDefaultIsolationLevel
 - shouldReturnAllStoreWhenQueryWithoutPartition
 - shouldReturnSingleStoreWhenQueryWithPartition
 - shouldThrowInvalidStoreExceptionIfNoPartitionFound

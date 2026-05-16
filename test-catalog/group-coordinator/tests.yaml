@@ -2,6 +2,12 @@ org.apache.kafka.coordinator.group.GroupConfigManagerTest:
 - testClampWithCustomBrokerBounds
 - testGetNonExistentGroupConfig
 - testGroupIsRemovedWhenDynamicConfigsAreRemoved
+- testIsDlqAutoTopicCreateEnabledDefault
+- testIsDlqAutoTopicCreateEnabledFalse
+- testIsDlqAutoTopicCreateEnabledTrue
+- testShareGroupDlqTopicPrefixCustom
+- testShareGroupDlqTopicPrefixDefault
+- testShareGroupDlqTopicPrefixEmpty
 - testUpdateConfigWithInvalidGroupId
 - testUpdateConfigWithNullGroupId
 - testUpdateGroupConfig
@@ -27,6 +33,7 @@ org.apache.kafka.coordinator.group.GroupConfigTest:
 - testValidShareAutoOffsetResetValues
 - testValidShareIsolationLevelValues
 - testValidateWithAllGroupTypeConfigs
+- testValidationErrorMessageIncludesBound
 org.apache.kafka.coordinator.group.GroupCoordinatorConfigTest:
 - testAppendLingerMs
 - testClampDynamicConfigs
@@ -43,8 +50,12 @@ org.apache.kafka.coordinator.group.GroupCoordinatorConfigTest:
 - testShareGroupAssignors
 - testStreamsGroupInitialRebalanceDelayCustomValue
 - testStreamsGroupInitialRebalanceDelayDefaultValue
+- testStreamsGroupMaxWarmupReplicasCustomValue
+- testStreamsGroupMaxWarmupReplicasDefaultValue
 - testStreamsGroupMinTaskOffsetIntervalCustomValue
 - testStreamsGroupMinTaskOffsetIntervalDefaultValue
+- testStreamsGroupNumWarmupReplicasCustomValue
+- testStreamsGroupNumWarmupReplicasDefaultValue
 - testStreamsGroupTaskOffsetIntervalCustomValue
 - testStreamsGroupTaskOffsetIntervalDefaultValue
 org.apache.kafka.coordinator.group.GroupCoordinatorRecordHelpersTest:
@@ -719,7 +730,6 @@ org.apache.kafka.coordinator.group.OffsetMetadataManagerTest:
 - testConsumerGroupTransactionalOffsetCommitResolvesTopicId
 - testConsumerGroupTransactionalOffsetCommitWithStaleMemberEpoch
 - testConsumerGroupTransactionalOffsetCommitWithUnknownMemberId
-- testConsumerGroupTransactionalOffsetCommitWithUnresolvedTopicId
 - testDeleteGroupAllOffsets
 - testDeleteGroupAllOffsetsWithPendingTransactionalOffsets
 - testFetchAllOffsetsAtDifferentCommittedOffset
