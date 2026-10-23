@@ -81,6 +81,7 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
@@ -406,6 +407,25 @@ public class LogManagerTest {
         for (File dir : brokenDirs) {
             assertFalse(containsLogFile.apply(dir));
         }
+    }
+
+    @Test
+    public void testCreateLogMarksLogDirOfflineOnIOException() throws Exception {
+        TopicPartition tp = new TopicPartition(NAME, 0);
+        // The partition directory exists, but the first segment file is a directory: the log
+        // directory is created fine, and opening the segment fails with an IOException.
+        File segmentFile = LogFileUtils.logFile(new File(logDir, UnifiedLog.logDirName(tp)), 0L);
+        assertTrue(segmentFile.mkdirs());
+
+        KafkaStorageException e = assertThrows(KafkaStorageException.class,
+            () -> logManager.getOrCreateLog(tp, true, false, Optional.empty()));
+        assertInstanceOf(IOException.class, e.getCause());
+
+        Field field = LogManager.class.getDeclaredField("logDirFailureChannel");
+        field.setAccessible(true);
+        LogDirFailureChannel logDirFailureChannel = (LogDirFailureChannel) field.get(logManager);
+        assertTrue(logDirFailureChannel.hasOfflineLogDir(logDir.getAbsolutePath()));
+        assertEquals(Optional.empty(), logManager.getLog(tp));
     }
 
     /**
