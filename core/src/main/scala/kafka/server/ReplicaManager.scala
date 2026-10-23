@@ -22,7 +22,7 @@ import org.apache.kafka.server.quota.QuotaFactory.QuotaManagers
 import kafka.server.ReplicaManager.{AtMinIsrPartitionCountMetricName, FailedIsrUpdatesPerSecMetricName, IsrExpandsPerSecMetricName, IsrShrinksPerSecMetricName, LeaderCountMetricName, OfflineReplicaCountMetricName, PartitionCountMetricName, PartitionsWithLateTransactionsCountMetricName, ProducerIdCountMetricName, ReassigningPartitionsMetricName, UnderMinIsrPartitionCountMetricName, UnderReplicatedPartitionsMetricName, createLogReadResult, isListOffsetsTimestampUnsupported}
 import kafka.server.share.DelayedShareFetch
 import kafka.utils._
-import org.apache.kafka.common.{IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
+import org.apache.kafka.common.{DirectoryId, IsolationLevel, Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.{Plugin, Topic}
 import org.apache.kafka.common.message.DeleteRecordsResponseData.DeleteRecordsPartitionResult
@@ -2450,6 +2450,7 @@ class ReplicaManager(val config: KafkaConfig,
             // to KafkaStorageException. In this case `ReplicaManager.allPartitions` will map this topic-partition
             // to an empty Partition object. We need to map this topic-partition to OfflinePartition instead.
             markPartitionOffline(tp)
+            maybeReportLostReplica(info.topicId, tp, directoryIds)
         }
       }
     }
@@ -2504,6 +2505,7 @@ class ReplicaManager(val config: KafkaConfig,
             // to KafkaStorageException. In this case `ReplicaManager.allPartitions` will map this topic-partition
             // to an empty Partition object. We need to map this topic-partition to OfflinePartition instead.
             markPartitionOffline(tp)
+            maybeReportLostReplica(info.topicId, tp, directoryIds)
 
           case e: Throwable =>
             stateChangeLogger.error(s"Unable to start fetching $tp " +
@@ -2559,6 +2561,29 @@ class ReplicaManager(val config: KafkaConfig,
       val partitionsToStop = partitionsToStopFetching.map { case (tp, deleteLocalLog) => new StopPartition(tp, deleteLocalLog, false, false) }.toSet
       stopPartitions(partitionsToStop)
       stateChangeLogger.info(s"Stopped fetchers as part of controlled shutdown for ${partitionsToStop.size} partitions")
+    }
+  }
+
+  /**
+   * The local replica of `tp` has no log because creating it failed with a storage error. If the
+   * controller does not know a directory for the replica yet, it would consider the replica online,
+   * and keep or elect this broker as the leader of a partition it cannot serve. Assign the replica to
+   * [[DirectoryId.LOST]] instead, so that the controller treats it as being in an offline directory.
+   * When the broker restarts and creates the log, the real directory is assigned again.
+   */
+  private def maybeReportLostReplica(
+    topicId: Uuid,
+    tp: TopicPartition,
+    directoryIds: mutable.Map[TopicIdPartition, Uuid]
+  ): Unit = {
+    if (directoryIds.find(_._1.topicPartition() == tp).map(_._2).contains(DirectoryId.UNASSIGNED)) {
+      stateChangeLogger.info(s"Assigning $tp with topic id $topicId to the lost directory because its log could not be created")
+      directoryEventHandler.handleAssignment(
+        new common.TopicIdPartition(topicId, tp.partition()),
+        DirectoryId.LOST,
+        "Log creation failed with a storage error",
+        () => ()
+      )
     }
   }
 

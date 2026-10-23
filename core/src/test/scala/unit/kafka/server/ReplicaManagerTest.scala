@@ -85,7 +85,7 @@ import org.apache.kafka.server.util.timer.{MockTimer, SystemTimer}
 import org.apache.kafka.server.util.{MockScheduler, MockTime, Scheduler}
 import org.apache.kafka.storage.internals.checkpoint.LazyOffsetCheckpoints
 import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
-import org.apache.kafka.storage.internals.log.{AppendOrigin, CleanerConfig, FetchDataInfo, LocalLog, LogAppendInfo, LogConfig, LogDirFailureChannel, LogLoader, LogManager, LogOffsetMetadata, LogOffsetSnapshot, LogOffsetsListener, LogReadResult, LogSegments, ProducerStateManager, ProducerStateManagerConfig, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
+import org.apache.kafka.storage.internals.log.{AppendOrigin, CleanerConfig, FetchDataInfo, LocalLog, LogAppendInfo, LogConfig, LogDirFailureChannel, LogFileUtils, LogLoader, LogManager, LogOffsetMetadata, LogOffsetSnapshot, LogOffsetsListener, LogReadResult, LogSegments, ProducerStateManager, ProducerStateManagerConfig, RemoteLogReadResult, RemoteStorageFetchInfo, UnifiedLog, VerificationGuard}
 import org.apache.kafka.storage.log.metrics.BrokerTopicStats
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{AfterAll, AfterEach, BeforeEach, Test}
@@ -4540,6 +4540,47 @@ class ReplicaManagerTest {
       val logDirIdHostingPartition1 = replicaManager.logManager.directoryId(replicaManager.logManager.getLog(topicPartition1).get.dir.getParent).get
       assertEquals(logIdCaptureForPartition.getAllValues.asScala, List(logDirIdHostingPartition0, logDirIdHostingPartition1))
 
+    } finally {
+      replicaManager.shutdown(checkpointHW = false)
+    }
+  }
+
+  @Test
+  def testApplyDeltaShouldReportLostReplicaWhenLogCreationFails(): Unit = {
+    val localId = 1
+    val topicPartition0 = new TopicPartition("foo", 0)
+    val topicPartition1 = new TopicPartition("foo", 1)
+    val directoryEventHandler = mock(classOf[DirectoryEventHandler])
+
+    val replicaManager = setupReplicaManagerWithMockedPurgatories(new MockTimer(time), localId,
+      setupLogDirMetaProperties = true, directoryEventHandler = directoryEventHandler)
+
+    try {
+      // The partition directory exists, but the first segment file is a directory, so creating
+      // the log of foo-0 fails with an IOException in every log directory.
+      val logDirs = replicaManager.logManager.liveLogDirs.asScala.toList
+      logDirs.foreach(dir => assertTrue(LogFileUtils.logFile(new File(dir, UnifiedLog.logDirName(topicPartition0)), 0L).mkdirs()))
+
+      val leaderTopicsDelta = topicsCreateDelta(localId, true, partitions = List(0, 1),
+        directoryIds = List(DirectoryId.UNASSIGNED, DirectoryId.UNASSIGNED))
+      val leaderMetadataImage = imageFromTopics(leaderTopicsDelta.apply())
+      val topicId = leaderMetadataImage.topics().topicsByName.get("foo").id
+      replicaManager.applyDelta(leaderTopicsDelta, leaderMetadataImage)
+
+      // foo-0 has no log: it is offline, and its replica is reported in the lost directory, so that
+      // the controller elects another leader.
+      assertTrue(replicaManager.getPartition(topicPartition0).isInstanceOf[HostedPartition.Offline[_]])
+      verify(directoryEventHandler).handleAssignment(
+        ArgumentMatchers.eq(new org.apache.kafka.server.common.TopicIdPartition(topicId, topicPartition0.partition())),
+        ArgumentMatchers.eq(DirectoryId.LOST),
+        ArgumentMatchers.eq("Log creation failed with a storage error"), any())
+      // The log directory where creation failed is marked offline.
+      val field = classOf[LogManager].getDeclaredField("logDirFailureChannel")
+      field.setAccessible(true)
+      val logDirFailureChannel = field.get(replicaManager.logManager).asInstanceOf[LogDirFailureChannel]
+      assertTrue(logDirs.exists(dir => logDirFailureChannel.hasOfflineLogDir(dir.getAbsolutePath)))
+      // The rest of the delta is still applied.
+      assertNotEquals(new HostedPartition.None[Partition], replicaManager.getPartition(topicPartition1))
     } finally {
       replicaManager.shutdown(checkpointHW = false)
     }
