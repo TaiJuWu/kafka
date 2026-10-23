@@ -1257,7 +1257,8 @@ public class LogManager {
      * @param targetLogDirectoryId The directory Id that should host the partition's topic.
      *                             The next selected directory will be picked up if it None or equal {@link DirectoryId#UNASSIGNED}.
      *                             The method assumes provided Id belong to online directory.
-     * @throws KafkaStorageException if isNew=false, log is not found in the cache and there is offline log directory on the broker
+     * @throws KafkaStorageException if isNew=false, log is not found in the cache and there is offline log directory on the broker,
+     *                               or if the log could not be created, in which case its log directory is marked offline
      * @throws InconsistentTopicIdException if the topic ID in the log does not match the topic ID provided
      */
     public UnifiedLog getOrCreateLog(TopicPartition topicPartition,
@@ -1337,23 +1338,34 @@ public class LogManager {
         }
 
         LogConfig config = fetchLogConfig(topicPartition.topic());
-        UnifiedLog newLog = UnifiedLog.create(
-                logDir,
-                config,
-                0L,
-                0L,
-                scheduler,
-                brokerTopicStats,
-                time,
-                maxTransactionTimeoutMs,
-                producerStateManagerConfig,
-                producerIdExpirationCheckIntervalMs,
-                logDirFailureChannel,
-                true,
-                topicId,
-                new ConcurrentHashMap<>(),
-                remoteStorageSystemEnable,
-                LogOffsetsListener.NO_OP_OFFSETS_LISTENER);
+        UnifiedLog newLog;
+        try {
+            newLog = UnifiedLog.create(
+                    logDir,
+                    config,
+                    0L,
+                    0L,
+                    scheduler,
+                    brokerTopicStats,
+                    time,
+                    maxTransactionTimeoutMs,
+                    producerStateManagerConfig,
+                    producerIdExpirationCheckIntervalMs,
+                    logDirFailureChannel,
+                    true,
+                    topicId,
+                    new ConcurrentHashMap<>(),
+                    remoteStorageSystemEnable,
+                    LogOffsetsListener.NO_OP_OFFSETS_LISTENER);
+        } catch (IOException ioe) {
+            // Treat it like a failure to create the directory above: mark the log directory offline
+            // so that its replicas are moved elsewhere, instead of leaving the partition without a log.
+            String logDirPath = logDir.getParentFile().getAbsolutePath();
+            String msg = "Error while creating log for " + logDirName + " in dir " + logDirPath;
+            logDirFailureChannel.maybeAddOfflineLogDir(logDirPath, msg, ioe);
+            LOG.warn(msg, ioe);
+            throw new KafkaStorageException(msg, ioe);
+        }
 
         if (isFuture) {
             futureLogs.put(topicPartition, newLog);
