@@ -313,9 +313,10 @@ public class ClientsTestUtils {
 
     /**
      * Fails the log directory that holds the leader replica of the given partition, while the leader broker keeps
-     * running, and waits for the leadership to move to another broker. The leader replica is first moved to a log
-     * directory other than the metadata log directory, because failing the metadata log directory shuts the broker
-     * down. Returns the id of the previous leader.
+     * running, and waits for the leadership to move to another broker. Before that, the leader replica is moved to a
+     * log directory other than the metadata log directory, because failing the metadata log directory shuts the broker
+     * down, and the other replicas on that broker are moved out of that log directory, so that only the given
+     * partition is affected. Returns the id of the previous leader.
      */
     public static int failLeaderLogDir(ClusterInstance cluster, Admin admin, TopicPartition tp) throws Exception {
         int leader = partitionLeader(admin, tp);
@@ -326,10 +327,18 @@ public class ClientsTestUtils {
             .filter(dir -> !dir.equals(metadataLogDir))
             .findFirst()
             .orElseThrow(() -> new IllegalStateException("Broker " + leader + " needs a log directory other than the metadata log directory"));
-        admin.alterReplicaLogDirs(Map.of(new TopicPartitionReplica(tp.topic(), tp.partition(), leader), logDir)).all().get();
-        TestUtils.waitForCondition(() -> !broker.replicaManager().futureLogExists(tp) &&
-            broker.replicaManager().localLogOrException(tp).dir().getParentFile().getAbsolutePath().equals(logDir),
-            "The replica of " + tp + " was not moved to " + logDir);
+        Map<TopicPartitionReplica, String> moves = new HashMap<>();
+        moves.put(new TopicPartitionReplica(tp.topic(), tp.partition(), leader), logDir);
+        admin.describeLogDirs(List.of(leader)).allDescriptions().get().get(leader).get(logDir).replicaInfos().keySet().stream()
+            .filter(other -> !other.equals(tp))
+            .forEach(other -> moves.put(new TopicPartitionReplica(other.topic(), other.partition(), leader), metadataLogDir));
+        admin.alterReplicaLogDirs(moves).all().get();
+        TestUtils.waitForCondition(() -> {
+            var dirs = admin.describeLogDirs(List.of(leader)).allDescriptions().get().get(leader);
+            var replicas = dirs.get(logDir).replicaInfos();
+            return replicas.size() == 1 && replicas.containsKey(tp) && !replicas.get(tp).isFuture() &&
+                dirs.values().stream().noneMatch(dir -> dir.replicaInfos().values().stream().anyMatch(info -> info.isFuture()));
+        }, 60000, "The replicas on broker " + leader + " were not moved so that only " + tp + " is in " + logDir);
 
         // Make the log directory inaccessible by replacing it with a file, and write a checkpoint so that the
         // broker hits an IOException and marks the log directory offline.
