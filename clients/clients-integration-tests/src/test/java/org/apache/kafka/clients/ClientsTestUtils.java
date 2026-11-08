@@ -16,6 +16,9 @@
  */
 package org.apache.kafka.clients;
 
+import kafka.server.KafkaBroker;
+
+import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
@@ -29,6 +32,7 @@ import org.apache.kafka.common.ClusterResource;
 import org.apache.kafka.common.ClusterResourceListener;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.TopicPartitionReplica;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.apache.kafka.common.internals.Topic;
@@ -36,9 +40,12 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.common.test.ClusterInstance;
+import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.test.TestUtils;
 
+import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -302,6 +309,47 @@ public class ClientsTestUtils {
         }, () -> "Timed out while awaiting expected assignment " + expectedAssignment + ". " +
                 "The current assignment is " + consumer.assignment()
         );
+    }
+
+    /**
+     * Fails the log directory that holds the leader replica of the given partition, while the leader broker keeps
+     * running, and waits for the leadership to move to another broker. The leader replica is first moved to a log
+     * directory other than the metadata log directory, because failing the metadata log directory shuts the broker
+     * down. Returns the id of the previous leader.
+     */
+    public static int failLeaderLogDir(ClusterInstance cluster, Admin admin, TopicPartition tp) throws Exception {
+        int leader = partitionLeader(admin, tp);
+        KafkaBroker broker = cluster.brokers().get(leader);
+        String metadataLogDir = new File(broker.config().metadataLogDir()).getAbsolutePath();
+        String logDir = broker.config().logDirs().stream()
+            .map(dir -> new File(dir).getAbsolutePath())
+            .filter(dir -> !dir.equals(metadataLogDir))
+            .findFirst()
+            .orElseThrow(() -> new IllegalStateException("Broker " + leader + " needs a log directory other than the metadata log directory"));
+        admin.alterReplicaLogDirs(Map.of(new TopicPartitionReplica(tp.topic(), tp.partition(), leader), logDir)).all().get();
+        TestUtils.waitForCondition(() -> !broker.replicaManager().futureLogExists(tp) &&
+            broker.replicaManager().localLogOrException(tp).dir().getParentFile().getAbsolutePath().equals(logDir),
+            "The replica of " + tp + " was not moved to " + logDir);
+
+        // Make the log directory inaccessible by replacing it with a file, and write a checkpoint so that the
+        // broker hits an IOException and marks the log directory offline.
+        File dir = new File(logDir);
+        Utils.delete(dir);
+        Files.createFile(dir.toPath());
+        broker.replicaManager().checkpointHighWatermarks();
+        TestUtils.waitForCondition(() -> !broker.logManager().isLogDirOnline(logDir),
+            "The log directory " + logDir + " was not marked offline");
+        TestUtils.waitForCondition(() -> {
+            int current = partitionLeader(admin, tp);
+            return current != leader && current != -1;
+        }, "The leadership of " + tp + " did not move away from broker " + leader);
+        return leader;
+    }
+
+    private static int partitionLeader(Admin admin, TopicPartition tp) throws Exception {
+        var leader = admin.describeTopics(List.of(tp.topic())).allTopicNames().get().get(tp.topic())
+            .partitions().get(tp.partition()).leader();
+        return leader == null ? -1 : leader.id();
     }
 
     private static ProducerRecord<byte[], byte[]> sendRecord(
