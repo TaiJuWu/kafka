@@ -64,7 +64,9 @@ public class AdminLogDirFailureTest {
     }
 
     private Admin createAdmin() {
-        return cluster.admin(Map.of(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 15000));
+        return cluster.admin(Map.of(
+            AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, 15000,
+            AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, 15000));
     }
 
     private static long latestOffset(Admin admin) throws Exception {
