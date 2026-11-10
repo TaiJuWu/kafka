@@ -59,16 +59,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
     types = {Type.KRAFT},
     brokers = 3,
     serverProperties = {
-        @ClusterConfigProperty(key = "auto.create.topics.enable", value = "false"),
-        @ClusterConfigProperty(key = "offsets.topic.num.partitions", value = "1"),
-        @ClusterConfigProperty(key = "offsets.topic.replication.factor", value = "3"),
         @ClusterConfigProperty(key = "share.coordinator.state.topic.min.isr", value = "1"),
         @ClusterConfigProperty(key = "share.coordinator.state.topic.num.partitions", value = "1"),
-        @ClusterConfigProperty(key = "share.coordinator.state.topic.replication.factor", value = "1"),
-        @ClusterConfigProperty(key = "offsets.commit.timeout.ms", value = "2000"),
-        @ClusterConfigProperty(key = "group.share.initialize.retry.interval.ms", value = "2000"),
-        @ClusterConfigProperty(key = "transaction.state.log.min.isr", value = "1"),
-        @ClusterConfigProperty(key = "transaction.state.log.replication.factor", value = "1")
+        @ClusterConfigProperty(key = "share.coordinator.state.topic.replication.factor", value = "1")
     }
 )
 public class ShareConsumerInitializeOverwriteTest extends ShareConsumerTestBase {
