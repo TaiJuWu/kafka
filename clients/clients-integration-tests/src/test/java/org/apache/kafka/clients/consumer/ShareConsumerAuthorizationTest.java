@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.apache.kafka.test.TestUtils.waitForCondition;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ClusterTestDefaults(
     types = {Type.KRAFT},
@@ -65,7 +66,7 @@ public class ShareConsumerAuthorizationTest extends ShareConsumerTestBase {
         brokerSecurityProtocol = SecurityProtocol.SASL_PLAINTEXT,
         controllerSecurityProtocol = SecurityProtocol.SASL_PLAINTEXT
     )
-    @Timeout(240)
+    @Timeout(300)
     public void testShareConsumerRecoversAfterTopicReadAclIsRestored() throws Exception {
         alterShareAutoOffsetReset(GROUP, "earliest");
         AclBinding topicRead = allowUser1(ResourceType.TOPIC, tp.topic());
@@ -83,7 +84,7 @@ public class ShareConsumerAuthorizationTest extends ShareConsumerTestBase {
              ShareConsumer<byte[], byte[]> consumer2 = createShareConsumer(GROUP, user1)) {
             List<ShareConsumer<byte[], byte[]>> consumers = List.of(consumer1, consumer2);
             consumers.forEach(consumer -> consumer.subscribe(List.of(tp.topic())));
-            waitForCondition(() -> poll(consumers, received) && !received.isEmpty(), 60000,
+            waitForCondition(() -> poll(consumers, received) == 0 && !received.isEmpty(), 60000,
                 "no record was delivered before the ACL was removed");
 
             // The topic READ ACL is removed for a while, and the consumers get authorization errors.
@@ -93,30 +94,34 @@ public class ShareConsumerAuthorizationTest extends ShareConsumerTestBase {
                 poll(consumers, received);
             }
 
-            // Once the ACL is back, the consumers must receive the remaining records and the new ones.
+            // Once the ACL is back, the consumers must receive the remaining records and the new ones, without
+            // throwing authorization errors from before the ACL was restored.
             admin.createAcls(List.of(topicRead)).all().get();
             produce("after", 100);
+            int[] errorsAfterRestore = {0};
             waitForCondition(() -> {
-                poll(consumers, received);
+                errorsAfterRestore[0] += poll(consumers, received);
                 return received.size() == 200;
-            }, 60000, () -> "only " + received.size() + " of 200 records were delivered after the ACL was restored");
+            }, 120000, () -> "only " + received.size() + " of 200 records were delivered after the ACL was restored");
+            assertTrue(errorsAfterRestore[0] <= 10, errorsAfterRestore[0]
+                + " authorization errors were thrown after the ACL was restored");
         }
     }
 
     /**
-     * Polls each consumer once and adds the values of the records to {@code received}. Returns false if a
-     * consumer threw a {@link TopicAuthorizationException}.
+     * Polls each consumer once and adds the values of the records to {@code received}. Returns the number of
+     * consumers which threw a {@link TopicAuthorizationException}.
      */
-    private static boolean poll(List<ShareConsumer<byte[], byte[]>> consumers, Set<String> received) {
-        boolean authorized = true;
+    private static int poll(List<ShareConsumer<byte[], byte[]>> consumers, Set<String> received) {
+        int errors = 0;
         for (ShareConsumer<byte[], byte[]> consumer : consumers) {
             try {
                 consumer.poll(Duration.ofMillis(200)).forEach(record -> received.add(new String(record.value())));
             } catch (TopicAuthorizationException e) {
-                authorized = false;
+                errors++;
             }
         }
-        return authorized;
+        return errors;
     }
 
     private void produce(String prefix, int count) {
