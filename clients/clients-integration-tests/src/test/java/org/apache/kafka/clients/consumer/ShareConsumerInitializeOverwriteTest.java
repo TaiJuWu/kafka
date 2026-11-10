@@ -81,7 +81,7 @@ public class ShareConsumerInitializeOverwriteTest extends ShareConsumerTestBase 
     }
 
     @ClusterTest
-    @Timeout(400)
+    @Timeout(500)
     public void testLateInitializeRequestDoesNotResetShareState() throws Exception {
         alterShareAutoOffsetReset(GROUP, "latest");
         Map<Integer, AtomicInteger> deliveries = new ConcurrentHashMap<>();
@@ -90,6 +90,7 @@ public class ShareConsumerInitializeOverwriteTest extends ShareConsumerTestBase 
         AtomicInteger produced = new AtomicInteger();
         AtomicBoolean stopProducing = new AtomicBoolean(false);
         AtomicBoolean stopConsuming = new AtomicBoolean(false);
+        AtomicBoolean pauseConsuming = new AtomicBoolean(false);
         ExecutorService executor = Executors.newFixedThreadPool(3);
 
         try (Admin admin = createAdminClient()) {
@@ -105,14 +106,28 @@ public class ShareConsumerInitializeOverwriteTest extends ShareConsumerTestBase 
             cluster.shutdownBroker(shareCoordinator);
             List<Future<?>> consumers = new ArrayList<>();
             for (int c = 0; c < 2; c++) {
-                consumers.add(executor.submit(() -> consume(stopConsuming, deliveries, acknowledged, redeliveredAfterAck)));
+                consumers.add(executor.submit(() -> {
+                    consume(stopConsuming, pauseConsuming, deliveries, acknowledged, redeliveredAfterAck);
+                    return null;
+                }));
             }
             Thread.sleep(60000);
             cluster.startBroker(shareCoordinator);
 
             // A steady stream of numbered records while the pending initialize requests arrive.
             Future<?> producer = executor.submit(() -> produce(stopProducing, produced));
-            Thread.sleep(70000);
+            Thread.sleep(8000);
+
+            // Stop consuming, so that the share partition leader does not write its state, and wait for the
+            // pending initialize requests to arrive.
+            pauseConsuming.set(true);
+            Thread.sleep(35000);
+
+            // The new leader of the partition initializes the share partition from the persisted state.
+            int partitionLeader = topicPartitionLeader(admin, TOPIC, 0).get(0);
+            cluster.shutdownBroker(partitionLeader);
+            pauseConsuming.set(false);
+            Thread.sleep(30000);
             stopProducing.set(true);
             producer.get(30, TimeUnit.SECONDS);
             int total = produced.get();
@@ -130,7 +145,7 @@ public class ShareConsumerInitializeOverwriteTest extends ShareConsumerTestBase 
 
             int firstDelivered = deliveries.keySet().stream().min(Integer::compare).orElse(-1);
             Set<Integer> missing = missing(deliveries.keySet(), firstDelivered, total);
-            System.out.println("XBUG overwrite coordinator=" + shareCoordinator + " produced=" + total
+            System.out.println("XBUG overwrite coordinator=" + shareCoordinator + " partitionLeader=" + partitionLeader + " produced=" + total
                 + " firstDelivered=" + firstDelivered + " delivered=" + deliveries.size()
                 + " acked=" + acknowledged.size() + " redeliveredAfterAck=" + redeliveredAfterAck.size()
                 + " missing=" + missing.size() + " missingSample=" + missing.stream().limit(10).toList()
@@ -146,11 +161,15 @@ public class ShareConsumerInitializeOverwriteTest extends ShareConsumerTestBase 
         }
     }
 
-    private void consume(AtomicBoolean stop, Map<Integer, AtomicInteger> deliveries, Set<Integer> acknowledged,
-                         Set<Integer> redeliveredAfterAck) {
+    private void consume(AtomicBoolean stop, AtomicBoolean pause, Map<Integer, AtomicInteger> deliveries,
+                         Set<Integer> acknowledged, Set<Integer> redeliveredAfterAck) throws InterruptedException {
         try (ShareConsumer<byte[], byte[]> consumer = createShareConsumer(GROUP)) {
             consumer.subscribe(Set.of(TOPIC));
             while (!stop.get()) {
+                if (pause.get()) {
+                    Thread.sleep(100);
+                    continue;
+                }
                 List<Integer> polled = new ArrayList<>();
                 consumer.poll(Duration.ofMillis(500)).forEach(r -> {
                     int id = Integer.parseInt(new String(r.value()));
