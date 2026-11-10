@@ -105,44 +105,13 @@ public class ShareConsumerInitializeOverwriteTest extends ShareConsumerTestBase 
             cluster.shutdownBroker(shareCoordinator);
             List<Future<?>> consumers = new ArrayList<>();
             for (int c = 0; c < 2; c++) {
-                consumers.add(executor.submit(() -> {
-                    try (ShareConsumer<byte[], byte[]> consumer = createShareConsumer(GROUP)) {
-                        consumer.subscribe(Set.of(TOPIC));
-                        while (!stopConsuming.get()) {
-                            List<Integer> polled = new ArrayList<>();
-                            consumer.poll(Duration.ofMillis(500)).forEach(r -> {
-                                int id = Integer.parseInt(new String(r.value()));
-                                deliveries.computeIfAbsent(id, k -> new AtomicInteger()).incrementAndGet();
-                                if (acknowledged.contains(id)) {
-                                    redeliveredAfterAck.add(id);
-                                }
-                                polled.add(id);
-                            });
-                            if (!polled.isEmpty()) {
-                                Map<TopicIdPartition, Optional<KafkaException>> result = consumer.commitSync(Duration.ofSeconds(10));
-                                if (result.values().stream().allMatch(Optional::isEmpty)) {
-                                    acknowledged.addAll(polled);
-                                }
-                            }
-                        }
-                    }
-                }));
+                consumers.add(executor.submit(() -> consume(stopConsuming, deliveries, acknowledged, redeliveredAfterAck)));
             }
             Thread.sleep(60000);
             cluster.startBroker(shareCoordinator);
 
             // A steady stream of numbered records while the pending initialize requests arrive.
-            Future<?> producer = executor.submit(() -> {
-                try (Producer<byte[], byte[]> p = createProducer()) {
-                    while (!stopProducing.get()) {
-                        int id = produced.getAndIncrement();
-                        p.send(new ProducerRecord<>(TOPIC, 0, null, String.valueOf(id).getBytes()));
-                        p.flush();
-                        Thread.sleep(50);
-                    }
-                }
-                return null;
-            });
+            Future<?> producer = executor.submit(() -> produce(stopProducing, produced));
             Thread.sleep(70000);
             stopProducing.set(true);
             producer.get(30, TimeUnit.SECONDS);
@@ -160,14 +129,7 @@ public class ShareConsumerInitializeOverwriteTest extends ShareConsumerTestBase 
             }
 
             int firstDelivered = deliveries.keySet().stream().min(Integer::compare).orElse(-1);
-            Set<Integer> missing = new TreeSet<>();
-            if (firstDelivered >= 0) {
-                for (int id = firstDelivered; id < total; id++) {
-                    if (!deliveries.containsKey(id)) {
-                        missing.add(id);
-                    }
-                }
-            }
+            Set<Integer> missing = missing(deliveries.keySet(), firstDelivered, total);
             System.out.println("XBUG overwrite coordinator=" + shareCoordinator + " produced=" + total
                 + " firstDelivered=" + firstDelivered + " delivered=" + deliveries.size()
                 + " acked=" + acknowledged.size() + " redeliveredAfterAck=" + redeliveredAfterAck.size()
@@ -182,5 +144,52 @@ public class ShareConsumerInitializeOverwriteTest extends ShareConsumerTestBase 
             stopConsuming.set(true);
             shutdownExecutorService(executor);
         }
+    }
+
+    private void consume(AtomicBoolean stop, Map<Integer, AtomicInteger> deliveries, Set<Integer> acknowledged,
+                         Set<Integer> redeliveredAfterAck) {
+        try (ShareConsumer<byte[], byte[]> consumer = createShareConsumer(GROUP)) {
+            consumer.subscribe(Set.of(TOPIC));
+            while (!stop.get()) {
+                List<Integer> polled = new ArrayList<>();
+                consumer.poll(Duration.ofMillis(500)).forEach(r -> {
+                    int id = Integer.parseInt(new String(r.value()));
+                    deliveries.computeIfAbsent(id, k -> new AtomicInteger()).incrementAndGet();
+                    if (acknowledged.contains(id)) {
+                        redeliveredAfterAck.add(id);
+                    }
+                    polled.add(id);
+                });
+                if (!polled.isEmpty() && commitSucceeded(consumer.commitSync(Duration.ofSeconds(10)))) {
+                    acknowledged.addAll(polled);
+                }
+            }
+        }
+    }
+
+    private static boolean commitSucceeded(Map<TopicIdPartition, Optional<KafkaException>> result) {
+        return result.values().stream().allMatch(Optional::isEmpty);
+    }
+
+    private Void produce(AtomicBoolean stop, AtomicInteger produced) throws InterruptedException {
+        try (Producer<byte[], byte[]> producer = createProducer()) {
+            while (!stop.get()) {
+                int id = produced.getAndIncrement();
+                producer.send(new ProducerRecord<>(TOPIC, 0, null, String.valueOf(id).getBytes()));
+                producer.flush();
+                Thread.sleep(50);
+            }
+        }
+        return null;
+    }
+
+    private static Set<Integer> missing(Set<Integer> delivered, int firstDelivered, int total) {
+        Set<Integer> missing = new TreeSet<>();
+        for (int id = Math.max(firstDelivered, 0); firstDelivered >= 0 && id < total; id++) {
+            if (!delivered.contains(id)) {
+                missing.add(id);
+            }
+        }
+        return missing;
     }
 }
