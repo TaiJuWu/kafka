@@ -2044,6 +2044,40 @@ public class ReplicationControlManagerTest {
     private static final ListPartitionReassignmentsResponseData NONE_REASSIGNING =
         new ListPartitionReassignmentsResponseData().setErrorMessage(null);
 
+    /**
+     * A controller which loses leadership reverts its uncommitted records to the last stable offset, and
+     * lists the partition reassignments at that offset. A reassigning topic must be listed once.
+     */
+    @Test
+    public void testListPartitionReassignmentsAfterRevertToLastStableOffset() {
+        ReplicationControlTestContext ctx = new ReplicationControlTestContext.Builder().build();
+        ReplicationControlManager replication = ctx.replicationControl;
+        ctx.registerBrokers(0, 1, 2, 3);
+        ctx.unfenceBrokers(0, 1, 2, 3);
+        ctx.createTestTopic("foo", new int[][] {new int[] {1, 2, 3}, new int[] {3, 2, 1}});
+        ctx.replay(replication.alterPartitionReassignments(
+            new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                new ReassignableTopic().setName("foo").setPartitions(List.of(
+                    new ReassignablePartition().setPartitionIndex(1).setReplicas(List.of(0, 2, 1))))))).records());
+        ListPartitionReassignmentsResponseData reassigning = replication.listPartitionReassignments(null, Long.MAX_VALUE);
+        assertEquals(1, reassigning.topics().size());
+
+        // The reassignment is committed, and the last stable offset is 100.
+        long lastStableOffset = 100L;
+        ctx.snapshotRegistry.idempotentCreateSnapshot(lastStableOffset);
+
+        // An uncommitted record cancels the reassignment, and the controller loses leadership.
+        ctx.replay(replication.alterPartitionReassignments(
+            new AlterPartitionReassignmentsRequestData().setTopics(List.of(
+                new ReassignableTopic().setName("foo").setPartitions(List.of(
+                    new ReassignablePartition().setPartitionIndex(1).setReplicas(null)))))).records());
+        assertEquals(NONE_REASSIGNING, replication.listPartitionReassignments(null, Long.MAX_VALUE));
+        ctx.snapshotRegistry.revertToSnapshot(lastStableOffset);
+
+        assertEquals(reassigning, replication.listPartitionReassignments(null, Long.MAX_VALUE));
+        assertEquals(reassigning, replication.listPartitionReassignments(null, lastStableOffset));
+    }
+
     @ParameterizedTest
     @ApiKeyVersionsSource(apiKey = ApiKeys.ALTER_PARTITION)
     public void testReassignPartitions(short version) {
