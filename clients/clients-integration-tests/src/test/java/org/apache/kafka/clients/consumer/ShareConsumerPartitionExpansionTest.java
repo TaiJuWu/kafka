@@ -150,8 +150,18 @@ public class ShareConsumerPartitionExpansionTest extends ShareConsumerTestBase {
             cluster.startBroker(coordinator);
             pollUntil(List.of(consumer1, consumer2), () -> assignedPartitions(GROUP).contains(new TopicPartition(freshTopic, 0)));
 
-            send(producer, freshTopic, 0, "new", 10);
+            // With share.auto.offset.reset=latest, the start offset is resolved when the share partition is
+            // first fetched. Write probe records until one is delivered, so that the start offset is resolved
+            // before the records the test counts are written.
             Map<String, Boolean> received = new ConcurrentHashMap<>();
+            int probes = 0;
+            long deadline = System.currentTimeMillis() + 60000;
+            while (received.keySet().stream().noneMatch(v -> v.startsWith(freshTopic + "-probe")) && System.currentTimeMillis() < deadline) {
+                send(producer, freshTopic, 0, "probe" + probes++, 1);
+                pollFor(List.of(consumer1, consumer2), Duration.ofSeconds(1), received);
+            }
+
+            send(producer, freshTopic, 0, "new", 10);
             pollFor(List.of(consumer1, consumer2), Duration.ofSeconds(20), received);
 
             Set<String> fresh = received.keySet().stream().filter(v -> v.startsWith(freshTopic + "-")).collect(Collectors.toSet());
