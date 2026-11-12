@@ -42,6 +42,7 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.record.internal.ControlRecordType;
 import org.apache.kafka.common.record.internal.DefaultRecord;
 import org.apache.kafka.common.record.internal.EndTransactionMarker;
+import org.apache.kafka.common.record.internal.FileLogInputStream.FileChannelRecordBatch;
 import org.apache.kafka.common.record.internal.FileRecords;
 import org.apache.kafka.common.record.internal.MemoryRecords;
 import org.apache.kafka.common.record.internal.MemoryRecordsBuilder;
@@ -95,6 +96,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -9492,6 +9494,48 @@ public class SharePartitionTest {
         when(recordBatch.iterator()).thenReturn(batchIterator);
         when(recordBatch.isControlBatch()).thenReturn(true);
         assertFalse(sharePartition.containsAbortMarker(recordBatch));
+    }
+
+    @Test
+    public void testAcquireWithReadCommittedLoadsHeadersOnlyForBatchesToAcquire() throws IOException {
+        SharePartition sharePartition = SharePartitionBuilder.builder()
+            .withState(SharePartitionState.ACTIVE)
+            .build();
+
+        // An aborted transaction at offsets 0-4 with its marker at offset 5, followed by 994 single record batches.
+        ByteBuffer buffer = ByteBuffer.allocate(128 * 1024);
+        newTransactionalRecords(buffer, ControlRecordType.ABORT, 5, 1, 0);
+        for (int offset = 6; offset < 1000; offset++) {
+            memoryRecordsBuilder(buffer, offset, 1).close();
+        }
+        buffer.flip();
+        FileRecords fileRecords = FileRecords.open(TestUtils.tempFile());
+        fileRecords.append(MemoryRecords.readableRecords(buffer));
+
+        // Each batch read from the log is a spy, to find the batches whose header was loaded.
+        List<FileChannelRecordBatch> batches = new ArrayList<>();
+        fileRecords.batches().forEach(batch -> batches.add(Mockito.spy(batch)));
+        FileRecords records = Mockito.spy(fileRecords);
+        Mockito.doReturn(batches).when(records).batches();
+
+        List<FetchResponseData.AbortedTransaction> abortedTransactions = List.of(
+            new FetchResponseData.AbortedTransaction().setFirstOffset(0).setProducerId(1));
+        ShareAcquiredRecords acquiredRecords = sharePartition.acquire(
+            MEMBER_ID,
+            ShareAcquireMode.BATCH_OPTIMIZED,
+            10 /* Batch size */,
+            10 /* Max fetch records */,
+            DEFAULT_FETCH_OFFSET,
+            fetchPartitionData(records, abortedTransactions),
+            FetchIsolation.TXN_COMMITTED);
+
+        long batchesWithLoadedHeader = batches.stream()
+            .filter(batch -> Mockito.mockingDetails(batch).getInvocations().stream()
+                .anyMatch(invocation -> invocation.getMethod().getName().equals("loadBatchHeader")))
+            .count();
+        assertTrue(batchesWithLoadedHeader <= 20, "the headers of " + batchesWithLoadedHeader + " of "
+            + batches.size() + " batches were loaded to acquire " + acquiredRecords.acquiredRecords());
+        fileRecords.close();
     }
 
     @Test
