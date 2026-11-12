@@ -133,6 +133,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -9322,7 +9324,7 @@ public class SharePartitionTest {
 
         // We are mocking the result of function fetchAbortedTransactionRecordBatches. The records present at these offsets need to be archived.
         // We won't be utilizing the aborted transactions passed in fetchPartitionData.
-        when(sharePartition.fetchAbortedTransactionRecordBatches(fetchPartitionData.records.batches(), fetchPartitionData.abortedTransactions.get())).thenReturn(
+        when(sharePartition.fetchAbortedTransactionRecordBatches(eq(fetchPartitionData.records.batches()), eq(fetchPartitionData.abortedTransactions.get()), anyLong())).thenReturn(
             List.of(
                 memoryRecordsBuilder(10, 5).build().batches().iterator().next(),
                 memoryRecordsBuilder(58, 10).build().batches().iterator().next(),
@@ -9539,6 +9541,29 @@ public class SharePartitionTest {
     }
 
     @Test
+    public void testFetchAbortedTransactionRecordBatchesStopsAfterLastOffset() {
+        SharePartition sharePartition = SharePartitionBuilder.builder()
+            .withState(SharePartitionState.ACTIVE)
+            .build();
+
+        // Two aborted transactions: offset 0 with its marker at 1, and offset 2 with its marker at 3.
+        ByteBuffer buffer = ByteBuffer.allocate(1024);
+        newTransactionalRecords(buffer, ControlRecordType.ABORT, 1, 1, 0);
+        newTransactionalRecords(buffer, ControlRecordType.ABORT, 1, 2, 2);
+        buffer.flip();
+        Records records = MemoryRecords.readableRecords(buffer);
+        List<FetchResponseData.AbortedTransaction> abortedTransactions = List.of(
+            new FetchResponseData.AbortedTransaction().setFirstOffset(0).setProducerId(1),
+            new FetchResponseData.AbortedTransaction().setFirstOffset(2).setProducerId(2));
+
+        assertEquals(List.of(0L, 2L), sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions, 3)
+            .stream().map(RecordBatch::baseOffset).toList());
+        // The batches after the last offset are not checked.
+        assertEquals(List.of(0L), sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions, 1)
+            .stream().map(RecordBatch::baseOffset).toList());
+    }
+
+    @Test
     public void testFetchAbortedTransactionRecordBatchesForOnlyAbortedTransactions() {
         SharePartition sharePartition = SharePartitionBuilder.builder()
             .withState(SharePartitionState.ACTIVE)
@@ -9554,7 +9579,7 @@ public class SharePartitionTest {
             new FetchResponseData.AbortedTransaction().setFirstOffset(0).setProducerId(1)
         );
         // records from 0 to 9 should be archived because they are a part of aborted transactions.
-        List<RecordBatch> actual = sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions);
+        List<RecordBatch> actual = sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions, Long.MAX_VALUE);
         assertEquals(1, actual.size());
         assertEquals(0, actual.get(0).baseOffset());
         assertEquals(9, actual.get(0).lastOffset());
@@ -9573,7 +9598,7 @@ public class SharePartitionTest {
             new FetchResponseData.AbortedTransaction().setFirstOffset(4).setProducerId(1)
         );
 
-        actual = sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions);
+        actual = sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions, Long.MAX_VALUE);
         assertEquals(3, actual.size());
         assertEquals(0, actual.get(0).baseOffset());
         assertEquals(0, actual.get(0).lastOffset());
@@ -9595,7 +9620,7 @@ public class SharePartitionTest {
             new FetchResponseData.AbortedTransaction().setFirstOffset(0).setProducerId(1)
         );
 
-        actual = sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions);
+        actual = sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions, Long.MAX_VALUE);
         assertEquals(0, actual.size());
     }
 
@@ -9623,7 +9648,7 @@ public class SharePartitionTest {
             new FetchResponseData.AbortedTransaction().setFirstOffset(15).setProducerId(1)
         );
 
-        List<RecordBatch> actual = sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions);
+        List<RecordBatch> actual = sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions, Long.MAX_VALUE);
         assertEquals(3, actual.size());
         assertEquals(0, actual.get(0).baseOffset());
         assertEquals(1, actual.get(0).lastOffset());
@@ -9643,7 +9668,7 @@ public class SharePartitionTest {
             new FetchResponseData.AbortedTransaction().setFirstOffset(15).setProducerId(1)
         );
 
-        actual = sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions);
+        actual = sharePartition.fetchAbortedTransactionRecordBatches(records.batches(), abortedTransactions, Long.MAX_VALUE);
         assertEquals(4, actual.size());
         assertEquals(0, actual.get(0).baseOffset());
         assertEquals(1, actual.get(0).lastOffset());

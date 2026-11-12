@@ -3174,7 +3174,9 @@ public class SharePartition implements AutoCloseable {
         List<FetchResponseData.AbortedTransaction> abortedTransactions
     ) {
         // The record batches that need to be archived in cachedState because they were a part of aborted transactions.
-        List<RecordBatch> recordsToArchive = fetchAbortedTransactionRecordBatches(batches, abortedTransactions);
+        // The batches after the last acquired offset are not checked, as checking a batch loads its header.
+        long lastAcquiredOffset = acquiredRecords.isEmpty() ? Long.MAX_VALUE : acquiredRecords.get(acquiredRecords.size() - 1).lastOffset();
+        List<RecordBatch> recordsToArchive = fetchAbortedTransactionRecordBatches(batches, abortedTransactions, lastAcquiredOffset);
         for (RecordBatch recordBatch : recordsToArchive) {
             // Archive the offsets/batches in the cached state.
             NavigableMap<Long, InFlightBatch> subMap = fetchSubMap(recordBatch);
@@ -3291,13 +3293,18 @@ public class SharePartition implements AutoCloseable {
     // Visible for testing.
     List<RecordBatch> fetchAbortedTransactionRecordBatches(
         Iterable<? extends RecordBatch> batches,
-        List<FetchResponseData.AbortedTransaction> abortedTransactions
+        List<FetchResponseData.AbortedTransaction> abortedTransactions,
+        long lastOffset
     ) {
         PriorityQueue<FetchResponseData.AbortedTransaction> orderedAbortedTransactions = orderedAbortedTransactions(abortedTransactions);
         Set<Long> abortedProducerIds = new HashSet<>();
         List<RecordBatch> recordsToArchive = new ArrayList<>();
 
         for (RecordBatch currentBatch : batches) {
+            // The batches are sorted by offset, and baseOffset does not load the header of a batch read from a file.
+            if (currentBatch.baseOffset() > lastOffset) {
+                break;
+            }
             if (currentBatch.hasProducerId()) {
                 // remove from the aborted transactions queue, all aborted transactions which have begun before the
                 // current batch's last offset and add the associated producerIds to the aborted producer set.
