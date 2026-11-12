@@ -9324,13 +9324,13 @@ public class SharePartitionTest {
 
         // We are mocking the result of function fetchAbortedTransactionRecordBatches. The records present at these offsets need to be archived.
         // We won't be utilizing the aborted transactions passed in fetchPartitionData.
-        when(sharePartition.fetchAbortedTransactionRecordBatches(eq(fetchPartitionData.records.batches()), eq(fetchPartitionData.abortedTransactions.get()), anyLong())).thenReturn(
+        Mockito.doReturn(
             List.of(
                 memoryRecordsBuilder(10, 5).build().batches().iterator().next(),
                 memoryRecordsBuilder(58, 10).build().batches().iterator().next(),
                 memoryRecordsBuilder(70, 5).build().batches().iterator().next()
             )
-        );
+        ).when(sharePartition).fetchAbortedTransactionRecordBatches(eq(fetchPartitionData.records.batches()), eq(fetchPartitionData.abortedTransactions.get()), anyLong());
 
         List<AcquiredRecords> acquiredRecordsList = fetchAcquiredRecords(
             sharePartition.acquire(
