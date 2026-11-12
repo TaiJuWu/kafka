@@ -65,7 +65,7 @@ import java.util.OptionalLong;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Acquires records read from a log file, which starts with an aborted transaction followed by single record batches.
+ * Acquires records read from a log file, which starts with an aborted transaction followed by other batches.
  */
 @State(Scope.Benchmark)
 @Fork(value = 1)
@@ -75,10 +75,13 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class SharePartitionAcquireBenchmark {
 
-    @Param({"1000", "10000"})
-    private int numBatches;
+    private static final int NUM_RECORDS = 10000;
+    private static final byte[] VALUE = new byte[500];
 
-    @Param({"10", "500"})
+    @Param({"1", "5", "10", "32"})
+    private int recordsPerBatch;
+
+    @Param({"30", "500"})
     private int maxFetchRecords;
 
     @Param({"TXN_COMMITTED", "HIGH_WATERMARK"})
@@ -98,19 +101,27 @@ public class SharePartitionAcquireBenchmark {
         records = FileRecords.open(file);
         long producerId = 1;
         records.append(MemoryRecords.withTransactionalRecords(0, Compression.NONE, producerId, (short) 0, 0,
-            RecordBatch.NO_PARTITION_LEADER_EPOCH, new SimpleRecord("value".getBytes())));
-        records.append(MemoryRecords.withEndTransactionMarker(1, 0, RecordBatch.NO_PARTITION_LEADER_EPOCH, producerId,
-            (short) 0, new EndTransactionMarker(ControlRecordType.ABORT, 0)));
-        for (long offset = 2; offset < numBatches; offset++) {
-            records.append(MemoryRecords.withRecords(offset, Compression.NONE, new SimpleRecord("value".getBytes())));
+            RecordBatch.NO_PARTITION_LEADER_EPOCH, simpleRecords()));
+        records.append(MemoryRecords.withEndTransactionMarker(recordsPerBatch, 0, RecordBatch.NO_PARTITION_LEADER_EPOCH,
+            producerId, (short) 0, new EndTransactionMarker(ControlRecordType.ABORT, 0)));
+        for (long offset = recordsPerBatch + 1; offset < NUM_RECORDS; offset += recordsPerBatch) {
+            records.append(MemoryRecords.withRecords(offset, Compression.NONE, simpleRecords()));
         }
         records.flush();
         List<FetchResponseData.AbortedTransaction> abortedTransactions = List.of(
             new FetchResponseData.AbortedTransaction().setFirstOffset(0).setProducerId(producerId));
-        fetchPartitionData = new FetchPartitionData(Errors.NONE, numBatches, 0, records, Optional.empty(),
+        fetchPartitionData = new FetchPartitionData(Errors.NONE, NUM_RECORDS, 0, records, Optional.empty(),
             OptionalLong.empty(), Optional.of(abortedTransactions), OptionalInt.empty(), false);
         configProvider = new ShareGroupConfigProvider(Mockito.mock(GroupConfigManager.class));
         metrics = new SharePartitionMetrics("group", topicIdPartition.topic(), topicIdPartition.partition());
+    }
+
+    private SimpleRecord[] simpleRecords() {
+        SimpleRecord[] simpleRecords = new SimpleRecord[recordsPerBatch];
+        for (int i = 0; i < recordsPerBatch; i++) {
+            simpleRecords[i] = new SimpleRecord(VALUE);
+        }
+        return simpleRecords;
     }
 
     @Setup(Level.Invocation)
