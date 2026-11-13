@@ -204,6 +204,68 @@ public class ShareConsumerTest extends ShareConsumerTestBase {
         }
     }
 
+    /**
+     * One of two share consumers unsubscribes while records are being consumed, and subscribes again. The
+     * records it had not acknowledged are delivered to the other consumer, and it receives records again after
+     * subscribing.
+     */
+    @ClusterTest
+    public void testShareConsumerUnsubscribesAndSubscribesAgainWhileConsuming() throws InterruptedException {
+        alterShareAutoOffsetReset("group1", "earliest");
+        try (Producer<byte[], byte[]> producer = createProducer();
+             ShareConsumer<byte[], byte[]> consumer1 = createShareConsumer("group1");
+             ShareConsumer<byte[], byte[]> consumer2 = createShareConsumer("group1")) {
+            Set<String> received1 = new HashSet<>();
+            Set<String> received2 = new HashSet<>();
+            produceValues(producer, "before", 100);
+            consumer1.subscribe(Set.of(tp.topic()));
+            consumer2.subscribe(Set.of(tp.topic()));
+            waitForCondition(() -> {
+                pollValues(consumer1, received1);
+                pollValues(consumer2, received2);
+                return !received1.isEmpty();
+            }, 60000, "consumer1 did not receive any record");
+
+            // The other consumer receives all the records while consumer1 is unsubscribed.
+            consumer1.unsubscribe();
+            produceValues(producer, "unsubscribed", 100);
+            waitForCondition(() -> {
+                pollValues(consumer2, received2);
+                return union(received1, received2).size() == 200;
+            }, 60000, () -> "only " + union(received1, received2).size() + " of 200 records were received while consumer1 was unsubscribed");
+
+            // consumer2 does not poll, so the records written now are left for consumer1.
+            consumer1.subscribe(Set.of(tp.topic()));
+            produceValues(producer, "subscribed", 100);
+            waitForCondition(() -> {
+                pollValues(consumer1, received1);
+                return received1.stream().anyMatch(value -> value.startsWith("subscribed-"));
+            }, 60000, "consumer1 did not receive any record after subscribing again");
+            waitForCondition(() -> {
+                pollValues(consumer1, received1);
+                pollValues(consumer2, received2);
+                return union(received1, received2).size() == 300;
+            }, 60000, () -> "only " + union(received1, received2).size() + " of 300 records were received");
+        }
+    }
+
+    private void produceValues(Producer<byte[], byte[]> producer, String prefix, int count) {
+        for (int i = 0; i < count; i++) {
+            producer.send(new ProducerRecord<>(tp.topic(), tp.partition(), null, (prefix + "-" + i).getBytes()));
+        }
+        producer.flush();
+    }
+
+    private static void pollValues(ShareConsumer<byte[], byte[]> consumer, Set<String> received) {
+        consumer.poll(Duration.ofMillis(100)).forEach(record -> received.add(new String(record.value())));
+    }
+
+    private static Set<String> union(Set<String> set1, Set<String> set2) {
+        Set<String> union = new HashSet<>(set1);
+        union.addAll(set2);
+        return union;
+    }
+
     @ClusterTests({
         @ClusterTest(serverProperties = {
             @ClusterConfigProperty(key = GroupCoordinatorConfig.SHARE_GROUP_ASSIGNMENT_INTERVAL_MS_CONFIG, value = "0")
