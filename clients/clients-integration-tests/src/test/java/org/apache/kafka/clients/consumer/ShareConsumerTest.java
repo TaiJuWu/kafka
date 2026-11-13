@@ -249,9 +249,63 @@ public class ShareConsumerTest extends ShareConsumerTestBase {
         }
     }
 
+    /**
+     * All the share consumers of a group unsubscribe from a topic, and subscribe again. The share partitions keep
+     * their state, so the consumption continues from where it stopped: the records written while the group was
+     * not subscribed are delivered, although share.auto.offset.reset is latest, and the records acknowledged
+     * before are not delivered again. A partition added in the meantime starts at offset 0.
+     */
+    @ClusterTest
+    public void testShareGroupContinuesAfterAllConsumersUnsubscribeAndSubscribeAgain() throws Exception {
+        try (Admin admin = createAdminClient();
+             Producer<byte[], byte[]> producer = createProducer();
+             ShareConsumer<byte[], byte[]> consumer1 = createShareConsumer("group1");
+             ShareConsumer<byte[], byte[]> consumer2 = createShareConsumer("group1")) {
+            List<ShareConsumer<byte[], byte[]>> consumers = List.of(consumer1, consumer2);
+            Set<String> received = new HashSet<>();
+            consumers.forEach(consumer -> consumer.subscribe(Set.of(tp.topic())));
+
+            // The latest start offset is resolved when the share partition is first fetched. Write probe records
+            // until one is delivered, so that it is resolved before the records the test counts are written.
+            int probes = 0;
+            long deadline = System.currentTimeMillis() + 60000;
+            while (received.stream().noneMatch(v -> v.startsWith("probe")) && System.currentTimeMillis() < deadline) {
+                produceValues(producer, "probe" + probes++, 1);
+                consumers.forEach(consumer -> pollValues(consumer, received));
+            }
+            produceValues(producer, "consumed", 50);
+            waitForCondition(() -> {
+                consumers.forEach(consumer -> pollValues(consumer, received));
+                return received.stream().filter(v -> v.startsWith("consumed-")).count() == 50;
+            }, 60000, "the records written before unsubscribing were not all delivered");
+            consumers.forEach(ShareConsumer::commitSync);
+            consumers.forEach(ShareConsumer::unsubscribe);
+
+            // Records are written to the topic, and to a partition added to it, while the group is not subscribed.
+            produceValues(producer, "unsubscribed", 50);
+            admin.createPartitions(Map.of(tp.topic(), NewPartitions.increaseTo(2))).all().get();
+            cluster.waitTopicCreation(tp.topic(), 2);
+            produceValues(producer, 1, "added", 20);
+
+            Set<String> receivedAgain = new HashSet<>();
+            consumers.forEach(consumer -> consumer.subscribe(Set.of(tp.topic())));
+            waitForCondition(() -> {
+                consumers.forEach(consumer -> pollValues(consumer, receivedAgain));
+                return receivedAgain.stream().filter(v -> v.startsWith("unsubscribed-")).count() == 50
+                    && receivedAgain.stream().filter(v -> v.startsWith("added-")).count() == 20;
+            }, 60000, () -> "after subscribing again, only " + receivedAgain + " were delivered");
+            assertEquals(0, receivedAgain.stream().filter(v -> v.startsWith("consumed-")).count(),
+                "records acknowledged before unsubscribing were delivered again");
+        }
+    }
+
     private void produceValues(Producer<byte[], byte[]> producer, String prefix, int count) {
+        produceValues(producer, tp.partition(), prefix, count);
+    }
+
+    private void produceValues(Producer<byte[], byte[]> producer, int partition, String prefix, int count) {
         for (int i = 0; i < count; i++) {
-            producer.send(new ProducerRecord<>(tp.topic(), tp.partition(), null, (prefix + "-" + i).getBytes()));
+            producer.send(new ProducerRecord<>(tp.topic(), partition, null, (prefix + "-" + i).getBytes()));
         }
         producer.flush();
     }
