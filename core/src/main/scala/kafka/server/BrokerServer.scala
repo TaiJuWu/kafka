@@ -23,10 +23,10 @@ import kafka.log.LogManager
 import kafka.network.SocketServer
 import kafka.raft.KafkaRaftManager
 import kafka.server.metadata._
-import kafka.server.mirror.MirrorMetadataManager
+import kafka.server.mirror.{MirrorCoordinatorPublisher, MirrorMetadataManager}
 import kafka.server.share.{ReplicaManagerLogReader, ReplicaManagerPartitionMetadataProvider, ShareCoordinatorMetadataCacheHelperImpl, SharePartitionManager}
 import org.apache.kafka.common.config.{ConfigException, ConfigResource}
-import org.apache.kafka.common.internals.Plugin
+import org.apache.kafka.common.internals.{Plugin, Topic}
 import org.apache.kafka.common.message.ApiMessageType.ListenerType
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network.ListenerName
@@ -40,6 +40,7 @@ import org.apache.kafka.coordinator.group.metrics.{GroupCoordinatorMetrics, Grou
 import org.apache.kafka.coordinator.group.{GroupConfigManager, GroupCoordinator, GroupCoordinatorRecordSerde, GroupCoordinatorService}
 import org.apache.kafka.coordinator.group.modern.share.ShareGroupConfigProvider
 import org.apache.kafka.coordinator.share.metrics.{ShareCoordinatorMetrics, ShareCoordinatorRuntimeMetrics}
+import org.apache.kafka.coordinator.mirror.{MirrorCoordinatorMetrics, MirrorCoordinatorRecordSerde, MirrorCoordinatorService}
 import org.apache.kafka.coordinator.share.{ShareCoordinator, ShareCoordinatorRecordSerde, ShareCoordinatorService}
 import org.apache.kafka.coordinator.transaction.ProducerIdManager
 import org.apache.kafka.image.publisher.{BrokerRegistrationTracker, MetadataPublisher}
@@ -148,6 +149,8 @@ class BrokerServer(
   var kafkaScheduler: KafkaScheduler = _
 
   var mirrorMetadataManager: MirrorMetadataManager = _
+
+  var mirrorCoordinator: MirrorCoordinatorService = _
 
   @volatile var metadataCache: KRaftMetadataCache = _
 
@@ -394,6 +397,7 @@ class BrokerServer(
 
       /* create share coordinator */
       shareCoordinator = createShareCoordinator()
+      mirrorCoordinator = createMirrorCoordinator()
 
       /* create shared timer for share group components */
       shareGroupTimer = new SystemTimerReaper("share-group-reaper", new SystemTimer("share-group"))
@@ -519,7 +523,8 @@ class BrokerServer(
         tokenManager = tokenManager,
         apiVersionManager = apiVersionManager,
         clientMetricsManager = clientMetricsManager,
-        groupConfigManager = groupConfigManager)
+        groupConfigManager = groupConfigManager,
+        mirrorCoordinator = Some(mirrorCoordinator))
 
       dataPlaneRequestHandlerPool = sharedServer.requestHandlerPoolFactory.createPool(
         config.nodeId,
@@ -590,6 +595,8 @@ class BrokerServer(
       brokerRegistrationTracker = new BrokerRegistrationTracker(config.brokerId,
         () => lifecycleManager.resendBrokerRegistration())
       metadataPublishers.add(brokerRegistrationTracker)
+      metadataPublishers.add(new MirrorCoordinatorPublisher(config.brokerId, mirrorCoordinator,
+        sharedServer.metadataPublishingFaultHandler))
       mirrorMetadataManager = new MirrorMetadataManager(config, replicaManager, clientToControllerChannelManager, metrics, time)
       metadataPublishers.add(mirrorMetadataManager)
       mirrorMetadataManager.startup()
@@ -738,6 +745,29 @@ class BrokerServer(
       .withAuthorizerPlugin(authorizerPlugin.toJava)
       .withPartitionMetadataClient(partitionMetadataClient)
       .build()
+  }
+
+  private def createMirrorCoordinator(): MirrorCoordinatorService = {
+    val time = Time.SYSTEM
+    val brokerConfig = MirrorMetadataManager.brokerConfig(config)
+    val loader = new CoordinatorLoaderImpl[CoordinatorRecord](
+      time,
+      tp => replicaManager.getLog(tp).toJava,
+      tp => replicaManager.getLogEndOffset(tp).map(Long.box).toJava,
+      new MirrorCoordinatorRecordSerde,
+      brokerConfig.coordinatorLoadBufferSize(),
+      CoordinatorLoaderImpl.DEFAULT_COMMIT_INTERVAL_OFFSETS
+    )
+    val coordinator = new MirrorCoordinatorService.Builder(config.brokerId, brokerConfig)
+      .withTimer(new SystemTimerReaper("mirror-coordinator-reaper", new SystemTimer("mirror-coordinator")))
+      .withTime(time)
+      .withLoader(loader)
+      .withWriter(new CoordinatorPartitionWriter(replicaManager))
+      .withRuntimeMetrics(MirrorCoordinatorMetrics.runtimeMetrics(metrics))
+      .build()
+    coordinator.startup(() => metadataCache.numPartitions(Topic.MIRROR_STATE_TOPIC_NAME)
+      .orElse(brokerConfig.stateTopicNumPartitions()))
+    coordinator
   }
 
   private def createShareCoordinator(): ShareCoordinator = {
@@ -927,6 +957,8 @@ class BrokerServer(
 
       if (shareCoordinator != null)
         Utils.swallow(this.logger.underlying, () => shareCoordinator.shutdown())
+      if (mirrorCoordinator != null)
+        Utils.swallow(this.logger.underlying, () => mirrorCoordinator.shutdown())
 
       if (assignmentsManager != null)
         Utils.swallow(this.logger.underlying, () => assignmentsManager.close())

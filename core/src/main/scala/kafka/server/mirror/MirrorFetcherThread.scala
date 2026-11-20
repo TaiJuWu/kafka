@@ -31,10 +31,29 @@ import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
 /**
- * Asks the controller to bump the leader epoch of a mirror partition to at least the given value.
+ * Receives the events of the mirror fetchers which change the state of a mirror partition.
  */
-trait MirrorLeaderEpochBumper {
+trait MirrorPartitionListener {
+  /**
+   * Asks the controller to bump the leader epoch of a mirror partition to at least the given value.
+   */
   def requestLeaderEpochBump(topicPartition: TopicPartition, minLeaderEpoch: Int): Unit
+
+  /**
+   * The partition stopped on a source batch with a leader epoch higher than the destination leader epoch.
+   */
+  def onLeaderEpochExceeded(topicPartition: TopicPartition, sourceEpoch: Int): Unit
+
+  /**
+   * The partition truncated its log after an unclean leader election of the source partition, and stopped until
+   * all its replicas converge.
+   */
+  def onUncleanTruncation(topicPartition: TopicPartition, offset: Long): Unit
+
+  /**
+   * The source partition diverged, and mirror.unclean.leader.election.enable is not set.
+   */
+  def onDivergenceRejected(topicPartition: TopicPartition, offset: Long): Unit
 }
 
 object MirrorFetcherThread {
@@ -60,7 +79,7 @@ class MirrorFetcherThread(name: String,
                           fetchBackOffMs: Int,
                           failedPartitions: FailedPartitions,
                           replicaMgr: ReplicaManager,
-                          epochBumper: MirrorLeaderEpochBumper,
+                          listener: MirrorPartitionListener,
                           logPrefix: String)
   extends AbstractFetcherThread(name = name,
                                 clientId = name,
@@ -137,10 +156,12 @@ class MirrorFetcherThread(name: String,
     val sourceEpoch = maxPartitionLeaderEpoch(records)
     val leaderEpoch = partition.getLeaderEpoch
     if (sourceEpoch >= leaderEpoch - MirrorFetcherThread.LeaderEpochBumpThreshold)
-      epochBumper.requestLeaderEpochBump(topicPartition, sourceEpoch + MirrorFetcherThread.LeaderEpochBumpIncrement)
-    if (sourceEpoch > leaderEpoch)
+      listener.requestLeaderEpochBump(topicPartition, sourceEpoch + MirrorFetcherThread.LeaderEpochBumpIncrement)
+    if (sourceEpoch > leaderEpoch) {
+      listener.onLeaderEpochExceeded(topicPartition, sourceEpoch)
       throw new MirrorLeaderEpochExceededException(s"The source leader epoch $sourceEpoch of partition $topicPartition " +
         s"is higher than the destination leader epoch $leaderEpoch")
+    }
 
     val (logAppendInfo, _) = partition.appendRecordsToMirrorLeader(records)
 
@@ -177,12 +198,20 @@ class MirrorFetcherThread(name: String,
   override def truncate(topicPartition: TopicPartition, offset: Long): Unit = {
     val partition = replicaMgr.getPartitionOrException(topicPartition)
     val log = partition.localLogOrException
-    if (offset < log.logEndOffset && !log.config.mirrorUncleanLeaderElectionEnable)
+    if (offset < log.logEndOffset && !log.config.mirrorUncleanLeaderElectionEnable) {
+      listener.onDivergenceRejected(topicPartition, offset)
       throw new KafkaException(s"The source partition of $topicPartition diverged at offset $offset, which " +
         "means that it had an unclean leader election, and mirror.unclean.leader.election.enable is not set")
-    if (offset < log.logEndOffset)
+    }
+    if (offset < log.logEndOffset) {
       warn(s"Truncating mirror partition $topicPartition from ${log.logEndOffset} to $offset after an unclean " +
         "leader election of the source partition")
+      partition.truncateTo(offset, isFuture = false)
+      // The partition stops until all its replicas converge to the truncated log (ULE_RECOVERY).
+      listener.onUncleanTruncation(topicPartition, offset)
+      throw new KafkaException(s"Mirror partition $topicPartition truncated to $offset after an unclean leader " +
+        "election of the source partition")
+    }
     partition.truncateTo(offset, isFuture = false)
   }
 

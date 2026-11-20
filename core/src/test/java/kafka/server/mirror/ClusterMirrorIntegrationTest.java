@@ -37,11 +37,14 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.ReadOnlyTopicException;
+import org.apache.kafka.common.message.ReadMirrorStatesRequestData;
+import org.apache.kafka.common.message.ReadMirrorStatesResponseData;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
 import org.apache.kafka.server.common.MetadataVersion;
+import org.apache.kafka.server.mirror.MirrorPartitionState;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.internals.log.LogSegment;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
@@ -299,6 +302,71 @@ public class ClusterMirrorIntegrationTest {
         source.brokers().get(leader).startup();
         produce(source, 0, "new", 5);
         return divergence;
+    }
+
+    @Test
+    public void testStopStoresLastMirrorEpoch() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        produce(source, 0, "r", 30);
+        startMirroring();
+        waitForMirror();
+        TestUtils.waitForCondition(() -> mirrorState(tp).map(s -> s.state() == MirrorPartitionState.MIRRORING.value()).orElse(false),
+            () -> "the partition did not reach MIRRORING: " + mirrorState(tp));
+
+        setMirrorState(LogConfig.MIRROR_STATE_STOPPED);
+        TestUtils.waitForCondition(() -> mirrorState(tp).map(s -> s.state() == MirrorPartitionState.STOPPED.value()).orElse(false),
+            () -> "the partition did not reach STOPPED: " + mirrorState(tp));
+        ReadMirrorStatesResponseData.PartitionResult state = mirrorState(tp).orElseThrow();
+        assertEquals(leaderLog(source, tp).latestEpoch().orElseThrow().intValue(), state.lastMirrorEpoch());
+        assertEquals(endOffsets(sourceAdmin).get(tp).longValue(), state.lastMirrorOffset());
+    }
+
+    @Test
+    public void testRestartAfterStopTruncatesLocalWrites() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        produce(source, 0, "first", 20);
+        startMirroring();
+        waitForMirror();
+
+        setMirrorState(LogConfig.MIRROR_STATE_STOPPED);
+        TestUtils.waitForCondition(() -> {
+            try {
+                produce(destination, 0, "local", 5);
+                return true;
+            } catch (ExecutionException e) {
+                return false;
+            }
+        }, "the destination topic did not become writable");
+        produce(source, 0, "second", 10);
+
+        // Mirroring again truncates the destination to the last mirror offset, which drops the local records.
+        setMirrorState(LogConfig.MIRROR_STATE_MIRRORING);
+        waitForMirror();
+        for (BrokerServer broker : destination.brokers().values()) {
+            TestUtils.waitForCondition(() -> batches(source, tp).equals(batches(broker, tp)),
+                () -> "replica " + broker.config().brokerId() + " of " + tp + " did not converge");
+        }
+        assertEquals(0, consume(destination, "read_committed").stream().filter(v -> v.contains(":local-")).count());
+    }
+
+    /**
+     * @return the state of a mirror partition, read from the coordinator of the destination cluster which keeps it
+     */
+    private java.util.Optional<ReadMirrorStatesResponseData.PartitionResult> mirrorState(TopicPartition tp) {
+        ReadMirrorStatesRequestData request = new ReadMirrorStatesRequestData().setMirrorName(MIRROR);
+        ReadMirrorStatesRequestData.TopicMetadata topic = new ReadMirrorStatesRequestData.TopicMetadata().setTopicName(tp.topic());
+        topic.partitions().add(new ReadMirrorStatesRequestData.PartitionData().setPartitionIndex(tp.partition()));
+        request.topics().add(topic);
+        for (BrokerServer broker : destination.brokers().values()) {
+            try {
+                ReadMirrorStatesResponseData.PartitionResult result = broker.mirrorCoordinator().readMirrorStates(request).get()
+                    .topics().iterator().next().partitions().get(0);
+                if (result.errorCode() == 0) return java.util.Optional.of(result);
+            } catch (Exception e) {
+                // Not the coordinator of the partition.
+            }
+        }
+        return java.util.Optional.empty();
     }
 
     private static int leaderEpoch(KafkaClusterTestKit cluster, TopicPartition tp) {

@@ -165,6 +165,8 @@ import org.apache.kafka.common.message.RemoveRaftVoterResponseDataJsonConverter;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestDataJsonConverter;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseDataJsonConverter;
 import org.apache.kafka.common.message.RequestHeaderDataJsonConverter;
+import org.apache.kafka.common.message.ReadMirrorStatesRequestDataJsonConverter;
+import org.apache.kafka.common.message.ReadMirrorStatesResponseDataJsonConverter;
 import org.apache.kafka.common.message.SaslAuthenticateRequestDataJsonConverter;
 import org.apache.kafka.common.message.SaslAuthenticateResponseDataJsonConverter;
 import org.apache.kafka.common.message.SaslHandshakeRequestDataJsonConverter;
@@ -201,6 +203,8 @@ import org.apache.kafka.common.message.WriteShareGroupStateRequestDataJsonConver
 import org.apache.kafka.common.message.WriteShareGroupStateResponseDataJsonConverter;
 import org.apache.kafka.common.message.WriteTxnMarkersRequestDataJsonConverter;
 import org.apache.kafka.common.message.WriteTxnMarkersResponseDataJsonConverter;
+import org.apache.kafka.common.message.WriteMirrorStatesRequestDataJsonConverter;
+import org.apache.kafka.common.message.WriteMirrorStatesResponseDataJsonConverter;
 import org.apache.kafka.common.network.ClientInformation;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.AbstractResponse;
@@ -354,6 +358,8 @@ import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
 import org.apache.kafka.common.requests.RequestContext;
 import org.apache.kafka.common.requests.RequestHeader;
+import org.apache.kafka.common.requests.ReadMirrorStatesRequest;
+import org.apache.kafka.common.requests.ReadMirrorStatesResponse;
 import org.apache.kafka.common.requests.SaslAuthenticateRequest;
 import org.apache.kafka.common.requests.SaslAuthenticateResponse;
 import org.apache.kafka.common.requests.SaslHandshakeRequest;
@@ -390,6 +396,8 @@ import org.apache.kafka.common.requests.WriteShareGroupStateRequest;
 import org.apache.kafka.common.requests.WriteShareGroupStateResponse;
 import org.apache.kafka.common.requests.WriteTxnMarkersRequest;
 import org.apache.kafka.common.requests.WriteTxnMarkersResponse;
+import org.apache.kafka.common.requests.WriteMirrorStatesRequest;
+import org.apache.kafka.common.requests.WriteMirrorStatesResponse;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.BooleanNode;
@@ -422,6 +430,10 @@ public class RequestConvertToJson {
                 AlterPartitionReassignmentsRequestDataJsonConverter.write(((AlterPartitionReassignmentsRequest) request).data(), request.version());
             case ALTER_PARTITION ->
                 AlterPartitionRequestDataJsonConverter.write(((AlterPartitionRequest) request).data(), request.version());
+            case READ_MIRROR_STATES ->
+                ReadMirrorStatesRequestDataJsonConverter.write(((ReadMirrorStatesRequest) request).data(), request.version());
+            case WRITE_MIRROR_STATES ->
+                WriteMirrorStatesRequestDataJsonConverter.write(((WriteMirrorStatesRequest) request).data(), request.version());
             case BUMP_LEADER_EPOCHS ->
                 BumpLeaderEpochsRequestDataJsonConverter.write(((BumpLeaderEpochsRequest) request).data(), request.version());
             case ALTER_REPLICA_LOG_DIRS ->
@@ -611,6 +623,10 @@ public class RequestConvertToJson {
                 AlterPartitionReassignmentsResponseDataJsonConverter.write(((AlterPartitionReassignmentsResponse) response).data(), version);
             case ALTER_PARTITION ->
                 AlterPartitionResponseDataJsonConverter.write(((AlterPartitionResponse) response).data(), version);
+            case READ_MIRROR_STATES ->
+                ReadMirrorStatesResponseDataJsonConverter.write(((ReadMirrorStatesResponse) response).data(), version);
+            case WRITE_MIRROR_STATES ->
+                WriteMirrorStatesResponseDataJsonConverter.write(((WriteMirrorStatesResponse) response).data(), version);
             case BUMP_LEADER_EPOCHS ->
                 BumpLeaderEpochsResponseDataJsonConverter.write(((BumpLeaderEpochsResponse) response).data(), version);
             case ALTER_REPLICA_LOG_DIRS ->

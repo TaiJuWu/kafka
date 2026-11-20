@@ -44,6 +44,12 @@
             <allow pkg="org.apache.kafka.common.security" />
             <allow pkg="org.apache.kafka.coordinator.mirror" />
             <allow pkg="org.apache.kafka.coordinator.common.runtime" />
+            <allow pkg="org.apache.kafka.common.internals" />
+            <allow pkg="org.apache.kafka.common.message" />
+            <allow pkg="org.apache.kafka.common.metrics" />
+            <allow pkg="org.apache.kafka.common.requests" />
+            <allow pkg="org.apache.kafka.server.mirror" />
+            <allow pkg="org.apache.kafka.timeline" />
             <allow pkg="org.apache.kafka.server.common" />
             <allow pkg="org.apache.kafka.server.util" />
             <allow pkg="org.junit.jupiter.api" />

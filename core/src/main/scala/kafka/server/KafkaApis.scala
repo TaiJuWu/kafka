@@ -61,6 +61,7 @@ import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.coordinator.group.modern.share.ShareGroupConfigProvider
 import org.apache.kafka.coordinator.group.{Group, GroupConfig, GroupConfigManager, GroupCoordinator}
 import org.apache.kafka.coordinator.share.ShareCoordinator
+import org.apache.kafka.coordinator.mirror.MirrorCoordinatorService
 import org.apache.kafka.coordinator.transaction.InitProducerIdResult
 import org.apache.kafka.metadata.{ConfigRepository, MetadataCache}
 import org.apache.kafka.network.Request
@@ -114,7 +115,8 @@ class KafkaApis(val requestChannel: RequestChannel,
                 val tokenManager: DelegationTokenManager,
                 val apiVersionManager: ApiVersionManager,
                 val clientMetricsManager: ClientMetricsManager,
-                val groupConfigManager: GroupConfigManager
+                val groupConfigManager: GroupConfigManager,
+                val mirrorCoordinator: Option[MirrorCoordinatorService] = None
 ) extends ApiRequestHandler with Logging {
 
   type ProduceResponseStats = Map[TopicIdPartition, RecordValidationStats]
@@ -245,6 +247,8 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.SHARE_ACKNOWLEDGE => handleShareAcknowledgeRequest(request).exceptionally(handleError)
         case ApiKeys.INITIALIZE_SHARE_GROUP_STATE => handleInitializeShareGroupStateRequest(request).exceptionally(handleError)
         case ApiKeys.READ_SHARE_GROUP_STATE => handleReadShareGroupStateRequest(request).exceptionally(handleError)
+        case ApiKeys.READ_MIRROR_STATES => handleReadMirrorStatesRequest(request).exceptionally(handleError)
+        case ApiKeys.WRITE_MIRROR_STATES => handleWriteMirrorStatesRequest(request).exceptionally(handleError)
         case ApiKeys.WRITE_SHARE_GROUP_STATE => handleWriteShareGroupStateRequest(request).exceptionally(handleError)
         case ApiKeys.DELETE_SHARE_GROUP_STATE => handleDeleteShareGroupStateRequest(request).exceptionally(handleError)
         case ApiKeys.READ_SHARE_GROUP_STATE_SUMMARY => handleReadShareGroupStateSummaryRequest(request).exceptionally(handleError)
@@ -3770,6 +3774,46 @@ class KafkaApis(val requestChannel: RequestChannel,
           requestHelper.sendMaybeThrottle(request, new InitializeShareGroupStateResponse(response))
         }
       }
+  }
+
+  def handleReadMirrorStatesRequest(request: Request): CompletableFuture[Unit] = {
+    val readRequest = request.body(classOf[ReadMirrorStatesRequest])
+    if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+      requestHelper.sendMaybeThrottle(request, readRequest.getErrorResponse(Errors.CLUSTER_AUTHORIZATION_FAILED.exception))
+      return CompletableFuture.completedFuture[Unit](())
+    }
+    mirrorCoordinator match {
+      case None =>
+        requestHelper.sendMaybeThrottle(request, readRequest.getErrorResponse(Errors.COORDINATOR_NOT_AVAILABLE.exception))
+        CompletableFuture.completedFuture[Unit](())
+      case Some(coordinator) =>
+        coordinator.readMirrorStates(readRequest.data).handle[Unit] { (response, exception) =>
+          if (exception != null)
+            requestHelper.sendMaybeThrottle(request, readRequest.getErrorResponse(exception))
+          else
+            requestHelper.sendMaybeThrottle(request, new ReadMirrorStatesResponse(response))
+        }
+    }
+  }
+
+  def handleWriteMirrorStatesRequest(request: Request): CompletableFuture[Unit] = {
+    val writeRequest = request.body(classOf[WriteMirrorStatesRequest])
+    if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
+      requestHelper.sendMaybeThrottle(request, writeRequest.getErrorResponse(Errors.CLUSTER_AUTHORIZATION_FAILED.exception))
+      return CompletableFuture.completedFuture[Unit](())
+    }
+    mirrorCoordinator match {
+      case None =>
+        requestHelper.sendMaybeThrottle(request, writeRequest.getErrorResponse(Errors.COORDINATOR_NOT_AVAILABLE.exception))
+        CompletableFuture.completedFuture[Unit](())
+      case Some(coordinator) =>
+        coordinator.writeMirrorStates(writeRequest.data).handle[Unit] { (response, exception) =>
+          if (exception != null)
+            requestHelper.sendMaybeThrottle(request, writeRequest.getErrorResponse(exception))
+          else
+            requestHelper.sendMaybeThrottle(request, new WriteMirrorStatesResponse(response))
+        }
+    }
   }
 
   def handleReadShareGroupStateRequest(request: Request): CompletableFuture[Unit] = {

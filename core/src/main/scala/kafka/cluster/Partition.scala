@@ -200,6 +200,10 @@ class Partition(val topicPartition: TopicPartition,
   // completes and a switch to new location is performed.
   // log and futureLog variables defined below are used to capture this
   @volatile var log: Option[UnifiedLog] = None
+
+  // Whether the leader of a mirror partition accepts the writes of clients: only once its mirroring is STOPPED, or if
+  // it was never mirrored. Set by the MirrorMetadataManager from the state kept by the cluster mirror coordinator.
+  @volatile var mirrorWritable: Boolean = false
   // If ReplicaAlterLogDir command is in progress, this is future location of the log
   @volatile var futureLog: Option[UnifiedLog] = None
 
@@ -1243,8 +1247,8 @@ class Partition(val topicPartition: TopicPartition,
               s"live replica(s) broker.id are : $inSyncReplicaIds")
           }
 
-          // Only the mirror fetcher writes to a mirror partition while it is mirrored.
-          if (leaderLog.config.isMirroring)
+          // Only the mirror fetcher writes to a mirror partition until its mirroring is stopped.
+          if (leaderLog.config.isMirroring || (leaderLog.config.mirrorName.nonEmpty && !mirrorWritable))
             throw new ReadOnlyTopicException(s"Partition $topicPartition is mirrored from cluster mirror " +
               s"${leaderLog.config.mirrorName} and is read-only")
 

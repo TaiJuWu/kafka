@@ -222,6 +222,8 @@ import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.ReadMirrorStatesRequestData;
+import org.apache.kafka.common.message.ReadMirrorStatesResponseData;
 import org.apache.kafka.common.message.SaslAuthenticateRequestData;
 import org.apache.kafka.common.message.SaslAuthenticateResponseData;
 import org.apache.kafka.common.message.SaslHandshakeRequestData;
@@ -256,6 +258,8 @@ import org.apache.kafka.common.message.VoteRequestData;
 import org.apache.kafka.common.message.VoteResponseData;
 import org.apache.kafka.common.message.WriteShareGroupStateRequestData;
 import org.apache.kafka.common.message.WriteShareGroupStateResponseData;
+import org.apache.kafka.common.message.WriteMirrorStatesRequestData;
+import org.apache.kafka.common.message.WriteMirrorStatesResponseData;
 import org.apache.kafka.common.network.Send;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
@@ -1163,6 +1167,8 @@ public class RequestResponseTest {
             case STREAMS_GROUP_TOPOLOGY_DESCRIPTION_UPDATE: return createStreamsGroupTopologyDescriptionUpdateRequest(version);
             case UNREGISTER_CONTROLLER: return createUnregisterControllerRequest(version);
             case BUMP_LEADER_EPOCHS: return createBumpLeaderEpochsRequest(version);
+            case READ_MIRROR_STATES: return createReadMirrorStatesRequest(version);
+            case WRITE_MIRROR_STATES: return createWriteMirrorStatesRequest(version);
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -1261,6 +1267,8 @@ public class RequestResponseTest {
             case STREAMS_GROUP_TOPOLOGY_DESCRIPTION_UPDATE: return createStreamsGroupTopologyDescriptionUpdateResponse();
             case UNREGISTER_CONTROLLER: return createUnregisterControllerResponse();
             case BUMP_LEADER_EPOCHS: return createBumpLeaderEpochsResponse();
+            case READ_MIRROR_STATES: return createReadMirrorStatesResponse();
+            case WRITE_MIRROR_STATES: return createWriteMirrorStatesResponse();
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -3730,6 +3738,40 @@ public class RequestResponseTest {
         topic.partitions().add(new BumpLeaderEpochsRequestData.LeaderEpochState().setPartitionIndex(0).setMinLeaderEpoch(10));
         data.topics().add(topic);
         return new BumpLeaderEpochsRequest.Builder(data).build(version);
+    }
+
+    private ReadMirrorStatesRequest createReadMirrorStatesRequest(short version) {
+        ReadMirrorStatesRequestData data = new ReadMirrorStatesRequestData().setMirrorName("mirror");
+        ReadMirrorStatesRequestData.TopicMetadata topic = new ReadMirrorStatesRequestData.TopicMetadata().setTopicName("topic");
+        topic.partitions().add(new ReadMirrorStatesRequestData.PartitionData().setPartitionIndex(0));
+        data.topics().add(topic);
+        return new ReadMirrorStatesRequest.Builder(data).build(version);
+    }
+
+    private ReadMirrorStatesResponse createReadMirrorStatesResponse() {
+        ReadMirrorStatesResponseData data = new ReadMirrorStatesResponseData();
+        ReadMirrorStatesResponseData.TopicResult topic = new ReadMirrorStatesResponseData.TopicResult().setTopicName("topic");
+        topic.partitions().add(new ReadMirrorStatesResponseData.PartitionResult().setPartitionIndex(0).setState((byte) 3)
+            .setLeaderEpoch(5).setStateEpoch(2).setLastMirrorEpoch(4).setLastMirrorOffset(100L));
+        data.topics().add(topic);
+        return new ReadMirrorStatesResponse(data);
+    }
+
+    private WriteMirrorStatesRequest createWriteMirrorStatesRequest(short version) {
+        WriteMirrorStatesRequestData data = new WriteMirrorStatesRequestData().setMirrorName("mirror");
+        WriteMirrorStatesRequestData.TopicMetadata topic = new WriteMirrorStatesRequestData.TopicMetadata().setTopicName("topic");
+        topic.partitions().add(new WriteMirrorStatesRequestData.PartitionData().setPartitionIndex(0).setState((byte) 8)
+            .setLeaderEpoch(5).setStateEpoch(2).setErrorMessage("error").setRetryAttempt((short) 1));
+        data.topics().add(topic);
+        return new WriteMirrorStatesRequest.Builder(data).build(version);
+    }
+
+    private WriteMirrorStatesResponse createWriteMirrorStatesResponse() {
+        WriteMirrorStatesResponseData data = new WriteMirrorStatesResponseData();
+        WriteMirrorStatesResponseData.TopicResult topic = new WriteMirrorStatesResponseData.TopicResult().setTopicName("topic");
+        topic.partitions().add(new WriteMirrorStatesResponseData.PartitionResult().setPartitionIndex(0).setStateEpoch(3));
+        data.topics().add(topic);
+        return new WriteMirrorStatesResponse(data);
     }
 
     private BumpLeaderEpochsResponse createBumpLeaderEpochsResponse() {
