@@ -23,6 +23,7 @@ import kafka.log.LogManager
 import kafka.network.SocketServer
 import kafka.raft.KafkaRaftManager
 import kafka.server.metadata._
+import kafka.server.mirror.MirrorMetadataManager
 import kafka.server.share.{ReplicaManagerLogReader, ReplicaManagerPartitionMetadataProvider, ShareCoordinatorMetadataCacheHelperImpl, SharePartitionManager}
 import org.apache.kafka.common.config.{ConfigException, ConfigResource}
 import org.apache.kafka.common.internals.Plugin
@@ -145,6 +146,8 @@ class BrokerServer(
   var autoTopicCreationManager: AutoTopicCreationManager = _
 
   var kafkaScheduler: KafkaScheduler = _
+
+  var mirrorMetadataManager: MirrorMetadataManager = _
 
   @volatile var metadataCache: KRaftMetadataCache = _
 
@@ -587,6 +590,9 @@ class BrokerServer(
       brokerRegistrationTracker = new BrokerRegistrationTracker(config.brokerId,
         () => lifecycleManager.resendBrokerRegistration())
       metadataPublishers.add(brokerRegistrationTracker)
+      mirrorMetadataManager = new MirrorMetadataManager(config, replicaManager, metrics, time)
+      metadataPublishers.add(mirrorMetadataManager)
+      mirrorMetadataManager.startup()
 
 
       // Register parts of the broker that can be reconfigured via dynamic configs.  This needs to

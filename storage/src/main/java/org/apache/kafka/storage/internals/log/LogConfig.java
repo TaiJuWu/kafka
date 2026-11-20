@@ -128,6 +128,18 @@ public class LogConfig extends AbstractConfig {
     public static final String INTERNAL_SEGMENT_BYTES_CONFIG = "internal.segment.bytes";
     public static final String INTERNAL_SEGMENT_BYTES_DOC = "The maximum size of a single log file. This should be used for testing only.";
 
+    // Phase 1 of our KIP-1279 implementation: which cluster mirror a topic belongs to, and whether it is mirrored.
+    // The KIP keeps them in MirrorTopicStateChangeRecord, which replaces these configs in a later phase.
+    public static final String MIRROR_NAME_CONFIG = "mirror.name";
+    public static final String MIRROR_NAME_DOC = "The name of the cluster mirror from which this topic is mirrored, " +
+        "or empty if the topic is not a mirror topic.";
+    public static final String MIRROR_STATE_CONFIG = "mirror.state";
+    public static final String MIRROR_STATE_MIRRORING = "MIRRORING";
+    public static final String MIRROR_STATE_STOPPED = "STOPPED";
+    public static final String MIRROR_STATE_DOC = "The desired state of the mirror topic: " + MIRROR_STATE_MIRRORING +
+        " copies the source topic and makes this topic read-only, " + MIRROR_STATE_STOPPED + " stops the mirroring " +
+        "and makes this topic writable.";
+
     public static final ConfigDef SERVER_CONFIG_DEF = new ConfigDef()
             .define(ServerLogConfigs.NUM_PARTITIONS_CONFIG, INT, ServerLogConfigs.NUM_PARTITIONS_DEFAULT, atLeast(1), MEDIUM, ServerLogConfigs.NUM_PARTITIONS_DOC)
             .define(ServerLogConfigs.LOG_DIR_CONFIG, LIST, ServerLogConfigs.LOG_DIR_DEFAULT, ConfigDef.ValidList.anyNonDuplicateValues(false, false), HIGH, ServerLogConfigs.LOG_DIR_DOC)
@@ -232,6 +244,9 @@ public class LogConfig extends AbstractConfig {
                         ThrottledReplicaListValidator.INSTANCE, MEDIUM, QuotaConfig.MIRROR_REPLICATION_THROTTLED_REPLICAS_DOC)
                 .defineInternal(TopicConfig.MIRROR_UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, BOOLEAN, TopicConfig.MIRROR_UNCLEAN_LEADER_ELECTION_ENABLE_DEFAULT,
                         null, MEDIUM, TopicConfig.MIRROR_UNCLEAN_LEADER_ELECTION_ENABLE_DOC)
+                .defineInternal(MIRROR_NAME_CONFIG, STRING, "", null, MEDIUM, MIRROR_NAME_DOC)
+                .defineInternal(MIRROR_STATE_CONFIG, STRING, MIRROR_STATE_STOPPED,
+                        in(MIRROR_STATE_MIRRORING, MIRROR_STATE_STOPPED), MEDIUM, MIRROR_STATE_DOC)
                 .define(TopicConfig.REMOTE_LOG_STORAGE_ENABLE_CONFIG, BOOLEAN, DEFAULT_REMOTE_STORAGE_ENABLE, null,
                         MEDIUM, TopicConfig.REMOTE_LOG_STORAGE_ENABLE_DOC)
                 .define(TopicConfig.LOCAL_LOG_RETENTION_MS_CONFIG, LONG, DEFAULT_LOCAL_RETENTION_MS, atLeast(-2), MEDIUM,
@@ -271,6 +286,8 @@ public class LogConfig extends AbstractConfig {
     public final boolean delete;
     public final boolean uncleanLeaderElectionEnable;
     public final boolean mirrorUncleanLeaderElectionEnable;
+    public final String mirrorName;
+    public final String mirrorState;
     public final int minInSyncReplicas;
     public final BrokerCompressionType compressionType;
     public final Optional<Compression> compression;
@@ -324,6 +341,8 @@ public class LogConfig extends AbstractConfig {
                 .contains(TopicConfig.CLEANUP_POLICY_DELETE);
         this.uncleanLeaderElectionEnable = getBoolean(TopicConfig.UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG);
         this.mirrorUncleanLeaderElectionEnable = getBoolean(TopicConfig.MIRROR_UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG);
+        this.mirrorName = getString(MIRROR_NAME_CONFIG);
+        this.mirrorState = getString(MIRROR_STATE_CONFIG);
         this.minInSyncReplicas = getInt(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG);
         this.compressionType = BrokerCompressionType.forName(getString(TopicConfig.COMPRESSION_TYPE_CONFIG));
         this.compression = getCompression();
@@ -360,6 +379,13 @@ public class LogConfig extends AbstractConfig {
             case UNCOMPRESSED -> Optional.of(Compression.NONE);
             case PRODUCER -> Optional.empty();
         };
+    }
+
+    /**
+     * @return true if this topic is mirrored from a cluster mirror, so it is read-only for clients
+     */
+    public boolean isMirroring() {
+        return !mirrorName.isEmpty() && MIRROR_STATE_MIRRORING.equals(mirrorState);
     }
 
     public int segmentSize() {

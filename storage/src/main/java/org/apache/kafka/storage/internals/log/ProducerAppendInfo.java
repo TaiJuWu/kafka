@@ -147,7 +147,7 @@ public class ProducerAppendInfo {
                     " is " + producerEpoch + ", which is " + comparison + " the last seen epoch " + current +
                     " (TV" + transactionVersion + ")";
 
-            if (origin == AppendOrigin.REPLICATION) {
+            if (origin.isCopy()) {
                 log.warn(message);
             } else {
                 // Starting from 2.7, we replaced ProducerFenced error with InvalidProducerEpoch in the
@@ -257,7 +257,7 @@ public class ProducerAppendInfo {
 
     private void checkCoordinatorEpoch(EndTransactionMarker endTxnMarker, long offset) {
         if (updatedEntry.coordinatorEpoch() > endTxnMarker.coordinatorEpoch()) {
-            if (origin == AppendOrigin.REPLICATION) {
+            if (origin.isCopy()) {
                 log.info("Detected invalid coordinator epoch for producerId {} at offset {} in partition {}: {} is older than previously known coordinator epoch {}",
                         producerId, offset, topicPartition, endTxnMarker.coordinatorEpoch(), updatedEntry.coordinatorEpoch());
             } else {
@@ -280,7 +280,7 @@ public class ProducerAppendInfo {
         // 4. Using TV_0 validation (markerEpoch >= currentEpoch) is safe because it's more permissive than TV2
         //    (markerEpoch > currentEpoch), so any marker that passed TV2 validation will pass TV_0 validation
         // For all other origins (CLIENT, COORDINATOR), transactionVersion must be explicitly specified.
-        if (transactionVersion == TV_UNKNOWN && origin != AppendOrigin.REPLICATION) {
+        if (transactionVersion == TV_UNKNOWN && !origin.isCopy()) {
             throw new IllegalArgumentException("transactionVersion must be explicitly specified, " +
                     "cannot use default value TV_UNKNOWN for origin " + origin);
         }

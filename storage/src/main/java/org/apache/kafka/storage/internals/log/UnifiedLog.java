@@ -1103,6 +1103,29 @@ public class UnifiedLog implements AutoCloseable {
     }
 
     /**
+     * Append record batches fetched from the source cluster to the local log of a mirror partition, of which this
+     * replica is the leader. Like {@link #appendAsFollower}, the offsets, partition leader epochs and timestamps of
+     * the batches are kept.
+     *
+     * @param records The records to append
+     * @param leaderEpoch The current leader epoch of the local partition
+     * @throws MirrorLeaderEpochExceededException If a batch has a partition leader epoch higher than leaderEpoch
+     * @throws KafkaStorageException If the append fails due to an I/O error.
+     * @return Information about the appended messages including the first and last offset.
+     */
+    public LogAppendInfo appendAsMirrorLeader(MemoryRecords records, int leaderEpoch) {
+        return append(records,
+                      AppendOrigin.MIRROR,
+                      false,
+                      leaderEpoch,
+                      Optional.empty(),
+                      VerificationGuard.SENTINEL,
+                      true,
+                      RecordBatch.CURRENT_MAGIC_VALUE,
+                      TransactionVersion.TV_UNKNOWN);
+    }
+
+    /**
      * Append this message set to the active segment of the local log, rolling over to a fresh segment if necessary.
      *
      * <p>This method will generally be responsible for assigning offsets to the messages,
@@ -1239,7 +1262,7 @@ public class UnifiedLog implements AutoCloseable {
                             });
 
                             // Like KAFKA-9617 for max.message.bytes, KAFKA-17375 lets followers replicate data accepted before segment.bytes was lowered.
-                            if (origin != AppendOrigin.REPLICATION && validRecords.sizeInBytes() > config().segmentSize()) {
+                            if (!origin.isCopy() && validRecords.sizeInBytes() > config().segmentSize()) {
                                 throw new RecordBatchTooLargeException("Message batch size is " + validRecords.sizeInBytes() + " bytes in append " +
                                         "to partition " + topicPartition() + ", which exceeds the maximum configured segment size of " + config().segmentSize() + ".");
                             }
@@ -1532,6 +1555,16 @@ public class UnifiedLog implements AutoCloseable {
              * response and the replica truncating and appending to the log. The replicating replica resolves this issue by only
              * persisting up to the current leader epoch used in the fetch request. See KAFKA-18723 for more details.
              */
+            // The leader epoch of a mirror partition must stay at least the leader epoch of the source partition,
+            // otherwise the clients which see the epochs of the copied batches would ignore the metadata of the
+            // destination cluster. A higher epoch is not skipped as in replication: the mirror stops on it.
+            if (origin == AppendOrigin.MIRROR
+                    && batch.partitionLeaderEpoch() != RecordBatch.NO_PARTITION_LEADER_EPOCH
+                    && batch.partitionLeaderEpoch() > leaderEpoch) {
+                throw new MirrorLeaderEpochExceededException("The partition leader epoch " + batch.partitionLeaderEpoch() +
+                        " of the batch at offset " + batch.baseOffset() + " mirrored to " + topicPartition() +
+                        " is higher than the current leader epoch " + leaderEpoch);
+            }
             skipRemainingBatches = skipRemainingBatches || hasHigherPartitionLeaderEpoch(batch, origin, leaderEpoch);
             if (skipRemainingBatches) {
                 logger.info("Skipping batch {} from an origin of {} because its partition leader epoch {} is higher than the replica's current leader epoch {}",

@@ -41,5 +41,20 @@ public enum AppendOrigin {
     /**
      * The log append come from the raft leader, which implies the offsets has been assigned
      */
-    RAFT_LEADER
+    RAFT_LEADER,
+
+    /**
+     * The log append came from a cluster mirror: the leader of a mirror partition copies the record batches
+     * fetched from the source cluster as they are, so the offsets, leader epochs and timestamps of the source
+     * are kept. Like {@link #REPLICATION}, the records were validated when they were first written.
+     */
+    MIRROR;
+
+    /**
+     * @return true if the records were validated where they were first written, so the append keeps their
+     *         offsets and applies lenient validation: {@link #REPLICATION} and {@link #MIRROR}.
+     */
+    public boolean isCopy() {
+        return this == REPLICATION || this == MIRROR;
+    }
 }

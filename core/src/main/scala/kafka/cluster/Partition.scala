@@ -1240,6 +1240,11 @@ class Partition(val topicPartition: TopicPartition,
               s"live replica(s) broker.id are : $inSyncReplicaIds")
           }
 
+          // Only the mirror fetcher writes to a mirror partition while it is mirrored.
+          if (leaderLog.config.isMirroring)
+            throw new ReadOnlyTopicException(s"Partition $topicPartition is mirrored from cluster mirror " +
+              s"${leaderLog.config.mirrorName} and is read-only")
+
           val info = leaderLog.appendAsLeader(records, this.leaderEpoch, origin, requestLocal, verificationGuard, transactionVersion)
 
           // we may need to increment high watermark since ISR could be down to 1
@@ -1252,6 +1257,29 @@ class Partition(val topicPartition: TopicPartition,
     })
 
     info.copy(if (leaderHWIncremented) LeaderHwChange.INCREASED else LeaderHwChange.SAME)
+  }
+
+  /**
+   * Append the record batches fetched from the source cluster to the log of this mirror partition, of which this
+   * replica must be the leader. The offsets, partition leader epochs and timestamps of the batches are kept.
+   *
+   * @return the append info, and whether the high watermark of the leader was incremented
+   * @throws NotLeaderOrFollowerException if this replica is not the leader of the partition
+   * @throws org.apache.kafka.storage.internals.log.MirrorLeaderEpochExceededException if a batch has a partition
+   *         leader epoch higher than the current leader epoch
+   */
+  def appendRecordsToMirrorLeader(records: MemoryRecords): (LogAppendInfo, Boolean) = {
+    inReadLock(leaderIsrUpdateLock, () => {
+      leaderLogIfLocal match {
+        case Some(leaderLog) =>
+          val info = leaderLog.appendAsMirrorLeader(records, this.leaderEpoch)
+          // The high watermark may be incremented, for example if the ISR has only the leader.
+          (info, maybeIncrementLeaderHW(leaderLog))
+        case None =>
+          throw new NotLeaderOrFollowerException("Leader not local for partition %s on broker %d"
+            .format(topicPartition, localBrokerId))
+      }
+    })
   }
 
   /**

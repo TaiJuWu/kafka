@@ -1437,7 +1437,8 @@ class ReplicaManager(val config: KafkaConfig,
                    _: RecordBatchTooLargeException |
                    _: CorruptRecordException |
                    _: KafkaStorageException |
-                   _: UnknownTopicIdException) =>
+                   _: UnknownTopicIdException |
+                   _: ReadOnlyTopicException) =>
             (topicIdPartition, new LogAppendResult(LogAppendSummary.fromAppendInfo(LogAppendInfo.UNKNOWN_LOG_APPEND_INFO),
               Optional.of(e), false))
           case rve: RecordValidationException =>
@@ -2115,7 +2116,7 @@ class ReplicaManager(val config: KafkaConfig,
     }
   }
 
-  private def leaderPartitionsIterator: Iterator[Partition] =
+  private[server] def leaderPartitionsIterator: Iterator[Partition] =
     onlinePartitionsIterator.filter(_.leaderLogIfLocal.isDefined)
 
   def getLogEndOffset(topicPartition: TopicPartition): Option[Long] =
