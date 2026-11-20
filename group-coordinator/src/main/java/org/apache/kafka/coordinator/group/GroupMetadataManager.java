@@ -9781,16 +9781,25 @@ public class GroupMetadataManager {
             }
         });
 
-        // The group forgets the deleting topics: their partitions still initializing are removed with their start
-        // offsets, so that all the partitions of such a topic are initialized again as for a topic seen for the
-        // first time.
-        Map<Uuid, InitMapValue> initializingTopics = new HashMap<>(currentMap.initializingTopics());
-        initializingTopics.keySet().removeAll(deletingTopics);
+        // The partitions of the deleting topics which are still initializing keep their start offsets for the retry.
+        // The start offsets of their other partitions, whose initialization failed, are removed, so that the group
+        // does not take such a topic as known when it subscribes to it again.
+        Map<Uuid, Set<Integer>> failedPartitions = new HashMap<>();
+        deletingTopics.forEach(topicId -> {
+            Map<Integer, Long> startOffsets = currentMap.initializingStartOffsets().get(topicId);
+            if (startOffsets != null) {
+                InitMapValue initializing = currentMap.initializingTopics().get(topicId);
+                Set<Integer> partitions = new HashSet<>(startOffsets.keySet());
+                if (initializing != null) {
+                    partitions.removeAll(initializing.partitions());
+                }
+                failedPartitions.put(topicId, partitions);
+            }
+        });
         records.add(shareGroupStatePartitionMetadataRecord(groupId, currentMap
-            .withInitializingTopics(initializingTopics)
             .withInitializedTopics(initializedTopics)
             .withDeletingTopics(deletingTopics)
-            .withInitializingStartOffsets(removeStartOffsetsOfTopics(currentMap.initializingStartOffsets(), deletingTopics))));
+            .withInitializingStartOffsets(removeStartOffsets(currentMap.initializingStartOffsets(), failedPartitions))));
 
         return deleteShareGroupStateRequestTopicsData;
     }
