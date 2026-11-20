@@ -140,7 +140,8 @@ public enum ApiKeys {
     ALTER_SHARE_GROUP_OFFSETS(ApiMessageType.ALTER_SHARE_GROUP_OFFSETS),
     DELETE_SHARE_GROUP_OFFSETS(ApiMessageType.DELETE_SHARE_GROUP_OFFSETS),
     STREAMS_GROUP_TOPOLOGY_DESCRIPTION_UPDATE(ApiMessageType.STREAMS_GROUP_TOPOLOGY_DESCRIPTION_UPDATE),
-    UNREGISTER_CONTROLLER(ApiMessageType.UNREGISTER_CONTROLLER, false, true);
+    UNREGISTER_CONTROLLER(ApiMessageType.UNREGISTER_CONTROLLER, false, true),
+    BUMP_LEADER_EPOCHS(ApiMessageType.BUMP_LEADER_EPOCHS, true);
 
     private static final Map<ApiMessageType.ListenerType, EnumSet<ApiKeys>> APIS_BY_LISTENER =
         new EnumMap<>(ApiMessageType.ListenerType.class);

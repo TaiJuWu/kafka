@@ -42,8 +42,9 @@ import scala.jdk.CollectionConverters._
  * from as a consumer rather than as a follower, so the source broker does not track it as a replica. The fetch only
  * returns the records up to the high watermark of the source partition.
  *
- * In this phase, the fetch requests do not carry a leader epoch of the source partition, and no divergence is
- * detected: the mirror continues from the log end offset of the destination partition.
+ * The fetch requests carry the last fetched epoch, which is an epoch of the source partition, so the source broker
+ * returns the diverging epoch if its log diverged, which only happens on an unclean leader election, as only
+ * committed records are fetched. The current leader epoch of the source partition is not sent.
  */
 class MirrorLeaderEndPoint(logPrefix: String,
                            blockingSender: BlockingSend,
@@ -114,8 +115,8 @@ class MirrorLeaderEndPoint(logPrefix: String,
     }
   }
 
-  // The fetch requests do not carry the last fetched epoch, so the fetcher never truncates on a diverging epoch,
-  // and it only asks for epoch end offsets for partitions which have an epoch, which start in the fetching state.
+  // The partitions with an epoch start in the fetching state and truncate on the diverging epochs of the fetch
+  // responses, so the epoch end offsets are never asked for.
   override def fetchEpochEndOffsets(partitions: java.util.Map[TopicPartition, OffsetForLeaderEpochRequestData.OffsetForLeaderPartition]): java.util.Map[TopicPartition, EpochEndOffset] = {
     partitions.asScala.map { case (tp, _) =>
       tp -> new EpochEndOffset()
@@ -138,7 +139,7 @@ class MirrorLeaderEndPoint(logPrefix: String,
             FetchRequest.INVALID_LOG_START_OFFSET,
             mirrorConfig.fetchMaxBytes,
             Optional.empty[Integer](),
-            Optional.empty[Integer]()))
+            fetchState.lastFetchedEpoch()))
         } catch {
           case _: KafkaStorageException =>
             partitionsWithError += topicPartition

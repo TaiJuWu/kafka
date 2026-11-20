@@ -48,6 +48,8 @@ import org.apache.kafka.common.message.BrokerHeartbeatRequestDataJsonConverter;
 import org.apache.kafka.common.message.BrokerHeartbeatResponseDataJsonConverter;
 import org.apache.kafka.common.message.BrokerRegistrationRequestDataJsonConverter;
 import org.apache.kafka.common.message.BrokerRegistrationResponseDataJsonConverter;
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestDataJsonConverter;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupDescribeRequestDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupDescribeResponseDataJsonConverter;
 import org.apache.kafka.common.message.ConsumerGroupHeartbeatRequestDataJsonConverter;
@@ -234,6 +236,8 @@ import org.apache.kafka.common.requests.BrokerHeartbeatRequest;
 import org.apache.kafka.common.requests.BrokerHeartbeatResponse;
 import org.apache.kafka.common.requests.BrokerRegistrationRequest;
 import org.apache.kafka.common.requests.BrokerRegistrationResponse;
+import org.apache.kafka.common.requests.BumpLeaderEpochsRequest;
+import org.apache.kafka.common.requests.BumpLeaderEpochsResponse;
 import org.apache.kafka.common.requests.ConsumerGroupDescribeRequest;
 import org.apache.kafka.common.requests.ConsumerGroupDescribeResponse;
 import org.apache.kafka.common.requests.ConsumerGroupHeartbeatRequest;
@@ -418,6 +422,8 @@ public class RequestConvertToJson {
                 AlterPartitionReassignmentsRequestDataJsonConverter.write(((AlterPartitionReassignmentsRequest) request).data(), request.version());
             case ALTER_PARTITION ->
                 AlterPartitionRequestDataJsonConverter.write(((AlterPartitionRequest) request).data(), request.version());
+            case BUMP_LEADER_EPOCHS ->
+                BumpLeaderEpochsRequestDataJsonConverter.write(((BumpLeaderEpochsRequest) request).data(), request.version());
             case ALTER_REPLICA_LOG_DIRS ->
                 AlterReplicaLogDirsRequestDataJsonConverter.write(((AlterReplicaLogDirsRequest) request).data(), request.version());
             case ALTER_SHARE_GROUP_OFFSETS ->
@@ -605,6 +611,8 @@ public class RequestConvertToJson {
                 AlterPartitionReassignmentsResponseDataJsonConverter.write(((AlterPartitionReassignmentsResponse) response).data(), version);
             case ALTER_PARTITION ->
                 AlterPartitionResponseDataJsonConverter.write(((AlterPartitionResponse) response).data(), version);
+            case BUMP_LEADER_EPOCHS ->
+                BumpLeaderEpochsResponseDataJsonConverter.write(((BumpLeaderEpochsResponse) response).data(), version);
             case ALTER_REPLICA_LOG_DIRS ->
                 AlterReplicaLogDirsResponseDataJsonConverter.write(((AlterReplicaLogDirsResponse) response).data(), version);
             case ALTER_SHARE_GROUP_OFFSETS ->

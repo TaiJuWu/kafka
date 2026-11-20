@@ -105,6 +105,7 @@ class ControllerApis(
         case ApiKeys.END_QUORUM_EPOCH => handleEndQuorumEpoch(request)
         case ApiKeys.DESCRIBE_QUORUM => handleDescribeQuorum(request)
         case ApiKeys.ALTER_PARTITION => handleAlterPartitionRequest(request)
+        case ApiKeys.BUMP_LEADER_EPOCHS => handleBumpLeaderEpochs(request)
         case ApiKeys.BROKER_REGISTRATION => handleBrokerRegistration(request)
         case ApiKeys.BROKER_HEARTBEAT => handleBrokerHeartBeatRequest(request)
         case ApiKeys.UNREGISTER_BROKER => handleUnregisterBroker(request)
@@ -592,6 +593,21 @@ class ControllerApis(
           new ElectLeadersResponse(responseData.setThrottleTimeMs(throttleMs))
         })
       }
+    }
+  }
+
+  def handleBumpLeaderEpochs(request: Request): CompletableFuture[Unit] = {
+    val bumpRequest = request.body(classOf[BumpLeaderEpochsRequest])
+    authHelper.authorizeClusterOperation(request, CLUSTER_ACTION)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, bumpRequest.data.timeoutMs))
+    controller.bumpLeaderEpochs(context, bumpRequest.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) {
+        bumpRequest.getErrorResponse(exception)
+      } else {
+        new BumpLeaderEpochsResponse(result)
+      }
+      requestHelper.sendResponseExemptThrottle(request, response)
     }
   }
 

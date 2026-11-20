@@ -590,7 +590,7 @@ class BrokerServer(
       brokerRegistrationTracker = new BrokerRegistrationTracker(config.brokerId,
         () => lifecycleManager.resendBrokerRegistration())
       metadataPublishers.add(brokerRegistrationTracker)
-      mirrorMetadataManager = new MirrorMetadataManager(config, replicaManager, metrics, time)
+      mirrorMetadataManager = new MirrorMetadataManager(config, replicaManager, clientToControllerChannelManager, metrics, time)
       metadataPublishers.add(mirrorMetadataManager)
       mirrorMetadataManager.startup()
 

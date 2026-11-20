@@ -40,6 +40,8 @@ import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
@@ -1769,6 +1771,18 @@ public final class QuorumController implements Controller {
         }
         return appendWriteEvent("alterPartition", context.deadlineNs(),
             () -> replicationControl.alterPartition(context, request));
+    }
+
+    @Override
+    public CompletableFuture<BumpLeaderEpochsResponseData> bumpLeaderEpochs(
+        ControllerRequestContext context,
+        BumpLeaderEpochsRequestData request
+    ) {
+        if (request.topics().isEmpty()) {
+            return CompletableFuture.completedFuture(new BumpLeaderEpochsResponseData());
+        }
+        return appendWriteEvent("bumpLeaderEpochs", context.deadlineNs(),
+            () -> replicationControl.bumpLeaderEpochs(request));
     }
 
     @Override

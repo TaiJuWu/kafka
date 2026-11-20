@@ -279,6 +279,8 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return DescribeQuorumRequest.parse(readable, apiVersion);
             case ALTER_PARTITION:
                 return AlterPartitionRequest.parse(readable, apiVersion);
+            case BUMP_LEADER_EPOCHS:
+                return BumpLeaderEpochsRequest.parse(readable, apiVersion);
             case UPDATE_FEATURES:
                 return UpdateFeaturesRequest.parse(readable, apiVersion);
             case ENVELOPE:

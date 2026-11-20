@@ -32,6 +32,8 @@ import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
@@ -76,6 +78,19 @@ public interface Controller extends AclMutator, AutoCloseable {
     CompletableFuture<AlterPartitionResponseData> alterPartition(
         ControllerRequestContext context,
         AlterPartitionRequestData request
+    );
+
+    /**
+     * Bump the leader epochs of mirror partitions to at least the requested values (KIP-1279).
+     *
+     * @param context       The controller request context.
+     * @param request       The BumpLeaderEpochsRequest data.
+     *
+     * @return              A future yielding the response.
+     */
+    CompletableFuture<BumpLeaderEpochsResponseData> bumpLeaderEpochs(
+        ControllerRequestContext context,
+        BumpLeaderEpochsRequestData request
     );
 
     /**

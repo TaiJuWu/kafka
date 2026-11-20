@@ -17,11 +17,16 @@
 package kafka.server.mirror
 
 import java.util.Properties
-import java.util.concurrent.{Semaphore, TimeUnit}
+import java.util.concurrent.{ConcurrentHashMap, Semaphore, TimeUnit}
+import java.util.concurrent.atomic.AtomicBoolean
 
 import kafka.server.{InitialFetchState, KafkaConfig, ReplicaManager}
 import kafka.utils.Logging
+import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.clients.admin.{Admin, AdminClientConfig}
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestData
+import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.requests.{BumpLeaderEpochsRequest, BumpLeaderEpochsResponse}
 import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.utils.{Time, Utils}
@@ -29,6 +34,7 @@ import org.apache.kafka.coordinator.mirror.{ClusterMirrorBrokerConfig, ClusterMi
 import org.apache.kafka.image.{MetadataDelta, MetadataImage}
 import org.apache.kafka.image.loader.LoaderManifest
 import org.apache.kafka.image.publisher.MetadataPublisher
+import org.apache.kafka.server.common.{ControllerRequestCompletionHandler, NodeToControllerChannelManager}
 import org.apache.kafka.server.network.BrokerEndPoint
 import org.apache.kafka.server.util.ShutdownableThread
 
@@ -70,8 +76,9 @@ object MirrorMetadataManager {
  */
 class MirrorMetadataManager(config: KafkaConfig,
                             replicaManager: ReplicaManager,
+                            controllerChannel: NodeToControllerChannelManager,
                             metrics: Metrics,
-                            time: Time) extends MetadataPublisher with Logging {
+                            time: Time) extends MetadataPublisher with MirrorLeaderEpochBumper with Logging {
   import MirrorMetadataManager._
 
   this.logIdent = s"[MirrorMetadataManager id=${config.brokerId}] "
@@ -84,10 +91,14 @@ class MirrorMetadataManager(config: KafkaConfig,
   private val mirrors = clusterMirrors(config)
   private val fetcherManagers: Map[String, MirrorFetcherManager] = mirrors.map { case (name, mirrorConfig) =>
     name -> new MirrorFetcherManager(config.brokerId, name, mirrorConfig, brokerConfig.numReplicaFetchers,
-      replicaManager, metrics, time)
+      replicaManager, this, metrics, time)
   }
   private val admins = mutable.Map[String, Admin]()
   private val mirrored = mutable.Map[String, mutable.Map[TopicPartition, MirroredPartition]]()
+
+  // The minimum leader epochs requested for the mirror partitions, until their leader epochs reach them.
+  private val pendingEpochBumps = new ConcurrentHashMap[TopicPartition, Integer]()
+  private val epochBumpInFlight = new AtomicBoolean(false)
 
   // A permit is released on every metadata update; the thread also reconciles when none comes within the
   // refresh interval.
@@ -129,7 +140,69 @@ class MirrorMetadataManager(config: KafkaConfig,
     admins.clear()
   }
 
+  override def requestLeaderEpochBump(topicPartition: TopicPartition, minLeaderEpoch: Int): Unit = {
+    // The fetcher asks on every fetch while the source epoch is close, so only a new or higher request wakes up the
+    // manager.
+    val previous = pendingEpochBumps.get(topicPartition)
+    if (previous == null || previous < minLeaderEpoch) {
+      pendingEpochBumps.merge(topicPartition, minLeaderEpoch, (a, b) => math.max(a, b))
+      signal()
+    }
+  }
+
+  /**
+   * Sends the requested leader epoch bumps of the partitions which this broker still leads to the controller, one
+   * request at a time. A request is dropped once the leader epoch of the partition reaches it.
+   */
+  private def maybeBumpLeaderEpochs(): Unit = {
+    val requests = mutable.Map[TopicPartition, Int]()
+    pendingEpochBumps.forEach { (tp, minEpoch) =>
+      replicaManager.onlinePartition(tp).filter(_.isLeader) match {
+        case Some(partition) if partition.getLeaderEpoch < minEpoch => requests(tp) = minEpoch
+        case _ => pendingEpochBumps.remove(tp, minEpoch)
+      }
+    }
+    if (requests.isEmpty || !epochBumpInFlight.compareAndSet(false, true))
+      return
+
+    val data = new BumpLeaderEpochsRequestData().setTimeoutMs(config.requestTimeoutMs)
+    requests.groupBy(_._1.topic).foreachEntry { (topic, partitions) =>
+      val topicState = new BumpLeaderEpochsRequestData.TopicState().setTopicName(topic)
+      partitions.foreachEntry { (tp, minEpoch) =>
+        topicState.partitions.add(new BumpLeaderEpochsRequestData.LeaderEpochState()
+          .setPartitionIndex(tp.partition).setMinLeaderEpoch(minEpoch))
+      }
+      data.topics.add(topicState)
+    }
+    info(s"Requesting leader epoch bumps ${requests.mkString(", ")}")
+    controllerChannel.sendRequest(new BumpLeaderEpochsRequest.Builder(data), new ControllerRequestCompletionHandler {
+      override def onComplete(response: ClientResponse): Unit = {
+        epochBumpInFlight.set(false)
+        if (response.authenticationException != null || response.versionMismatch != null || response.wasDisconnected) {
+          warn(s"Failed to bump the leader epochs of mirror partitions: $response")
+        } else {
+          val body = response.responseBody.asInstanceOf[BumpLeaderEpochsResponse].data
+          if (body.errorCode != Errors.NONE.code)
+            warn(s"Failed to bump the leader epochs of mirror partitions: ${Errors.forCode(body.errorCode)} ${body.errorMessage}")
+          body.topics.forEach(topic => topic.partitions.forEach { partition =>
+            if (partition.errorCode != Errors.NONE.code)
+              warn(s"Failed to bump the leader epoch of ${topic.topicName}-${partition.partitionIndex}: " +
+                s"${Errors.forCode(partition.errorCode)} ${partition.errorMessage}")
+          })
+        }
+        signal()
+      }
+
+      override def onTimeout(): Unit = {
+        epochBumpInFlight.set(false)
+        warn("Timed out bumping the leader epochs of mirror partitions")
+        signal()
+      }
+    })
+  }
+
   private[mirror] def reconcile(): Unit = {
+    maybeBumpLeaderEpochs()
     val partitionsByMirror = replicaManager.leaderPartitionsIterator.flatMap { partition =>
       partition.log.filter(_.config.isMirroring).map(log => log.config.mirrorName -> partition)
     }.toSeq.groupMap(_._1)(_._2)

@@ -22,6 +22,7 @@ import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.NewPartitionReassignment;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.RecordsToDelete;
@@ -31,13 +32,16 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.ElectionType;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.ConfigResource;
+import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.ReadOnlyTopicException;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.test.KafkaClusterTestKit;
 import org.apache.kafka.common.test.TestKitNodes;
+import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.storage.internals.log.LogConfig;
 import org.apache.kafka.storage.internals.log.LogSegment;
 import org.apache.kafka.storage.internals.log.UnifiedLog;
@@ -63,12 +67,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Phase 1 of our KIP-1279 implementation: the leader of a destination partition copies the record batches of the
- * source partition as they are, the destination topic is read-only while it is mirrored, and the mirroring is
- * controlled by the topic configurations mirror.name and mirror.state.
+ * Our KIP-1279 implementation: the leader of a destination partition copies the record batches of the source
+ * partition as they are, the destination topic is read-only while it is mirrored, the destination leader epoch stays
+ * at least the source leader epoch, and the destination truncates when the source has an unclean leader election.
  */
 @Timeout(300)
-public class ClusterMirrorPhase1IntegrationTest {
+public class ClusterMirrorIntegrationTest {
     private static final String MIRROR = "m1";
     private static final String TOPIC = "mirrored";
     private static final int PARTITIONS = 2;
@@ -103,7 +107,9 @@ public class ClusterMirrorPhase1IntegrationTest {
             .setCombined(false)
             .setNumBrokerNodes(3)
             .setNumControllerNodes(1)
+            .setBootstrapMetadataVersion(MetadataVersion.IBP_4_5_IV1)
             .build());
+        builder.setConfigProp("unstable.feature.versions.enable", "true");
         props.forEach(builder::setConfigProp);
         KafkaClusterTestKit cluster = builder.build();
         cluster.format();
@@ -200,34 +206,107 @@ public class ClusterMirrorPhase1IntegrationTest {
     }
 
     /**
-     * In this phase, the leader epoch of a destination partition is not bumped to the leader epoch of the source
-     * partition, so the mirroring of a partition stops on a batch with a higher epoch, and resumes when the
-     * destination partition gets a high enough leader epoch.
+     * The destination leader epoch is bumped ahead of the source leader epoch (DLE >= SLE), so the mirroring goes on
+     * when the source partition elects new leaders, without a destination leader election.
      */
     @Test
-    public void testHigherSourceEpochStopsMirroringUntilDestinationEpochCatchesUp() throws Exception {
+    public void testDestinationEpochStaysAboveSourceEpoch() throws Exception {
         TopicPartition tp = new TopicPartition(TOPIC, 0);
         produce(source, 0, "first", 20);
         startMirroring();
         waitForMirror();
-
-        // A new source leader bumps the source epoch above the destination epoch.
-        int sourceLeader = leader(sourceAdmin, tp);
-        source.brokers().get(sourceLeader).shutdown();
-        TestUtils.waitForCondition(() -> leader(sourceAdmin, tp) != sourceLeader, "no new source leader");
-        source.brokers().get(sourceLeader).startup();
-        produce(source, 0, "second", 20);
-        long destinationEnd = endOffsets(destinationAdmin).get(tp);
-        Thread.sleep(5000);
-        assertEquals(destinationEnd, endOffsets(destinationAdmin).get(tp), "the mirror copied a batch of a higher epoch");
-
-        // A new destination leader has a higher epoch, so the mirroring resumes.
         int destinationLeader = leader(destinationAdmin, tp);
-        destination.brokers().get(destinationLeader).shutdown();
-        TestUtils.waitForCondition(() -> leader(destinationAdmin, tp) != destinationLeader, "no new destination leader");
-        destination.brokers().get(destinationLeader).startup();
-        waitForMirror();
+
+        for (int election = 0; election < 3; election++) {
+            int sourceLeader = leader(sourceAdmin, tp);
+            source.brokers().get(sourceLeader).shutdown();
+            TestUtils.waitForCondition(() -> leader(sourceAdmin, tp) != sourceLeader, "no new source leader");
+            source.brokers().get(sourceLeader).startup();
+            produce(source, 0, "election-" + election, 20);
+            waitForMirror();
+            assertTrue(leaderEpoch(destination, tp) >= leaderEpoch(source, tp),
+                "destination epoch " + leaderEpoch(destination, tp) + " < source epoch " + leaderEpoch(source, tp));
+        }
+        assertEquals(destinationLeader, leader(destinationAdmin, tp), "the destination leader changed");
         assertEquals(batches(source, tp), batches(destination, tp));
+    }
+
+    @Test
+    public void testSourceUncleanLeaderElectionFailsMirrorByDefault() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        long divergence = uncleanSourceElection(tp);
+        long destinationEnd = endOffsets(destinationAdmin).get(tp);
+        assertTrue(destinationEnd > divergence, "the destination did not copy the records lost by the source");
+        produce(source, 0, "after", 10);
+        Thread.sleep(5000);
+        assertEquals(destinationEnd, endOffsets(destinationAdmin).get(tp), "the mirror went on after the source diverged");
+    }
+
+    @Test
+    public void testSourceUncleanLeaderElectionTruncatesMirrorWhenEnabled() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        destinationAdmin.incrementalAlterConfigs(Map.of(new ConfigResource(ConfigResource.Type.TOPIC, TOPIC), List.of(
+            new AlterConfigOp(new ConfigEntry(TopicConfig.MIRROR_UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"), AlterConfigOp.OpType.SET)
+        ))).all().get();
+        uncleanSourceElection(tp);
+        produce(source, 0, "after", 10);
+        waitForMirror();
+        for (BrokerServer broker : destination.brokers().values()) {
+            TestUtils.waitForCondition(() -> batches(source, tp).equals(batches(broker, tp)),
+                () -> "replica " + broker.config().brokerId() + " of " + tp + " did not converge");
+        }
+    }
+
+    /**
+     * Makes the source partition diverge from the destination: the source leader gets records which its only other
+     * replica does not have, the destination copies them, and then the stale replica becomes the leader through an
+     * unclean leader election and gets other records at the same offsets.
+     *
+     * @return the offset at which the source partition diverged
+     */
+    private long uncleanSourceElection(TopicPartition tp) throws Exception {
+        // The source partition has two replicas, so the stale one is the only candidate.
+        int leader = leader(sourceAdmin, tp);
+        int stale = source.brokers().keySet().stream().filter(id -> id != leader).findFirst().get();
+        sourceAdmin.alterPartitionReassignments(Map.of(tp, java.util.Optional.of(new NewPartitionReassignment(List.of(leader, stale)))))
+            .all().get();
+        TestUtils.waitForCondition(() -> sourceAdmin.describeTopics(Set.of(TOPIC)).allTopicNames().get().get(TOPIC)
+            .partitions().get(tp.partition()).replicas().size() == 2, "the reassignment did not complete");
+        sourceAdmin.incrementalAlterConfigs(Map.of(new ConfigResource(ConfigResource.Type.TOPIC, TOPIC), List.of(
+            new AlterConfigOp(new ConfigEntry(TopicConfig.MIN_IN_SYNC_REPLICAS_CONFIG, "1"), AlterConfigOp.OpType.SET)
+        ))).all().get();
+        produce(source, 0, "shared", 10);
+        startMirroring();
+        waitForMirror();
+
+        source.brokers().get(stale).shutdown();
+        TestUtils.waitForCondition(() -> sourceAdmin.describeTopics(Set.of(TOPIC)).allTopicNames().get().get(TOPIC)
+            .partitions().get(tp.partition()).isr().size() == 1, "the stale replica did not leave the ISR");
+        long divergence = endOffsets(sourceAdmin).get(tp);
+        produce(source, 0, "lost", 10);
+        waitForMirror();
+
+        source.brokers().get(leader).shutdown();
+        source.brokers().get(stale).startup();
+        TestUtils.waitForCondition(() -> {
+            try {
+                sourceAdmin.electLeaders(ElectionType.UNCLEAN, Set.of(tp)).all().get();
+            } catch (ExecutionException e) {
+                // Retried until the stale replica is registered again.
+            }
+            return leader(sourceAdmin, tp) == stale;
+        }, "the stale replica was not elected");
+        source.brokers().get(leader).startup();
+        produce(source, 0, "new", 5);
+        return divergence;
+    }
+
+    private static int leaderEpoch(KafkaClusterTestKit cluster, TopicPartition tp) {
+        for (BrokerServer broker : cluster.brokers().values()) {
+            var partition = broker.replicaManager().onlinePartition(tp);
+            if (partition.isDefined() && partition.get().isLeader()) return partition.get().getLeaderEpoch();
+        }
+        return -1;
     }
 
     private void produceMixedBatches() throws Exception {

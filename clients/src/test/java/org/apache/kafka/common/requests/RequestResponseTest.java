@@ -76,6 +76,8 @@ import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
 import org.apache.kafka.common.message.BrokerHeartbeatResponseData;
 import org.apache.kafka.common.message.BrokerRegistrationRequestData;
 import org.apache.kafka.common.message.BrokerRegistrationResponseData;
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.ConsumerGroupDescribeRequestData;
 import org.apache.kafka.common.message.ConsumerGroupDescribeResponseData;
 import org.apache.kafka.common.message.ConsumerGroupHeartbeatRequestData;
@@ -1160,6 +1162,7 @@ public class RequestResponseTest {
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsRequest(version);
             case STREAMS_GROUP_TOPOLOGY_DESCRIPTION_UPDATE: return createStreamsGroupTopologyDescriptionUpdateRequest(version);
             case UNREGISTER_CONTROLLER: return createUnregisterControllerRequest(version);
+            case BUMP_LEADER_EPOCHS: return createBumpLeaderEpochsRequest(version);
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -1257,6 +1260,7 @@ public class RequestResponseTest {
             case DELETE_SHARE_GROUP_OFFSETS: return createDeleteShareGroupOffsetsResponse();
             case STREAMS_GROUP_TOPOLOGY_DESCRIPTION_UPDATE: return createStreamsGroupTopologyDescriptionUpdateResponse();
             case UNREGISTER_CONTROLLER: return createUnregisterControllerResponse();
+            case BUMP_LEADER_EPOCHS: return createBumpLeaderEpochsResponse();
             default: throw new IllegalArgumentException("Unknown API key " + apikey);
         }
     }
@@ -3718,6 +3722,23 @@ public class RequestResponseTest {
 
     private UnregisterControllerResponse createUnregisterControllerResponse() {
         return new UnregisterControllerResponse(new UnregisterControllerResponseData());
+    }
+
+    private BumpLeaderEpochsRequest createBumpLeaderEpochsRequest(short version) {
+        BumpLeaderEpochsRequestData data = new BumpLeaderEpochsRequestData().setTimeoutMs(1000);
+        BumpLeaderEpochsRequestData.TopicState topic = new BumpLeaderEpochsRequestData.TopicState().setTopicName("topic");
+        topic.partitions().add(new BumpLeaderEpochsRequestData.LeaderEpochState().setPartitionIndex(0).setMinLeaderEpoch(10));
+        data.topics().add(topic);
+        return new BumpLeaderEpochsRequest.Builder(data).build(version);
+    }
+
+    private BumpLeaderEpochsResponse createBumpLeaderEpochsResponse() {
+        BumpLeaderEpochsResponseData data = new BumpLeaderEpochsResponseData();
+        BumpLeaderEpochsResponseData.TopicPartitions topic = new BumpLeaderEpochsResponseData.TopicPartitions().setTopicName("topic");
+        topic.partitions().add(new BumpLeaderEpochsResponseData.PartitionDetail().setPartitionIndex(0)
+            .setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code()).setErrorMessage("message"));
+        data.topics().add(topic);
+        return new BumpLeaderEpochsResponse(data);
     }
 
     private DescribeTransactionsRequest createDescribeTransactionsRequest(short version) {

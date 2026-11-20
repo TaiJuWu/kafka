@@ -34,6 +34,7 @@ class MirrorFetcherManager(brokerId: Int,
                            val mirrorConfig: ClusterMirrorConfig,
                            numFetchers: Int,
                            replicaManager: ReplicaManager,
+                           epochBumper: MirrorLeaderEpochBumper,
                            metrics: Metrics,
                            time: Time)
   extends AbstractFetcherManager[MirrorFetcherThread](
@@ -51,7 +52,7 @@ class MirrorFetcherManager(brokerId: Int,
     val leader = new MirrorLeaderEndPoint(logContext.logPrefix, sender, new FetchSessionHandler(logContext, sourceBroker.id),
       mirrorConfig, replicaManager)
     new MirrorFetcherThread(threadName, leader, mirrorConfig.fetchBackoffMs.toInt, failedPartitions, replicaManager,
-      logContext.logPrefix)
+      epochBumper, logContext.logPrefix)
   }
 
   def shutdown(): Unit = {

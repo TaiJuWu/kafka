@@ -218,6 +218,8 @@ public abstract class AbstractResponse implements AbstractRequestResponse {
                 return DescribeQuorumResponse.parse(readable, version);
             case ALTER_PARTITION:
                 return AlterPartitionResponse.parse(readable, version);
+            case BUMP_LEADER_EPOCHS:
+                return BumpLeaderEpochsResponse.parse(readable, version);
             case UPDATE_FEATURES:
                 return UpdateFeaturesResponse.parse(readable, version);
             case ENVELOPE:

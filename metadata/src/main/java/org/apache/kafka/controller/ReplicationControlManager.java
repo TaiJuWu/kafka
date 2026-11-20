@@ -50,6 +50,8 @@ import org.apache.kafka.common.message.AlterPartitionResponseData;
 import org.apache.kafka.common.message.AssignReplicasToDirsRequestData;
 import org.apache.kafka.common.message.AssignReplicasToDirsResponseData;
 import org.apache.kafka.common.message.BrokerHeartbeatRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
+import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
@@ -95,6 +97,7 @@ import org.apache.kafka.metadata.placement.TopicAssignment;
 import org.apache.kafka.metadata.placement.UsableBroker;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.TopicIdPartition;
+import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.mutable.BoundedList;
 import org.apache.kafka.server.policy.CreateTopicPolicy;
 import org.apache.kafka.timeline.SnapshotRegistry;
@@ -1092,6 +1095,53 @@ public class ReplicationControlManager {
     // VisibleForTesting
     TimelineHashSet<TopicIdPartition> imbalancedPartitions() {
         return imbalancedPartitions;
+    }
+
+    /**
+     * Bump the leader epochs of the given partitions to at least the requested values (KIP-1279), so that the
+     * leader epoch of a mirror partition stays at least the leader epoch of its source partition. A partition whose
+     * leader epoch is already high enough is not changed.
+     */
+    ControllerResult<BumpLeaderEpochsResponseData> bumpLeaderEpochs(BumpLeaderEpochsRequestData request) {
+        BumpLeaderEpochsResponseData response = new BumpLeaderEpochsResponseData();
+        MetadataVersion metadataVersion = featureControl.metadataVersionOrThrow();
+        if (!metadataVersion.isClusterMirroringSupported()) {
+            return ControllerResult.of(List.of(), response
+                .setErrorCode(Errors.UNSUPPORTED_VERSION.code())
+                .setErrorMessage("Cluster mirroring is not supported by metadata version " + metadataVersion));
+        }
+        List<ApiMessageAndVersion> records = new ArrayList<>();
+        for (BumpLeaderEpochsRequestData.TopicState topicState : request.topics()) {
+            BumpLeaderEpochsResponseData.TopicPartitions topicResponse =
+                new BumpLeaderEpochsResponseData.TopicPartitions().setTopicName(topicState.topicName());
+            response.topics().add(topicResponse);
+            Uuid topicId = topicsByName.get(topicState.topicName());
+            TopicControlInfo topic = topicId == null ? null : topics.get(topicId);
+            for (BumpLeaderEpochsRequestData.LeaderEpochState partitionState : topicState.partitions()) {
+                int partitionId = partitionState.partitionIndex();
+                BumpLeaderEpochsResponseData.PartitionDetail partitionResponse =
+                    new BumpLeaderEpochsResponseData.PartitionDetail().setPartitionIndex(partitionId);
+                topicResponse.partitions().add(partitionResponse);
+                PartitionRegistration partition = topic == null ? null : topic.parts.get(partitionId);
+                if (partition == null) {
+                    partitionResponse.setErrorCode(Errors.UNKNOWN_TOPIC_OR_PARTITION.code());
+                    continue;
+                }
+                new PartitionChangeBuilder(
+                    partition,
+                    topic.id,
+                    partitionId,
+                    new LeaderAcceptor(clusterControl, partition),
+                    metadataVersion,
+                    getTopicEffectiveMinIsr(topic.name),
+                    featureControl.isElrFeatureEnabled()
+                ).setTargetLeaderEpoch(partitionState.minLeaderEpoch())
+                    .setDefaultDirProvider(clusterDescriber)
+                    .build()
+                    .ifPresent(records::add);
+            }
+        }
+        return ControllerResult.atomicOf(records, response);
     }
 
     ControllerResult<AlterPartitionResponseData> alterPartition(

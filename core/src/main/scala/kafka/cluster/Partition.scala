@@ -648,7 +648,10 @@ class Partition(val topicPartition: TopicPartition,
         // to ensure that these followers can truncate to the right offset, we must cache the new
         // leader epoch and the start offset since it should be larger than any epoch that a follower
         // would try to query.
-        leaderLog.assignEpochStartOffset(partitionRegistration.leaderEpoch, leaderEpochStartOffset)
+        // The log of a mirror partition only has the leader epochs of the source partition, which the mirror
+        // fetcher sends as its last fetched epoch, so the leader epoch of the destination is not cached for it.
+        if (!leaderLog.config.isMirroring)
+          leaderLog.assignEpochStartOffset(partitionRegistration.leaderEpoch, leaderEpochStartOffset)
 
         // Initialize lastCaughtUpTime of replicas as well as their lastFetchTimeMs and
         // lastFetchLeaderLogEndOffset.
