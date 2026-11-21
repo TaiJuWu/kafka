@@ -43,20 +43,32 @@ import org.apache.kafka.common.message.BrokerRegistrationRequestData;
 import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
 import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
+import org.apache.kafka.common.message.CreateClusterMirrorRequestData;
+import org.apache.kafka.common.message.CreateClusterMirrorResponseData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
+import org.apache.kafka.common.message.DeleteClusterMirrorRequestData;
+import org.apache.kafka.common.message.DeleteClusterMirrorResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
+import org.apache.kafka.common.message.PauseMirrorTopicsRequestData;
+import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsRequestData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.metadata.AbortTransactionRecord;
@@ -71,6 +83,7 @@ import org.apache.kafka.common.metadata.EndTransactionRecord;
 import org.apache.kafka.common.metadata.FeatureLevelRecord;
 import org.apache.kafka.common.metadata.FenceBrokerRecord;
 import org.apache.kafka.common.metadata.MetadataRecordType;
+import org.apache.kafka.common.metadata.MirrorTopicStateChangeRecord;
 import org.apache.kafka.common.metadata.NoOpRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
@@ -123,6 +136,7 @@ import org.apache.kafka.server.common.KRaftVersion;
 import org.apache.kafka.server.common.OffsetAndEpoch;
 import org.apache.kafka.server.fault.FaultHandler;
 import org.apache.kafka.server.fault.FaultHandlerException;
+import org.apache.kafka.server.mirror.MirrorPartitionState;
 import org.apache.kafka.server.policy.AlterConfigPolicy;
 import org.apache.kafka.server.policy.CreateTopicPolicy;
 import org.apache.kafka.snapshot.SnapshotReader;
@@ -1298,6 +1312,9 @@ public final class QuorumController implements Controller {
             case REMOVE_DELEGATION_TOKEN_RECORD:
                 delegationTokenControlManager.replay((RemoveDelegationTokenRecord) message);
                 break;
+            case MIRROR_TOPIC_STATE_CHANGE_RECORD:
+                clusterMirrorControl.replay((MirrorTopicStateChangeRecord) message, offset);
+                break;
             case NO_OP_RECORD:
                 // NoOpRecord is an empty record and doesn't need to be replayed
                 break;
@@ -1451,6 +1468,11 @@ public final class QuorumController implements Controller {
      * Manages DelegationTokens, if there are any.
      */
     private final DelegationTokenControlManager delegationTokenControlManager;
+
+    /**
+     * The cluster mirror state of the topics (KIP-1279).
+     */
+    private final ClusterMirrorControlManager clusterMirrorControl;
 
     /**
      * Manages the standard ACLs in the cluster.
@@ -1610,6 +1632,7 @@ public final class QuorumController implements Controller {
             setSnapshotRegistry(snapshotRegistry).
             setMaxRecordsPerBatch(maxRecordsPerBatch).
             build();
+        this.clusterMirrorControl = new ClusterMirrorControlManager(snapshotRegistry);
         this.delegationTokenControlManager = new DelegationTokenControlManager.Builder().
             setLogContext(logContext).
             setTokenCache(tokenCache).
@@ -1783,6 +1806,93 @@ public final class QuorumController implements Controller {
         }
         return appendWriteEvent("bumpLeaderEpochs", context.deadlineNs(),
             () -> replicationControl.bumpLeaderEpochs(request));
+    }
+
+    @Override
+    public CompletableFuture<CreateClusterMirrorResponseData> createClusterMirror(
+        ControllerRequestContext context,
+        CreateClusterMirrorRequestData request
+    ) {
+        return appendWriteEvent("createClusterMirror", context.deadlineNs(),
+            () -> clusterMirrorControl.createClusterMirror(request, configurationControl, featureControl.metadataVersionOrThrow()));
+    }
+
+    @Override
+    public CompletableFuture<DeleteClusterMirrorResponseData> deleteClusterMirror(
+        ControllerRequestContext context,
+        DeleteClusterMirrorRequestData request
+    ) {
+        return appendWriteEvent("deleteClusterMirror", context.deadlineNs(),
+            () -> clusterMirrorControl.deleteClusterMirror(request, configurationControl, featureControl.metadataVersionOrThrow()));
+    }
+
+    @Override
+    public CompletableFuture<StartMirrorTopicsResponseData> startMirrorTopics(
+        ControllerRequestContext context,
+        StartMirrorTopicsRequestData request
+    ) {
+        return appendWriteEvent("startMirrorTopics", context.deadlineNs(), () -> {
+            ControllerResult<Map<String, ApiError>> result = clusterMirrorControl.startMirrorTopics(context, request,
+                configurationControl, replicationControl, featureControl.metadataVersionOrThrow());
+            StartMirrorTopicsResponseData response = new StartMirrorTopicsResponseData();
+            result.response().forEach((topic, error) -> response.topics().add(new StartMirrorTopicsResponseData.TopicResult()
+                .setTopicName(topic).setErrorCode(error.error().code()).setErrorMessage(error.message())));
+            return ControllerResult.of(result.records(), response);
+        });
+    }
+
+    @Override
+    public CompletableFuture<StopMirrorTopicsResponseData> stopMirrorTopics(
+        ControllerRequestContext context,
+        StopMirrorTopicsRequestData request
+    ) {
+        return appendWriteEvent("stopMirrorTopics", context.deadlineNs(), () -> {
+            List<String> topics = new ArrayList<>();
+            if (request.topics() != null) request.topics().forEach(topic -> topics.add(topic.topicName()));
+            ControllerResult<Map<String, ApiError>> result = clusterMirrorControl.changeDesiredState(request.mirrorName(),
+                topics, request.stateOffset(), MirrorPartitionState.STOPPED, configurationControl,
+                featureControl.metadataVersionOrThrow());
+            StopMirrorTopicsResponseData response = new StopMirrorTopicsResponseData();
+            result.response().forEach((topic, error) -> response.topics().add(new StopMirrorTopicsResponseData.TopicResult()
+                .setTopicName(topic).setErrorCode(error.error().code()).setErrorMessage(error.message())));
+            return ControllerResult.of(result.records(), response);
+        });
+    }
+
+    @Override
+    public CompletableFuture<PauseMirrorTopicsResponseData> pauseMirrorTopics(
+        ControllerRequestContext context,
+        PauseMirrorTopicsRequestData request
+    ) {
+        return appendWriteEvent("pauseMirrorTopics", context.deadlineNs(), () -> {
+            List<String> topics = new ArrayList<>();
+            if (request.topics() != null) request.topics().forEach(topic -> topics.add(topic.topicName()));
+            ControllerResult<Map<String, ApiError>> result = clusterMirrorControl.changeDesiredState(request.mirrorName(),
+                topics, request.stateOffset(), MirrorPartitionState.PAUSED, configurationControl,
+                featureControl.metadataVersionOrThrow());
+            PauseMirrorTopicsResponseData response = new PauseMirrorTopicsResponseData();
+            result.response().forEach((topic, error) -> response.topics().add(new PauseMirrorTopicsResponseData.TopicResult()
+                .setTopicName(topic).setErrorCode(error.error().code()).setErrorMessage(error.message())));
+            return ControllerResult.of(result.records(), response);
+        });
+    }
+
+    @Override
+    public CompletableFuture<ResumeMirrorTopicsResponseData> resumeMirrorTopics(
+        ControllerRequestContext context,
+        ResumeMirrorTopicsRequestData request
+    ) {
+        return appendWriteEvent("resumeMirrorTopics", context.deadlineNs(), () -> {
+            List<String> topics = new ArrayList<>();
+            if (request.topics() != null) request.topics().forEach(topic -> topics.add(topic.topicName()));
+            ControllerResult<Map<String, ApiError>> result = clusterMirrorControl.changeDesiredState(request.mirrorName(),
+                topics, request.stateOffset(), MirrorPartitionState.MIRRORING, configurationControl,
+                featureControl.metadataVersionOrThrow());
+            ResumeMirrorTopicsResponseData response = new ResumeMirrorTopicsResponseData();
+            result.response().forEach((topic, error) -> response.topics().add(new ResumeMirrorTopicsResponseData.TopicResult()
+                .setTopicName(topic).setErrorCode(error.error().code()).setErrorMessage(error.message())));
+            return ControllerResult.of(result.records(), response);
+        });
     }
 
     @Override

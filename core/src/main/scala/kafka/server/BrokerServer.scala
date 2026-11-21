@@ -23,7 +23,7 @@ import kafka.log.LogManager
 import kafka.network.SocketServer
 import kafka.raft.KafkaRaftManager
 import kafka.server.metadata._
-import kafka.server.mirror.{MirrorCoordinatorPublisher, MirrorMetadataManager}
+import kafka.server.mirror.{ClusterMirrorRequestHandler, MirrorCoordinatorPublisher, MirrorMetadataManager}
 import kafka.server.share.{ReplicaManagerLogReader, ReplicaManagerPartitionMetadataProvider, ShareCoordinatorMetadataCacheHelperImpl, SharePartitionManager}
 import org.apache.kafka.common.config.{ConfigException, ConfigResource}
 import org.apache.kafka.common.internals.{Plugin, Topic}
@@ -524,7 +524,9 @@ class BrokerServer(
         apiVersionManager = apiVersionManager,
         clientMetricsManager = clientMetricsManager,
         groupConfigManager = groupConfigManager,
-        mirrorCoordinator = Some(mirrorCoordinator))
+        mirrorCoordinator = Some(mirrorCoordinator),
+        clusterMirrorHandler = Some(new ClusterMirrorRequestHandler(() => mirrorMetadataManager,
+          clientToControllerChannelManager, replicaManager, config)))
 
       dataPlaneRequestHandlerPool = sharedServer.requestHandlerPoolFactory.createPool(
         config.nodeId,

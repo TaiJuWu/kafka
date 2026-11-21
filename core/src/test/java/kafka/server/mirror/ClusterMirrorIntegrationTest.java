@@ -88,14 +88,13 @@ public class ClusterMirrorIntegrationTest {
     @BeforeEach
     public void setUp() throws Exception {
         source = startCluster(Map.of());
-        destination = startCluster(Map.of(
-            MirrorMetadataManager.ClusterMirrorPrefix() + MIRROR + ".bootstrap.servers", source.bootstrapServers(),
-            "mirror.metadata.refresh.interval.ms", "1000"));
+        // Mirror topics are created with the default replication factor of the destination cluster.
+        destination = startCluster(Map.of("mirror.metadata.refresh.interval.ms", "1000", "default.replication.factor", "3"));
         sourceAdmin = Admin.create(Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, source.bootstrapServers()));
         destinationAdmin = Admin.create(Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, destination.bootstrapServers()));
-        for (Admin admin : List.of(sourceAdmin, destinationAdmin)) {
-            admin.createTopics(List.of(new NewTopic(TOPIC, PARTITIONS, (short) 3))).all().get();
-        }
+        sourceAdmin.createTopics(List.of(new NewTopic(TOPIC, PARTITIONS, (short) 3))).all().get();
+        // The destination topic is created by StartMirrorTopics, with the topic id of the source topic.
+        destinationAdmin.createClusterMirror(MIRROR, Map.of("bootstrap.servers", source.bootstrapServers())).all().get();
     }
 
     @AfterEach
@@ -237,7 +236,7 @@ public class ClusterMirrorIntegrationTest {
     @Test
     public void testSourceUncleanLeaderElectionFailsMirrorByDefault() throws Exception {
         TopicPartition tp = new TopicPartition(TOPIC, 0);
-        long divergence = uncleanSourceElection(tp);
+        long divergence = uncleanSourceElection(tp, false);
         long destinationEnd = endOffsets(destinationAdmin).get(tp);
         assertTrue(destinationEnd > divergence, "the destination did not copy the records lost by the source");
         produce(source, 0, "after", 10);
@@ -248,10 +247,7 @@ public class ClusterMirrorIntegrationTest {
     @Test
     public void testSourceUncleanLeaderElectionTruncatesMirrorWhenEnabled() throws Exception {
         TopicPartition tp = new TopicPartition(TOPIC, 0);
-        destinationAdmin.incrementalAlterConfigs(Map.of(new ConfigResource(ConfigResource.Type.TOPIC, TOPIC), List.of(
-            new AlterConfigOp(new ConfigEntry(TopicConfig.MIRROR_UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"), AlterConfigOp.OpType.SET)
-        ))).all().get();
-        uncleanSourceElection(tp);
+        uncleanSourceElection(tp, true);
         produce(source, 0, "after", 10);
         waitForMirror();
         for (BrokerServer broker : destination.brokers().values()) {
@@ -267,7 +263,13 @@ public class ClusterMirrorIntegrationTest {
      *
      * @return the offset at which the source partition diverged
      */
-    private long uncleanSourceElection(TopicPartition tp) throws Exception {
+    private void enableMirrorUncleanLeaderElection() throws Exception {
+        destinationAdmin.incrementalAlterConfigs(Map.of(new ConfigResource(ConfigResource.Type.TOPIC, TOPIC), List.of(
+            new AlterConfigOp(new ConfigEntry(TopicConfig.MIRROR_UNCLEAN_LEADER_ELECTION_ENABLE_CONFIG, "true"), AlterConfigOp.OpType.SET)
+        ))).all().get();
+    }
+
+    private long uncleanSourceElection(TopicPartition tp, boolean enableMirrorUncleanLeaderElection) throws Exception {
         // The source partition has two replicas, so the stale one is the only candidate.
         int leader = leader(sourceAdmin, tp);
         int stale = source.brokers().keySet().stream().filter(id -> id != leader).findFirst().get();
@@ -281,6 +283,7 @@ public class ClusterMirrorIntegrationTest {
         produce(source, 0, "shared", 10);
         startMirroring();
         waitForMirror();
+        if (enableMirrorUncleanLeaderElection) enableMirrorUncleanLeaderElection();
 
         source.brokers().get(stale).shutdown();
         TestUtils.waitForCondition(() -> sourceAdmin.describeTopics(Set.of(TOPIC)).allTopicNames().get().get(TOPIC)
@@ -349,6 +352,92 @@ public class ClusterMirrorIntegrationTest {
         assertEquals(0, consume(destination, "read_committed").stream().filter(v -> v.contains(":local-")).count());
     }
 
+    @Test
+    public void testStartCreatesTopicWithSourceTopicId() throws Exception {
+        startMirroring();
+        TestUtils.waitForCondition(() -> destinationAdmin.listTopics().names().get().contains(TOPIC), "no destination topic");
+        assertEquals(sourceAdmin.describeTopics(Set.of(TOPIC)).allTopicNames().get().get(TOPIC).topicId(),
+            destinationAdmin.describeTopics(Set.of(TOPIC)).allTopicNames().get().get(TOPIC).topicId());
+    }
+
+    @Test
+    public void testPauseAndResume() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        produce(source, 0, "first", 10);
+        startMirroring();
+        waitForMirror();
+
+        retry(() -> destinationAdmin.pauseMirrorTopics(MIRROR, List.of(TOPIC)).all().get(), "pause");
+        TestUtils.waitForCondition(() -> mirrorState(tp).map(s -> s.state() == MirrorPartitionState.PAUSED.value()).orElse(false),
+            () -> "the partition did not reach PAUSED: " + mirrorState(tp));
+        long pausedEnd = endOffsets(destinationAdmin).get(tp);
+        produce(source, 0, "paused", 10);
+        Thread.sleep(3000);
+        assertEquals(pausedEnd, endOffsets(destinationAdmin).get(tp), "a paused partition was mirrored");
+        // A paused partition is read-only.
+        ExecutionException e = assertThrows(ExecutionException.class, () -> produce(destination, 0, "local", 1));
+        assertInstanceOf(ReadOnlyTopicException.class, e.getCause());
+
+        retry(() -> destinationAdmin.resumeMirrorTopics(MIRROR, List.of(TOPIC)).all().get(), "resume");
+        waitForMirror();
+        assertEquals(batches(source, tp), batches(destination, tp));
+    }
+
+    @Test
+    public void testRecoverAfterEnablingUncleanLeaderElection() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        uncleanSourceElection(tp, false);
+        TestUtils.waitForCondition(() -> mirrorState(tp).map(s -> s.state() == MirrorPartitionState.FAILED.value()).orElse(false),
+            () -> "the partition did not reach FAILED: " + mirrorState(tp));
+        assertEquals(-1, mirrorState(tp).orElseThrow().retryAttempt(), "the failure is not retryable");
+
+        enableMirrorUncleanLeaderElection();
+        destinationAdmin.recoverMirrorTopics(MIRROR, List.of(TOPIC)).all().get();
+        produce(source, 0, "after", 10);
+        waitForMirror();
+        for (BrokerServer broker : destination.brokers().values()) {
+            TestUtils.waitForCondition(() -> batches(source, tp).equals(batches(broker, tp)),
+                () -> "replica " + broker.config().brokerId() + " of " + tp + " did not converge");
+        }
+    }
+
+    @Test
+    public void testListDescribeAndDelete() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        produce(source, 0, "r", 10);
+        startMirroring();
+        waitForMirror();
+
+        var listings = destinationAdmin.listClusterMirrors().all().get();
+        assertEquals(1, listings.size());
+        var listing = listings.iterator().next();
+        assertEquals(MIRROR, listing.mirrorName());
+        assertEquals(List.of(TOPIC), listing.topicNames().orElseThrow());
+        assertEquals(sourceAdmin.describeCluster().clusterId().get(), listing.sourceClusterId());
+
+        TestUtils.waitForCondition(() -> {
+            var description = destinationAdmin.describeClusterMirrors(List.of(MIRROR), Map.of(),
+                new org.apache.kafka.clients.admin.DescribeClusterMirrorsOptions().includeMirrorState(true).includeMirrorOffset(true))
+                .allDescriptions().get().get(MIRROR);
+            return description.leaderStates().get(TOPIC).stream().anyMatch(state -> state.topicPartition().equals(tp) &&
+                state.state().equals("MIRRORING") && state.lag() == 0 && state.destinationOffset() == 10);
+        }, "the description does not show the mirrored partition");
+
+        // A cluster mirror whose topics are not all stopped cannot be deleted.
+        assertThrows(ExecutionException.class, () -> destinationAdmin.deleteClusterMirror(MIRROR).all().get());
+        setMirrorState(LogConfig.MIRROR_STATE_STOPPED);
+        retry(() -> destinationAdmin.deleteClusterMirror(MIRROR).all().get(), "delete");
+        assertEquals(0, destinationAdmin.listClusterMirrors().all().get().size());
+        TestUtils.waitForCondition(() -> {
+            try {
+                produce(destination, 0, "local", 1);
+                return true;
+            } catch (ExecutionException e) {
+                return false;
+            }
+        }, "the destination topic did not become writable after the mirror was deleted");
+    }
+
     /**
      * @return the state of a mirror partition, read from the coordinator of the destination cluster which keeps it
      */
@@ -399,16 +488,29 @@ public class ClusterMirrorIntegrationTest {
     }
 
     private void startMirroring() throws Exception {
-        destinationAdmin.incrementalAlterConfigs(Map.of(new ConfigResource(ConfigResource.Type.TOPIC, TOPIC), List.of(
-            new AlterConfigOp(new ConfigEntry(LogConfig.MIRROR_NAME_CONFIG, MIRROR), AlterConfigOp.OpType.SET),
-            new AlterConfigOp(new ConfigEntry(LogConfig.MIRROR_STATE_CONFIG, LogConfig.MIRROR_STATE_MIRRORING), AlterConfigOp.OpType.SET)
-        ))).all().get();
+        retry(() -> destinationAdmin.startMirrorTopics(MIRROR, List.of(TOPIC)).all().get(), "start");
     }
 
     private void setMirrorState(String state) throws Exception {
-        destinationAdmin.incrementalAlterConfigs(Map.of(new ConfigResource(ConfigResource.Type.TOPIC, TOPIC), List.of(
-            new AlterConfigOp(new ConfigEntry(LogConfig.MIRROR_STATE_CONFIG, state), AlterConfigOp.OpType.SET)
-        ))).all().get();
+        if (LogConfig.MIRROR_STATE_STOPPED.equals(state)) {
+            retry(() -> destinationAdmin.stopMirrorTopics(MIRROR, List.of(TOPIC)).all().get(), "stop");
+        } else {
+            startMirroring();
+        }
+    }
+
+    /**
+     * Retries a lifecycle operation, which is rejected while the partitions are still in transition.
+     */
+    private static void retry(org.junit.jupiter.api.function.Executable operation, String name) throws InterruptedException {
+        TestUtils.waitForCondition(() -> {
+            try {
+                operation.execute();
+                return true;
+            } catch (Throwable e) {
+                return false;
+            }
+        }, 60_000, "the " + name + " operation did not succeed");
     }
 
     private void waitForMirror() throws InterruptedException {

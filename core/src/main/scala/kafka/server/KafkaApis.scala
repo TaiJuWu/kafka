@@ -61,6 +61,7 @@ import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.coordinator.group.modern.share.ShareGroupConfigProvider
 import org.apache.kafka.coordinator.group.{Group, GroupConfig, GroupConfigManager, GroupCoordinator}
 import org.apache.kafka.coordinator.share.ShareCoordinator
+import kafka.server.mirror.ClusterMirrorRequestHandler
 import org.apache.kafka.coordinator.mirror.MirrorCoordinatorService
 import org.apache.kafka.coordinator.transaction.InitProducerIdResult
 import org.apache.kafka.metadata.{ConfigRepository, MetadataCache}
@@ -116,7 +117,8 @@ class KafkaApis(val requestChannel: RequestChannel,
                 val apiVersionManager: ApiVersionManager,
                 val clientMetricsManager: ClientMetricsManager,
                 val groupConfigManager: GroupConfigManager,
-                val mirrorCoordinator: Option[MirrorCoordinatorService] = None
+                val mirrorCoordinator: Option[MirrorCoordinatorService] = None,
+                val clusterMirrorHandler: Option[ClusterMirrorRequestHandler] = None
 ) extends ApiRequestHandler with Logging {
 
   type ProduceResponseStats = Map[TopicIdPartition, RecordValidationStats]
@@ -248,6 +250,16 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.INITIALIZE_SHARE_GROUP_STATE => handleInitializeShareGroupStateRequest(request).exceptionally(handleError)
         case ApiKeys.READ_SHARE_GROUP_STATE => handleReadShareGroupStateRequest(request).exceptionally(handleError)
         case ApiKeys.READ_MIRROR_STATES => handleReadMirrorStatesRequest(request).exceptionally(handleError)
+        case ApiKeys.CREATE_CLUSTER_MIRROR => handleClusterMirrorRequest[CreateClusterMirrorRequest, CreateClusterMirrorResponseData](request, ALTER, h => h.createClusterMirror(request.body(classOf[CreateClusterMirrorRequest]).data), r => new CreateClusterMirrorResponse(r))
+        case ApiKeys.START_MIRROR_TOPICS => handleClusterMirrorRequest[StartMirrorTopicsRequest, StartMirrorTopicsResponseData](request, ALTER, h => h.startMirrorTopics(request.body(classOf[StartMirrorTopicsRequest]).data), r => new StartMirrorTopicsResponse(r))
+        case ApiKeys.STOP_MIRROR_TOPICS => handleClusterMirrorRequest[StopMirrorTopicsRequest, StopMirrorTopicsResponseData](request, ALTER, h => h.stopMirrorTopics(request.body(classOf[StopMirrorTopicsRequest]).data), r => new StopMirrorTopicsResponse(r))
+        case ApiKeys.PAUSE_MIRROR_TOPICS => handleClusterMirrorRequest[PauseMirrorTopicsRequest, PauseMirrorTopicsResponseData](request, ALTER, h => h.pauseMirrorTopics(request.body(classOf[PauseMirrorTopicsRequest]).data), r => new PauseMirrorTopicsResponse(r))
+        case ApiKeys.RESUME_MIRROR_TOPICS => handleClusterMirrorRequest[ResumeMirrorTopicsRequest, ResumeMirrorTopicsResponseData](request, ALTER, h => h.resumeMirrorTopics(request.body(classOf[ResumeMirrorTopicsRequest]).data), r => new ResumeMirrorTopicsResponse(r))
+        case ApiKeys.RECOVER_MIRROR_TOPICS => handleClusterMirrorRequest[RecoverMirrorTopicsRequest, RecoverMirrorTopicsResponseData](request, ALTER, h => h.recoverMirrorTopics(request.body(classOf[RecoverMirrorTopicsRequest]).data), r => new RecoverMirrorTopicsResponse(r))
+        case ApiKeys.DELETE_CLUSTER_MIRROR => handleClusterMirrorRequest[DeleteClusterMirrorRequest, DeleteClusterMirrorResponseData](request, ALTER, h => h.deleteClusterMirror(request.body(classOf[DeleteClusterMirrorRequest]).data), r => new DeleteClusterMirrorResponse(r))
+        case ApiKeys.LIST_CLUSTER_MIRRORS => handleClusterMirrorRequest[ListClusterMirrorsRequest, ListClusterMirrorsResponseData](request, DESCRIBE, h => h.listClusterMirrors(request.body(classOf[ListClusterMirrorsRequest]).data), r => new ListClusterMirrorsResponse(r))
+        case ApiKeys.DESCRIBE_CLUSTER_MIRRORS => handleClusterMirrorRequest[DescribeClusterMirrorsRequest, DescribeClusterMirrorsResponseData](request, DESCRIBE, h => h.describeClusterMirrors(request.body(classOf[DescribeClusterMirrorsRequest]).data), r => new DescribeClusterMirrorsResponse(r))
+        case ApiKeys.READ_MIRROR_OFFSETS => handleClusterMirrorRequest[ReadMirrorOffsetsRequest, ReadMirrorOffsetsResponseData](request, CLUSTER_ACTION, h => h.readMirrorOffsets(request.body(classOf[ReadMirrorOffsetsRequest]).data), r => new ReadMirrorOffsetsResponse(r))
         case ApiKeys.WRITE_MIRROR_STATES => handleWriteMirrorStatesRequest(request).exceptionally(handleError)
         case ApiKeys.WRITE_SHARE_GROUP_STATE => handleWriteShareGroupStateRequest(request).exceptionally(handleError)
         case ApiKeys.DELETE_SHARE_GROUP_STATE => handleDeleteShareGroupStateRequest(request).exceptionally(handleError)
@@ -3774,6 +3786,35 @@ class KafkaApis(val requestChannel: RequestChannel,
           requestHelper.sendMaybeThrottle(request, new InitializeShareGroupStateResponse(response))
         }
       }
+  }
+
+  /**
+   * Handles a cluster mirroring request of the clients (KIP-1279). The cluster mirrors are authorized on the cluster
+   * until the CLUSTER_MIRROR ACL resource exists.
+   */
+  private def handleClusterMirrorRequest[R <: AbstractRequest, D <: ApiMessage](request: Request,
+                                                                                  operation: AclOperation,
+                                                                                  handle: ClusterMirrorRequestHandler => CompletableFuture[D],
+                                                                                  toResponse: D => AbstractResponse): Unit = {
+    val body = request.body(classOf[AbstractRequest])
+    if (!authorizeClusterOperation(request, operation)) {
+      requestHelper.sendMaybeThrottle(request, body.getErrorResponse(Errors.CLUSTER_AUTHORIZATION_FAILED.exception))
+    } else clusterMirrorHandler match {
+      case None =>
+        requestHelper.sendMaybeThrottle(request, body.getErrorResponse(Errors.UNSUPPORTED_VERSION.exception))
+      case Some(handler) =>
+        handle(handler).whenComplete { (response, exception) =>
+          if (exception != null) {
+            val cause = exception match {
+              case e: java.util.concurrent.CompletionException if e.getCause != null => e.getCause
+              case e => e
+            }
+            requestHelper.sendMaybeThrottle(request, body.getErrorResponse(cause))
+          } else {
+            requestHelper.sendMaybeThrottle(request, toResponse(response))
+          }
+        }
+    }
   }
 
   def handleReadMirrorStatesRequest(request: Request): CompletableFuture[Unit] = {

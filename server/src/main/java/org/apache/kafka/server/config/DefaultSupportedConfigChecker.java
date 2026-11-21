@@ -19,6 +19,7 @@ package org.apache.kafka.server.config;
 
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.coordinator.group.GroupConfig;
+import org.apache.kafka.coordinator.mirror.ClusterMirrorConfig;
 import org.apache.kafka.metadata.SupportedConfigChecker;
 import org.apache.kafka.server.metrics.ClientMetricsConfigs;
 import org.apache.kafka.storage.internals.log.LogConfig;
@@ -64,7 +65,8 @@ public final class DefaultSupportedConfigChecker implements SupportedConfigCheck
             ConfigResource.Type.TOPIC, new SetContainsPredicate(LogConfig.configNames()),
             ConfigResource.Type.BROKER, ignore -> true,
             ConfigResource.Type.CLIENT_METRICS, new SetContainsPredicate(ClientMetricsConfigs.configNames()),
-            ConfigResource.Type.GROUP, new SetContainsPredicate(GroupConfig.configNames())
+            ConfigResource.Type.GROUP, new SetContainsPredicate(GroupConfig.configNames()),
+            ConfigResource.Type.CLUSTER_MIRROR, ClusterMirrorConfig::isValidConfigName
         );
     }
 

@@ -31,7 +31,7 @@ import org.apache.kafka.server.common.OffsetAndEpoch;
 public record MetadataImage(MetadataProvenance provenance, FeaturesImage features, ClusterImage cluster,
                             TopicsImage topics, ConfigurationsImage configs, ClientQuotasImage clientQuotas,
                             ProducerIdsImage producerIds, AclsImage acls, ScramImage scram,
-                            DelegationTokenImage delegationTokens) {
+                            DelegationTokenImage delegationTokens, ClusterMirrorsImage clusterMirrors) {
     public static final MetadataImage EMPTY = new MetadataImage(
         MetadataProvenance.EMPTY,
         FeaturesImage.EMPTY,
@@ -42,7 +42,19 @@ public record MetadataImage(MetadataProvenance provenance, FeaturesImage feature
         ProducerIdsImage.EMPTY,
         AclsImage.EMPTY,
         ScramImage.EMPTY,
-        DelegationTokenImage.EMPTY);
+        DelegationTokenImage.EMPTY,
+        ClusterMirrorsImage.EMPTY);
+
+    /**
+     * Creates an image without cluster mirror state.
+     */
+    public MetadataImage(MetadataProvenance provenance, FeaturesImage features, ClusterImage cluster,
+                         TopicsImage topics, ConfigurationsImage configs, ClientQuotasImage clientQuotas,
+                         ProducerIdsImage producerIds, AclsImage acls, ScramImage scram,
+                         DelegationTokenImage delegationTokens) {
+        this(provenance, features, cluster, topics, configs, clientQuotas, producerIds, acls, scram, delegationTokens,
+            ClusterMirrorsImage.EMPTY);
+    }
 
     public boolean isEmpty() {
         return features.isEmpty() &&
@@ -53,7 +65,8 @@ public record MetadataImage(MetadataProvenance provenance, FeaturesImage feature
             producerIds.isEmpty() &&
             acls.isEmpty() &&
             scram.isEmpty() &&
-            delegationTokens.isEmpty();
+            delegationTokens.isEmpty() &&
+            clusterMirrors.isEmpty();
     }
 
     public OffsetAndEpoch highestOffsetAndEpoch() {
@@ -76,6 +89,7 @@ public record MetadataImage(MetadataProvenance provenance, FeaturesImage feature
         acls.write(writer);
         scram.write(writer, options);
         delegationTokens.write(writer, options);
+        clusterMirrors.write(writer, options);
         writer.close(true);
     }
 

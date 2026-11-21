@@ -473,7 +473,7 @@ class ReplicaManager(val config: KafkaConfig,
 
   // An iterator over all non offline partitions. This is a weakly consistent iterator; a partition made offline after
   // the iterator has been constructed could still be returned by this iterator.
-  private def onlinePartitionsIterator: Iterator[Partition] = {
+  private[server] def onlinePartitionsIterator: Iterator[Partition] = {
     allPartitions.values.asScala.iterator.flatMap {
       case online: HostedPartition.Online[Partition] => Some(online.partition)
       case _ => None

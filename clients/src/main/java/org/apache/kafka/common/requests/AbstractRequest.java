@@ -283,6 +283,26 @@ public abstract class AbstractRequest implements AbstractRequestResponse {
                 return ReadMirrorStatesRequest.parse(readable, apiVersion);
             case WRITE_MIRROR_STATES:
                 return WriteMirrorStatesRequest.parse(readable, apiVersion);
+            case CREATE_CLUSTER_MIRROR:
+                return CreateClusterMirrorRequest.parse(readable, apiVersion);
+            case START_MIRROR_TOPICS:
+                return StartMirrorTopicsRequest.parse(readable, apiVersion);
+            case STOP_MIRROR_TOPICS:
+                return StopMirrorTopicsRequest.parse(readable, apiVersion);
+            case PAUSE_MIRROR_TOPICS:
+                return PauseMirrorTopicsRequest.parse(readable, apiVersion);
+            case RESUME_MIRROR_TOPICS:
+                return ResumeMirrorTopicsRequest.parse(readable, apiVersion);
+            case RECOVER_MIRROR_TOPICS:
+                return RecoverMirrorTopicsRequest.parse(readable, apiVersion);
+            case DELETE_CLUSTER_MIRROR:
+                return DeleteClusterMirrorRequest.parse(readable, apiVersion);
+            case LIST_CLUSTER_MIRRORS:
+                return ListClusterMirrorsRequest.parse(readable, apiVersion);
+            case DESCRIBE_CLUSTER_MIRRORS:
+                return DescribeClusterMirrorsRequest.parse(readable, apiVersion);
+            case READ_MIRROR_OFFSETS:
+                return ReadMirrorOffsetsRequest.parse(readable, apiVersion);
             case BUMP_LEADER_EPOCHS:
                 return BumpLeaderEpochsRequest.parse(readable, apiVersion);
             case UPDATE_FEATURES:

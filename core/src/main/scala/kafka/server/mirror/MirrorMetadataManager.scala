@@ -17,7 +17,7 @@
 package kafka.server.mirror
 
 import java.util.Properties
-import java.util.concurrent.{ConcurrentHashMap, Semaphore, ThreadLocalRandom, TimeUnit}
+import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, ConcurrentLinkedQueue, Semaphore, ThreadLocalRandom, TimeUnit}
 import java.util.concurrent.atomic.AtomicBoolean
 
 import kafka.cluster.Partition
@@ -25,6 +25,7 @@ import kafka.server.{BrokerBlockingSender, InitialFetchState, KafkaConfig, Repli
 import kafka.utils.Logging
 import org.apache.kafka.clients.ClientResponse
 import org.apache.kafka.clients.admin.{Admin, AdminClientConfig}
+import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.{BumpLeaderEpochsRequestData, CreateTopicsRequestData, ReadMirrorStatesRequestData, WriteMirrorStatesRequestData}
 import org.apache.kafka.common.protocol.Errors
@@ -108,11 +109,12 @@ class MirrorMetadataManager(config: KafkaConfig,
   this.logIdent = s"[MirrorMetadataManager id=${config.brokerId}] "
 
   private val brokerConfig = MirrorMetadataManager.brokerConfig(config)
-  private val mirrors = clusterMirrors(config)
-  private val fetcherManagers: Map[String, MirrorFetcherManager] = mirrors.map { case (name, mirrorConfig) =>
-    name -> new MirrorFetcherManager(config.brokerId, name, mirrorConfig, brokerConfig.numReplicaFetchers,
-      replicaManager, this, metrics, time)
-  }
+  // The cluster mirrors defined in the broker configuration, and those created with CreateClusterMirror, which are
+  // CLUSTER_MIRROR config resources of the metadata image.
+  private val staticMirrors = clusterMirrors(config)
+  @volatile private var latestImage: MetadataImage = MetadataImage.EMPTY
+  private val fetcherManagers = mutable.Map[String, (Map[String, String], MirrorFetcherManager)]()
+  private val tasks = new ConcurrentLinkedQueue[Runnable]()
   private val admins = mutable.Map[String, Admin]()
   private val mirrored = mutable.Map[String, mutable.Map[TopicPartition, MirroredPartition]]()
 
@@ -140,6 +142,11 @@ class MirrorMetadataManager(config: KafkaConfig,
     override def doWork(): Unit = {
       if (updates.tryAcquire(brokerConfig.metadataRefreshIntervalMs, TimeUnit.MILLISECONDS))
         updates.drainPermits()
+      var task = tasks.poll()
+      while (task != null) {
+        task.run()
+        task = tasks.poll()
+      }
       if (isRunning) {
         try {
           reconcile()
@@ -151,28 +158,97 @@ class MirrorMetadataManager(config: KafkaConfig,
   }
 
   def startup(): Unit = {
-    if (mirrors.nonEmpty) {
-      info(s"Starting with cluster mirrors ${mirrors.keys.mkString(", ")}")
-      thread.start()
+    info(s"Starting with the cluster mirrors of the configuration ${staticMirrors.keys.mkString(", ")}")
+    thread.start()
+  }
+
+  /**
+   * @return the configurations of the cluster mirrors, by name
+   */
+  private[mirror] def mirrorConfigs: Map[String, Map[String, String]] = {
+    val fromImage = latestImage.configs.resourceData.asScala.collect {
+      case (resource, data) if resource.`type` == ConfigResource.Type.CLUSTER_MIRROR && !data.isEmpty =>
+        resource.name -> data.toMap.asScala.toMap
+    }
+    staticMirrors.map { case (name, mirrorConfig) =>
+      name -> mirrorConfig.originals.asScala.map { case (k, v) => k -> String.valueOf(v) }.toMap
+    } ++ fromImage
+  }
+
+  private[mirror] def image: MetadataImage = latestImage
+
+  /**
+   * @return the cluster mirror and the desired state of a topic: from the metadata image, or from the topic
+   *         configurations mirror.name and mirror.state of the first phase
+   */
+  private[mirror] def mirrorOf(topic: String, logConfig: Option[org.apache.kafka.storage.internals.log.LogConfig]): Option[(String, MirrorPartitionState)] = {
+    Option(latestImage.clusterMirrors.topics.get(topic))
+      .map(t => t.mirrorName -> MirrorPartitionState.fromValue(t.desiredState))
+      .orElse(logConfig.filter(_.mirrorName.nonEmpty).map(c => c.mirrorName -> (if (c.isMirroring) MIRRORING else STOPPED)))
+  }
+
+  /**
+   * Runs a task on the thread of the manager, which owns the connections to the coordinators and the source clusters.
+   */
+  private[mirror] def runOnManagerThread[T](task: () => CompletableFuture[T]): CompletableFuture[T] = {
+    val result = new CompletableFuture[T]()
+    tasks.add(() => {
+      try {
+        task().whenComplete((value, exception) => if (exception != null) result.completeExceptionally(exception) else result.complete(value))
+      } catch {
+        case e: Throwable => result.completeExceptionally(e)
+      }
+    })
+    signal()
+    result
+  }
+
+  /**
+   * Creates, updates and removes the fetcher managers of the cluster mirrors.
+   */
+  private def syncFetcherManagers(): Unit = {
+    val configs = mirrorConfigs
+    fetcherManagers.keySet.toSet.foreach { (name: String) =>
+      if (!configs.get(name).contains(fetcherManagers(name)._1)) {
+        info(s"Cluster mirror $name was ${if (configs.contains(name)) "updated" else "deleted"}")
+        fetcherManagers.remove(name).foreach(_._2.shutdown())
+        mirrored.remove(name)
+        admins.remove(name).foreach(admin => Utils.closeQuietly(admin, "mirror admin client"))
+      }
+    }
+    configs.foreachEntry { (name, mirrorConfig) =>
+      if (!fetcherManagers.contains(name)) {
+        val props = new Properties()
+        mirrorConfig.foreachEntry((k, v) => props.put(k, v))
+        fetcherManagers(name) = mirrorConfig -> new MirrorFetcherManager(config.brokerId, name,
+          ClusterMirrorConfig.fromProperties(props), brokerConfig.numReplicaFetchers, replicaManager, this, metrics, time)
+      }
     }
   }
 
   override def name(): String = "MirrorMetadataManager"
 
   override def onMetadataUpdate(delta: MetadataDelta, newImage: MetadataImage, manifest: LoaderManifest): Unit = {
-    if (mirrors.nonEmpty && (delta.topicsDelta() != null || delta.configsDelta() != null))
+    latestImage = newImage
+    if (delta.topicsDelta() != null || delta.clusterMirrorsDelta() != null) {
+      // The partitions of mirror topics stay read-only until their state is known to be STOPPED. The followers are
+      // marked too, so that a follower which becomes the leader does not cache its own leader epoch.
+      val mirrorTopics = newImage.clusterMirrors.topics
+      replicaManager.onlinePartitionsIterator.foreach { partition =>
+        partition.mirrorTopic = mirrorTopics.containsKey(partition.topic)
+      }
+    }
+    if (delta.topicsDelta() != null || delta.configsDelta() != null || delta.clusterMirrorsDelta() != null)
       signal()
   }
 
   private def signal(): Unit = updates.release()
 
   override def close(): Unit = {
-    if (mirrors.nonEmpty) {
-      thread.initiateShutdown()
-      signal()
-      thread.awaitShutdown()
-    }
-    fetcherManagers.values.foreach(_.shutdown())
+    thread.initiateShutdown()
+    signal()
+    thread.awaitShutdown()
+    fetcherManagers.values.foreach(_._2.shutdown())
     admins.values.foreach(admin => Utils.closeQuietly(admin, "mirror admin client"))
     admins.clear()
     coordinatorSenders.values.foreach(sender => Utils.closeQuietly(() => sender.close(), "mirror coordinator client"))
@@ -258,20 +334,25 @@ class MirrorMetadataManager(config: KafkaConfig,
   private[mirror] def reconcile(): Unit = {
     maybeBumpLeaderEpochs()
 
+    syncFetcherManagers()
+    val desiredStates = mutable.Map[TopicPartition, MirrorPartitionState]()
     val partitionsByMirror = replicaManager.leaderPartitionsIterator.flatMap { partition =>
-      partition.log.filter(_.config.mirrorName.nonEmpty).map(log => log.config.mirrorName -> partition)
+      mirrorOf(partition.topic, partition.log.map(_.config)).map { case (name, desired) =>
+        desiredStates(partition.topicPartition) = desired
+        name -> partition
+      }
     }.toSeq.groupMap(_._1)(_._2)
 
-    partitionsByMirror.keySet.diff(mirrors.keySet).foreach { name =>
+    partitionsByMirror.keySet.diff(fetcherManagers.keySet).foreach { name =>
       warn(s"Partitions ${partitionsByMirror(name).map(_.topicPartition).mkString(", ")} are mirrored from " +
         s"unknown cluster mirror $name")
     }
 
     val stateTopicReady = partitionsByMirror.isEmpty || ensureStateTopic()
-    fetcherManagers.foreachEntry { (name, manager) =>
+    fetcherManagers.foreachEntry { case (name, (_, manager)) =>
       try {
         val partitions = partitionsByMirror.getOrElse(name, Seq.empty)
-        val mirroring = if (stateTopicReady) applyTransitions(name, manager, partitions) else Seq.empty
+        val mirroring = if (stateTopicReady) applyTransitions(name, manager, partitions, desiredStates) else Seq.empty
         reconcileMirror(name, manager, mirroring)
       } catch {
         case e: Throwable => warn(s"Failed to update the mirrored partitions of cluster mirror $name", e)
@@ -284,7 +365,8 @@ class MirrorMetadataManager(config: KafkaConfig,
    *
    * @return the partitions in the MIRRORING state, which must have a mirror fetcher
    */
-  private def applyTransitions(name: String, manager: MirrorFetcherManager, partitions: Seq[Partition]): Seq[Partition] = {
+  private def applyTransitions(name: String, manager: MirrorFetcherManager, partitions: Seq[Partition],
+                               desiredStates: collection.Map[TopicPartition, MirrorPartitionState]): Seq[Partition] = {
     if (partitions.isEmpty)
       return Seq.empty
     val states = readStates(name, partitions)
@@ -293,7 +375,7 @@ class MirrorMetadataManager(config: KafkaConfig,
         case None => false // The coordinator is not available yet, the partition is retried in the next round.
         case Some(view) =>
           try {
-            transition(name, manager, partition, view) == MIRRORING
+            transition(name, manager, partition, view, desiredStates(partition.topicPartition)) == MIRRORING
           } catch {
             case e: Throwable =>
               warn(s"Failed the state transition of mirror partition ${partition.topicPartition} in state ${view.state}", e)
@@ -308,11 +390,17 @@ class MirrorMetadataManager(config: KafkaConfig,
    *
    * @return the state of the partition after the transition
    */
-  private def transition(name: String, manager: MirrorFetcherManager, partition: Partition, view: StateView): MirrorPartitionState = {
+  private def transition(name: String, manager: MirrorFetcherManager, partition: Partition, view: StateView,
+                         desired: MirrorPartitionState): MirrorPartitionState = {
     val tp = partition.topicPartition
     val log = partition.localLogOrException
-    val desiredMirroring = log.config.isMirroring
-    partition.mirrorWritable = !desiredMirroring && (view.state == STOPPED || view.state == UNKNOWN)
+    val desiredMirroring = desired == MIRRORING
+    partition.mirrorWritable = desired == STOPPED && (view.state == STOPPED || view.state == UNKNOWN)
+
+    def removeFetcher(): Unit = {
+      manager.removeFetcherForPartitions(Set(tp))
+      mirrored.get(name).foreach(_.remove(tp))
+    }
 
     def write(state: MirrorPartitionState, lastMirror: Option[(Int, Long)] = None, error: Option[String] = None,
               nonRetryable: Boolean = false): MirrorPartitionState = {
@@ -348,16 +436,33 @@ class MirrorMetadataManager(config: KafkaConfig,
         case ULE_RECOVERY =>
           if (replicasCaughtUp(partition, inSyncOnly = false)) write(MIRRORING) else ULE_RECOVERY
         case FAILED =>
-          maybeRetry(partition, view, write)
+          maybeRetry(name, partition, view, write)
         case STOPPING =>
-          finishStopping(partition, view, write)
+          finishStopping(name, partition, view, write)
+        case PAUSING | PAUSED =>
+          // Resume: the mirror goes on from the log end offset.
+          write(MIRRORING)
         case state =>
           state
+      }
+    } else if (desired == PAUSED) {
+      view.state match {
+        case MIRRORING | EPOCH_FENCING =>
+          val state = write(PAUSING)
+          if (state == PAUSING) {
+            removeFetcher()
+            writeState(name, partition, view.copy(state = PAUSING, stateEpoch = view.stateEpoch + 1), PAUSED, None, None, false)
+            PAUSED
+          } else state
+        case PAUSING =>
+          removeFetcher()
+          write(PAUSED)
+        case state => state
       }
     } else {
       view.state match {
         case UNKNOWN | STOPPED => view.state
-        case STOPPING => finishStopping(partition, view, write)
+        case STOPPING => finishStopping(name, partition, view, write)
         case _ =>
           // The last mirror epoch and offset are taken before the leader epoch is bumped, which caches the epoch of
           // the destination in the log.
@@ -365,7 +470,7 @@ class MirrorMetadataManager(config: KafkaConfig,
           val state = write(STOPPING)
           if (state == STOPPING) {
             stoppingLastMirror(tp) = lastMirror
-            finishStopping(partition, view.copy(state = STOPPING, stateEpoch = view.stateEpoch + 1), write)
+            finishStopping(name, partition, view.copy(state = STOPPING, stateEpoch = view.stateEpoch + 1), write)
           } else state
       }
     }
@@ -375,10 +480,10 @@ class MirrorMetadataManager(config: KafkaConfig,
    * STOPPING: removes the fetcher, bumps the leader epoch to draw a boundary between the mirrored records and the
    * records written locally, and stores the last mirror epoch and offset. The partition becomes writable once STOPPED.
    */
-  private def finishStopping(partition: Partition, view: StateView,
+  private def finishStopping(name: String, partition: Partition, view: StateView,
                              write: (MirrorPartitionState, Option[(Int, Long)], Option[String], Boolean) => MirrorPartitionState): MirrorPartitionState = {
     val tp = partition.topicPartition
-    fetcherManagers.get(partition.log.get.config.mirrorName).foreach(_.removeFetcherForPartitions(Set(tp)))
+    fetcherManagers.get(name).foreach(_._2.removeFetcherForPartitions(Set(tp)))
     mirrored.values.foreach(_.remove(tp))
     val log = partition.localLogOrException
     val (lastMirrorEpoch, lastMirrorOffset, targetEpoch) = stoppingLastMirror.getOrElseUpdate(tp,
@@ -402,10 +507,10 @@ class MirrorMetadataManager(config: KafkaConfig,
    * FAILED: retries the previous state after a backoff with full jitter, unless the failure is non-retryable or the
    * retries are exhausted.
    */
-  private def maybeRetry(partition: Partition, view: StateView,
+  private def maybeRetry(name: String, partition: Partition, view: StateView,
                          write: (MirrorPartitionState, Option[(Int, Long)], Option[String], Boolean) => MirrorPartitionState): MirrorPartitionState = {
     val tp = partition.topicPartition
-    fetcherManagers.get(partition.log.get.config.mirrorName).foreach(_.removeFetcherForPartitions(Set(tp)))
+    fetcherManagers.get(name).foreach(_._2.removeFetcherForPartitions(Set(tp)))
     mirrored.values.foreach(_.remove(tp))
     val maxAttempts = brokerConfig.failedRetryMaxAttempts
     if (view.retryAttempt < 0 || view.retryAttempt >= maxAttempts)
@@ -481,17 +586,19 @@ class MirrorMetadataManager(config: KafkaConfig,
     false
   }
 
-  private def coordinatorFor(name: String, partition: Partition): Option[(Int, BrokerEndPoint)] = {
+  private def coordinatorFor(name: String, partition: Partition): Option[(Int, BrokerEndPoint)] =
+    partition.topicId.flatMap(topicId => coordinatorFor(name, topicId, partition.partitionId))
+
+  private[mirror] def coordinatorFor(name: String, topicId: Uuid, partitionIndex: Int): Option[(Int, BrokerEndPoint)] = {
     for {
       numPartitions <- replicaManager.metadataCache.numPartitions(Topic.MIRROR_STATE_TOPIC_NAME).toScala.map(_.intValue)
-      topicId <- partition.topicId
-      coordinatorPartition = new MirrorPartition(name, topicId, partition.partitionId).coordinatingPartition(numPartitions)
+      coordinatorPartition = new MirrorPartition(name, topicId, partitionIndex).coordinatingPartition(numPartitions)
       node <- replicaManager.metadataCache.getPartitionLeaderEndpoint(Topic.MIRROR_STATE_TOPIC_NAME, coordinatorPartition,
         config.interBrokerListenerName).toScala
     } yield (node.id, new BrokerEndPoint(node.id, node.host, node.port))
   }
 
-  private def sendToCoordinator(endPoint: BrokerEndPoint, request: org.apache.kafka.common.requests.AbstractRequest.Builder[_ <: org.apache.kafka.common.requests.AbstractRequest]): Option[ClientResponse] = {
+  private[mirror] def sendToCoordinator(endPoint: BrokerEndPoint, request: org.apache.kafka.common.requests.AbstractRequest.Builder[_ <: org.apache.kafka.common.requests.AbstractRequest]): Option[ClientResponse] = {
     val sender = coordinatorSenders.getOrElseUpdate(endPoint.id, new BrokerBlockingSender(endPoint, config, metrics, time,
       CoordinatorClientId, s"mirror-state-client-${config.brokerId}",
       new LogContext(s"[MirrorStateClient broker=${config.brokerId} coordinator=${endPoint.id}] ")))
@@ -508,13 +615,20 @@ class MirrorMetadataManager(config: KafkaConfig,
   /**
    * Reads the states of the given partitions of a cluster mirror, with one request per coordinator.
    */
-  private def readStates(name: String, partitions: Seq[Partition]): Map[TopicPartition, StateView] = {
+  private def readStates(name: String, partitions: Seq[Partition]): Map[TopicPartition, StateView] =
+    readStates(name, partitions.flatMap(p => p.topicId.map(id => (p.topicPartition, id))))
+
+  /**
+   * Reads the states of the given partitions of a cluster mirror, by topic id, with one request per coordinator.
+   */
+  private[mirror] def readStates(name: String, partitions: Iterable[(TopicPartition, Uuid)]): Map[TopicPartition, StateView] = {
     val result = mutable.Map[TopicPartition, StateView]()
-    partitions.flatMap(p => coordinatorFor(name, p).map(_ -> p)).groupMap(_._1)(_._2).foreachEntry { case ((_, endPoint), group) =>
+    partitions.flatMap { case (tp, topicId) => coordinatorFor(name, topicId, tp.partition).map(_ -> tp) }
+      .groupMap(_._1)(_._2).foreachEntry { case ((_, endPoint), group) =>
       val data = new ReadMirrorStatesRequestData().setMirrorName(name)
       group.groupBy(_.topic).foreachEntry { (topic, topicPartitions) =>
         val topicData = new ReadMirrorStatesRequestData.TopicMetadata().setTopicName(topic)
-        topicPartitions.foreach(p => topicData.partitions.add(new ReadMirrorStatesRequestData.PartitionData().setPartitionIndex(p.partitionId)))
+        topicPartitions.foreach(tp => topicData.partitions.add(new ReadMirrorStatesRequestData.PartitionData().setPartitionIndex(tp.partition)))
         data.topics.add(topicData)
       }
       sendToCoordinator(endPoint, new ReadMirrorStatesRequest.Builder(data)).map(_.responseBody).foreach {
@@ -620,10 +734,44 @@ class MirrorMetadataManager(config: KafkaConfig,
     manager.shutdownIdleFetcherThreads()
   }
 
-  private def adminFor(name: String): Admin = {
+  /**
+   * Writes a state transition of any partition of a cluster mirror, for the operations of the clients such as
+   * RecoverMirrorTopics, with the leader epoch of the partition in the metadata image.
+   *
+   * @return the error of the write
+   */
+  private[mirror] def writeStateFor(name: String, tp: TopicPartition, topicId: Uuid, leaderEpoch: Int, view: StateView,
+                                    state: MirrorPartitionState): Errors = {
+    retryAttempts.remove(tp)
+    nextRetryMs.remove(tp)
+    coordinatorFor(name, topicId, tp.partition) match {
+      case None => Errors.COORDINATOR_NOT_AVAILABLE
+      case Some((_, endPoint)) =>
+        val partitionData = new WriteMirrorStatesRequestData.PartitionData()
+          .setPartitionIndex(tp.partition).setState(state.value).setLeaderEpoch(leaderEpoch)
+          .setStateEpoch(view.stateEpoch).setRetryAttempt(0.toShort)
+        val topicData = new WriteMirrorStatesRequestData.TopicMetadata().setTopicName(tp.topic)
+        topicData.partitions.add(partitionData)
+        val data = new WriteMirrorStatesRequestData().setMirrorName(name)
+        data.topics.add(topicData)
+        sendToCoordinator(endPoint, new WriteMirrorStatesRequest.Builder(data)).map(_.responseBody) match {
+          case Some(response: WriteMirrorStatesResponse) =>
+            response.data.topics.asScala.flatMap(_.partitions.asScala).map(p => Errors.forCode(p.errorCode))
+              .find(_ != Errors.NONE).getOrElse(Errors.NONE)
+          case _ => Errors.COORDINATOR_NOT_AVAILABLE
+        }
+    }
+  }
+
+  /**
+   * Wakes up the manager, for instance after a client changed the states of mirror partitions.
+   */
+  private[mirror] def wakeup(): Unit = signal()
+
+  private[mirror] def adminFor(name: String): Admin = {
     admins.getOrElseUpdate(name, {
       val props = new Properties()
-      mirrors(name).originals().forEach((key, value) => props.put(key, value))
+      mirrorConfigs(name).foreachEntry((key, value) => props.put(key, value))
       props.put(AdminClientConfig.CLIENT_ID_CONFIG, s"mirror-$name-broker-${config.brokerId}-admin")
       Admin.create(props)
     })

@@ -635,6 +635,10 @@ public class ConfigurationControlManager {
     }
 
     // VisibleForTesting
+    boolean isSupportedConfig(Type resourceType, String configName) {
+        return supportedConfigChecker.isSupported(resourceType, configName);
+    }
+
     Map<String, String> getConfigs(ConfigResource configResource) {
         Map<String, String> map = configData.get(configResource);
         if (map == null) {

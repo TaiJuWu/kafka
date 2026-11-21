@@ -22,6 +22,7 @@ import kafka.network.RequestChannel;
 import kafka.server.KafkaApis;
 import kafka.server.KafkaConfig;
 import kafka.server.ReplicaManager;
+import kafka.server.mirror.ClusterMirrorRequestHandler;
 import kafka.server.share.SharePartitionManager;
 
 import org.apache.kafka.common.internals.Plugin;
@@ -73,6 +74,7 @@ public class KafkaApisBuilder {
     private ShareCoordinator shareCoordinator = null;
     private GroupConfigManager groupConfigManager = null;
     private Optional<MirrorCoordinatorService> mirrorCoordinator = Optional.empty();
+    private Optional<ClusterMirrorRequestHandler> clusterMirrorHandler = Optional.empty();
 
     public KafkaApisBuilder setRequestChannel(RequestChannel requestChannel) {
         this.requestChannel = requestChannel;
@@ -189,6 +191,11 @@ public class KafkaApisBuilder {
         return this;
     }
 
+    public KafkaApisBuilder setClusterMirrorHandler(ClusterMirrorRequestHandler clusterMirrorHandler) {
+        this.clusterMirrorHandler = Optional.of(clusterMirrorHandler);
+        return this;
+    }
+
     public KafkaApisBuilder setMirrorCoordinator(MirrorCoordinatorService mirrorCoordinator) {
         this.mirrorCoordinator = Optional.of(mirrorCoordinator);
         return this;
@@ -238,6 +245,7 @@ public class KafkaApisBuilder {
                              apiVersionManager,
                              clientMetricsManager,
                              groupConfigManager,
-                             OptionConverters.toScala(mirrorCoordinator));
+                             OptionConverters.toScala(mirrorCoordinator),
+                             OptionConverters.toScala(clusterMirrorHandler));
     }
 }

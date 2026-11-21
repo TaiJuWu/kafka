@@ -26,6 +26,7 @@ import org.apache.kafka.common.metadata.DelegationTokenRecord;
 import org.apache.kafka.common.metadata.FeatureLevelRecord;
 import org.apache.kafka.common.metadata.FenceBrokerRecord;
 import org.apache.kafka.common.metadata.MetadataRecordType;
+import org.apache.kafka.common.metadata.MirrorTopicStateChangeRecord;
 import org.apache.kafka.common.metadata.PartitionChangeRecord;
 import org.apache.kafka.common.metadata.PartitionRecord;
 import org.apache.kafka.common.metadata.ProducerIdsRecord;
@@ -91,6 +92,8 @@ public final class MetadataDelta {
     private ScramDelta scramDelta = null;
 
     private DelegationTokenDelta delegationTokenDelta = null;
+
+    private ClusterMirrorsDelta clusterMirrorsDelta = null;
 
     private MetadataDelta(MetadataImage image, SupportedConfigChecker supportedConfigChecker) {
         this.image = image;
@@ -179,6 +182,15 @@ public final class MetadataDelta {
         return delegationTokenDelta;
     }
 
+    public ClusterMirrorsDelta clusterMirrorsDelta() {
+        return clusterMirrorsDelta;
+    }
+
+    public ClusterMirrorsDelta getOrCreateClusterMirrorsDelta() {
+        if (clusterMirrorsDelta == null) clusterMirrorsDelta = new ClusterMirrorsDelta(image.clusterMirrors());
+        return clusterMirrorsDelta;
+    }
+
     public DelegationTokenDelta getOrCreateDelegationTokenDelta() {
         if (delegationTokenDelta == null) delegationTokenDelta = new DelegationTokenDelta(image.delegationTokens());
         return delegationTokenDelta;
@@ -255,6 +267,9 @@ public final class MetadataDelta {
             case REMOVE_DELEGATION_TOKEN_RECORD:
                 replay((RemoveDelegationTokenRecord) record);
                 break;
+            case MIRROR_TOPIC_STATE_CHANGE_RECORD:
+                replay((MirrorTopicStateChangeRecord) record);
+                break;
             case NO_OP_RECORD:
                 /* NoOpRecord is an empty record and doesn't need to be replayed beyond
                  * updating the highest offset and epoch.
@@ -315,6 +330,13 @@ public final class MetadataDelta {
     public void replay(RemoveTopicRecord record) {
         String topicName = getOrCreateTopicsDelta().replay(record);
         getOrCreateConfigsDelta().replay(record, topicName);
+        if (topicName != null) {
+            getOrCreateClusterMirrorsDelta().removeTopic(topicName);
+        }
+    }
+
+    public void replay(MirrorTopicStateChangeRecord record) {
+        getOrCreateClusterMirrorsDelta().replay(record);
     }
 
     public void replay(DelegationTokenRecord record) {
@@ -390,6 +412,7 @@ public final class MetadataDelta {
         getOrCreateAclsDelta().finishSnapshot();
         getOrCreateScramDelta().finishSnapshot();
         getOrCreateDelegationTokenDelta().finishSnapshot();
+        getOrCreateClusterMirrorsDelta().finishSnapshot();
     }
 
     public MetadataImage apply(MetadataProvenance provenance) {
@@ -447,6 +470,8 @@ public final class MetadataDelta {
         } else {
             newDelegationTokens = delegationTokenDelta.apply();
         }
+        ClusterMirrorsImage newClusterMirrors =
+            clusterMirrorsDelta == null ? image.clusterMirrors() : clusterMirrorsDelta.apply();
         return new MetadataImage(
             provenance,
             newFeatures,
@@ -457,7 +482,8 @@ public final class MetadataDelta {
             newProducerIds,
             newAcls,
             newScram,
-            newDelegationTokens
+            newDelegationTokens,
+            newClusterMirrors
         );
     }
 
@@ -473,6 +499,7 @@ public final class MetadataDelta {
             ", aclsDelta=" + aclsDelta +
             ", scramDelta=" + scramDelta +
             ", delegationTokenDelta=" + delegationTokenDelta +
+            ", clusterMirrorsDelta=" + clusterMirrorsDelta +
             ')';
     }
 }

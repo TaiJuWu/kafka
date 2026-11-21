@@ -106,6 +106,12 @@ class ControllerApis(
         case ApiKeys.DESCRIBE_QUORUM => handleDescribeQuorum(request)
         case ApiKeys.ALTER_PARTITION => handleAlterPartitionRequest(request)
         case ApiKeys.BUMP_LEADER_EPOCHS => handleBumpLeaderEpochs(request)
+        case ApiKeys.CREATE_CLUSTER_MIRROR => handleCreateClusterMirror(request)
+        case ApiKeys.DELETE_CLUSTER_MIRROR => handleDeleteClusterMirror(request)
+        case ApiKeys.START_MIRROR_TOPICS => handleStartMirrorTopics(request)
+        case ApiKeys.STOP_MIRROR_TOPICS => handleStopMirrorTopics(request)
+        case ApiKeys.PAUSE_MIRROR_TOPICS => handlePauseMirrorTopics(request)
+        case ApiKeys.RESUME_MIRROR_TOPICS => handleResumeMirrorTopics(request)
         case ApiKeys.BROKER_REGISTRATION => handleBrokerRegistration(request)
         case ApiKeys.BROKER_HEARTBEAT => handleBrokerHeartBeatRequest(request)
         case ApiKeys.UNREGISTER_BROKER => handleUnregisterBroker(request)
@@ -593,6 +599,96 @@ class ControllerApis(
           new ElectLeadersResponse(responseData.setThrottleTimeMs(throttleMs))
         })
       }
+    }
+  }
+
+  def handleCreateClusterMirror(request: Request): CompletableFuture[Unit] = {
+    val mirrorRequest = request.body(classOf[CreateClusterMirrorRequest])
+    // Cluster mirrors are authorized on the cluster until the CLUSTER_MIRROR ACL resource exists.
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, mirrorRequest.data.timeoutMs))
+    controller.createClusterMirror(context, mirrorRequest.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) mirrorRequest.getErrorResponse(exception) else new CreateClusterMirrorResponse(result)
+      requestHelper.sendResponseMaybeThrottle(request, throttleTimeMs => {
+        response.maybeSetThrottleTimeMs(throttleTimeMs)
+        response
+      })
+    }
+  }
+
+  def handleDeleteClusterMirror(request: Request): CompletableFuture[Unit] = {
+    val mirrorRequest = request.body(classOf[DeleteClusterMirrorRequest])
+    // Cluster mirrors are authorized on the cluster until the CLUSTER_MIRROR ACL resource exists.
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, mirrorRequest.data.timeoutMs))
+    controller.deleteClusterMirror(context, mirrorRequest.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) mirrorRequest.getErrorResponse(exception) else new DeleteClusterMirrorResponse(result)
+      requestHelper.sendResponseMaybeThrottle(request, throttleTimeMs => {
+        response.maybeSetThrottleTimeMs(throttleTimeMs)
+        response
+      })
+    }
+  }
+
+  def handleStartMirrorTopics(request: Request): CompletableFuture[Unit] = {
+    val mirrorRequest = request.body(classOf[StartMirrorTopicsRequest])
+    // Cluster mirrors are authorized on the cluster until the CLUSTER_MIRROR ACL resource exists.
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, mirrorRequest.data.timeoutMs))
+    controller.startMirrorTopics(context, mirrorRequest.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) mirrorRequest.getErrorResponse(exception) else new StartMirrorTopicsResponse(result)
+      requestHelper.sendResponseMaybeThrottle(request, throttleTimeMs => {
+        response.maybeSetThrottleTimeMs(throttleTimeMs)
+        response
+      })
+    }
+  }
+
+  def handleStopMirrorTopics(request: Request): CompletableFuture[Unit] = {
+    val mirrorRequest = request.body(classOf[StopMirrorTopicsRequest])
+    // Cluster mirrors are authorized on the cluster until the CLUSTER_MIRROR ACL resource exists.
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, mirrorRequest.data.timeoutMs))
+    controller.stopMirrorTopics(context, mirrorRequest.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) mirrorRequest.getErrorResponse(exception) else new StopMirrorTopicsResponse(result)
+      requestHelper.sendResponseMaybeThrottle(request, throttleTimeMs => {
+        response.maybeSetThrottleTimeMs(throttleTimeMs)
+        response
+      })
+    }
+  }
+
+  def handlePauseMirrorTopics(request: Request): CompletableFuture[Unit] = {
+    val mirrorRequest = request.body(classOf[PauseMirrorTopicsRequest])
+    // Cluster mirrors are authorized on the cluster until the CLUSTER_MIRROR ACL resource exists.
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, mirrorRequest.data.timeoutMs))
+    controller.pauseMirrorTopics(context, mirrorRequest.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) mirrorRequest.getErrorResponse(exception) else new PauseMirrorTopicsResponse(result)
+      requestHelper.sendResponseMaybeThrottle(request, throttleTimeMs => {
+        response.maybeSetThrottleTimeMs(throttleTimeMs)
+        response
+      })
+    }
+  }
+
+  def handleResumeMirrorTopics(request: Request): CompletableFuture[Unit] = {
+    val mirrorRequest = request.body(classOf[ResumeMirrorTopicsRequest])
+    // Cluster mirrors are authorized on the cluster until the CLUSTER_MIRROR ACL resource exists.
+    authHelper.authorizeClusterOperation(request, ALTER)
+    val context = new ControllerRequestContext(request.context.header.data, request.context.principal,
+      requestTimeoutMsToDeadlineNs(time, mirrorRequest.data.timeoutMs))
+    controller.resumeMirrorTopics(context, mirrorRequest.data).handle[Unit] { (result, exception) =>
+      val response = if (exception != null) mirrorRequest.getErrorResponse(exception) else new ResumeMirrorTopicsResponse(result)
+      requestHelper.sendResponseMaybeThrottle(request, throttleTimeMs => {
+        response.maybeSetThrottleTimeMs(throttleTimeMs)
+        response
+      })
     }
   }
 

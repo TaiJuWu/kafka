@@ -2219,4 +2219,105 @@ public interface Admin extends AutoCloseable {
      */
     TerminateTransactionResult forceTerminateTransaction(String transactionalId, 
                                                          TerminateTransactionOptions options);
+
+    /**
+     * Create a cluster mirror, a named channel which mirrors topics from a source cluster (KIP-1279).
+     */
+    default CreateClusterMirrorResult createClusterMirror(String mirrorName, Map<String, String> configs) {
+        return createClusterMirror(mirrorName, configs, new CreateClusterMirrorOptions());
+    }
+
+    default CreateClusterMirrorResult createClusterMirror(String mirrorName, Map<String, String> configs, CreateClusterMirrorOptions options) {
+        throw new UnsupportedOperationException("createClusterMirror is not supported");
+    }
+
+    /**
+     * Start the mirroring of the topics which match the given patterns (KIP-1279).
+     */
+    default StartMirrorTopicsResult startMirrorTopics(String mirrorName, List<String> topicPatterns) {
+        return startMirrorTopics(mirrorName, topicPatterns, new StartMirrorTopicsOptions());
+    }
+
+    default StartMirrorTopicsResult startMirrorTopics(String mirrorName, List<String> topicPatterns, StartMirrorTopicsOptions options) {
+        throw new UnsupportedOperationException("startMirrorTopics is not supported");
+    }
+
+    /**
+     * Stop the mirroring of the topics which match the given patterns (KIP-1279).
+     */
+    default StopMirrorTopicsResult stopMirrorTopics(String mirrorName, List<String> topicPatterns) {
+        return stopMirrorTopics(mirrorName, topicPatterns, new StopMirrorTopicsOptions());
+    }
+
+    default StopMirrorTopicsResult stopMirrorTopics(String mirrorName, List<String> topicPatterns, StopMirrorTopicsOptions options) {
+        throw new UnsupportedOperationException("stopMirrorTopics is not supported");
+    }
+
+    /**
+     * Pause the mirroring of the topics which match the given patterns (KIP-1279).
+     */
+    default PauseMirrorTopicsResult pauseMirrorTopics(String mirrorName, List<String> topicPatterns) {
+        return pauseMirrorTopics(mirrorName, topicPatterns, new PauseMirrorTopicsOptions());
+    }
+
+    default PauseMirrorTopicsResult pauseMirrorTopics(String mirrorName, List<String> topicPatterns, PauseMirrorTopicsOptions options) {
+        throw new UnsupportedOperationException("pauseMirrorTopics is not supported");
+    }
+
+    /**
+     * Resume the mirroring of the topics which match the given patterns (KIP-1279).
+     */
+    default ResumeMirrorTopicsResult resumeMirrorTopics(String mirrorName, List<String> topicPatterns) {
+        return resumeMirrorTopics(mirrorName, topicPatterns, new ResumeMirrorTopicsOptions());
+    }
+
+    default ResumeMirrorTopicsResult resumeMirrorTopics(String mirrorName, List<String> topicPatterns, ResumeMirrorTopicsOptions options) {
+        throw new UnsupportedOperationException("resumeMirrorTopics is not supported");
+    }
+
+    /**
+     * Recover the mirroring of the topics which match the given patterns (KIP-1279).
+     */
+    default RecoverMirrorTopicsResult recoverMirrorTopics(String mirrorName, List<String> topicPatterns) {
+        return recoverMirrorTopics(mirrorName, topicPatterns, new RecoverMirrorTopicsOptions());
+    }
+
+    default RecoverMirrorTopicsResult recoverMirrorTopics(String mirrorName, List<String> topicPatterns, RecoverMirrorTopicsOptions options) {
+        throw new UnsupportedOperationException("recoverMirrorTopics is not supported");
+    }
+
+    /**
+     * Delete a cluster mirror, whose topics must all be stopped (KIP-1279).
+     */
+    default DeleteClusterMirrorResult deleteClusterMirror(String mirrorName) {
+        return deleteClusterMirror(mirrorName, new DeleteClusterMirrorOptions());
+    }
+
+    default DeleteClusterMirrorResult deleteClusterMirror(String mirrorName, DeleteClusterMirrorOptions options) {
+        throw new UnsupportedOperationException("deleteClusterMirror is not supported");
+    }
+
+    /**
+     * List the cluster mirrors (KIP-1279).
+     */
+    default ListClusterMirrorsResult listClusterMirrors() {
+        return listClusterMirrors(new ListClusterMirrorsOptions());
+    }
+
+    default ListClusterMirrorsResult listClusterMirrors(ListClusterMirrorsOptions options) {
+        throw new UnsupportedOperationException("listClusterMirrors is not supported");
+    }
+
+    /**
+     * Describe cluster mirrors, and the states of their partitions (KIP-1279).
+     *
+     * @param mirrorNames     the mirrors to describe, or all if empty
+     * @param topicPartitions the partitions to describe, by topic, or all if empty; an empty list means all the
+     *                        partitions of the topic
+     */
+    default DescribeClusterMirrorsResult describeClusterMirrors(Collection<String> mirrorNames,
+                                                                Map<String, List<Integer>> topicPartitions,
+                                                                DescribeClusterMirrorsOptions options) {
+        throw new UnsupportedOperationException("describeClusterMirrors is not supported");
+    }
 }

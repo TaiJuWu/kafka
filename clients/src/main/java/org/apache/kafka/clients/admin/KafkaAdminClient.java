@@ -125,6 +125,7 @@ import org.apache.kafka.common.message.ApiVersionsResponseData.SupportedFeatureK
 import org.apache.kafka.common.message.CreateAclsRequestData;
 import org.apache.kafka.common.message.CreateAclsRequestData.AclCreation;
 import org.apache.kafka.common.message.CreateAclsResponseData.AclCreationResult;
+import org.apache.kafka.common.message.CreateClusterMirrorRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData.CreatableRenewers;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
@@ -142,9 +143,12 @@ import org.apache.kafka.common.message.DeleteAclsRequestData.DeleteAclsFilter;
 import org.apache.kafka.common.message.DeleteAclsResponseData;
 import org.apache.kafka.common.message.DeleteAclsResponseData.DeleteAclsFilterResult;
 import org.apache.kafka.common.message.DeleteAclsResponseData.DeleteAclsMatchingAcl;
+import org.apache.kafka.common.message.DeleteClusterMirrorRequestData;
 import org.apache.kafka.common.message.DeleteTopicsRequestData;
 import org.apache.kafka.common.message.DeleteTopicsRequestData.DeleteTopicState;
 import org.apache.kafka.common.message.DeleteTopicsResponseData.DeletableTopicResult;
+import org.apache.kafka.common.message.DescribeClusterMirrorsRequestData;
+import org.apache.kafka.common.message.DescribeClusterMirrorsResponseData;
 import org.apache.kafka.common.message.DescribeClusterRequestData;
 import org.apache.kafka.common.message.DescribeClusterResponseData;
 import org.apache.kafka.common.message.DescribeConfigsRequestData;
@@ -163,13 +167,19 @@ import org.apache.kafka.common.message.DescribeUserScramCredentialsRequestData.U
 import org.apache.kafka.common.message.DescribeUserScramCredentialsResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.LeaveGroupRequestData.MemberIdentity;
+import org.apache.kafka.common.message.ListClusterMirrorsRequestData;
 import org.apache.kafka.common.message.ListConfigResourcesRequestData;
 import org.apache.kafka.common.message.ListGroupsRequestData;
 import org.apache.kafka.common.message.ListGroupsResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.MetadataRequestData;
+import org.apache.kafka.common.message.PauseMirrorTopicsRequestData;
+import org.apache.kafka.common.message.RecoverMirrorTopicsRequestData;
 import org.apache.kafka.common.message.RemoveRaftVoterRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
 import org.apache.kafka.common.message.UnregisterBrokerRequestData;
 import org.apache.kafka.common.message.UnregisterControllerRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
@@ -202,6 +212,8 @@ import org.apache.kafka.common.requests.ApiVersionsRequest;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
 import org.apache.kafka.common.requests.CreateAclsRequest;
 import org.apache.kafka.common.requests.CreateAclsResponse;
+import org.apache.kafka.common.requests.CreateClusterMirrorRequest;
+import org.apache.kafka.common.requests.CreateClusterMirrorResponse;
 import org.apache.kafka.common.requests.CreateDelegationTokenRequest;
 import org.apache.kafka.common.requests.CreateDelegationTokenResponse;
 import org.apache.kafka.common.requests.CreatePartitionsRequest;
@@ -210,12 +222,16 @@ import org.apache.kafka.common.requests.CreateTopicsRequest;
 import org.apache.kafka.common.requests.CreateTopicsResponse;
 import org.apache.kafka.common.requests.DeleteAclsRequest;
 import org.apache.kafka.common.requests.DeleteAclsResponse;
+import org.apache.kafka.common.requests.DeleteClusterMirrorRequest;
+import org.apache.kafka.common.requests.DeleteClusterMirrorResponse;
 import org.apache.kafka.common.requests.DeleteTopicsRequest;
 import org.apache.kafka.common.requests.DeleteTopicsResponse;
 import org.apache.kafka.common.requests.DescribeAclsRequest;
 import org.apache.kafka.common.requests.DescribeAclsResponse;
 import org.apache.kafka.common.requests.DescribeClientQuotasRequest;
 import org.apache.kafka.common.requests.DescribeClientQuotasResponse;
+import org.apache.kafka.common.requests.DescribeClusterMirrorsRequest;
+import org.apache.kafka.common.requests.DescribeClusterMirrorsResponse;
 import org.apache.kafka.common.requests.DescribeClusterRequest;
 import org.apache.kafka.common.requests.DescribeClusterResponse;
 import org.apache.kafka.common.requests.DescribeConfigsRequest;
@@ -238,6 +254,8 @@ import org.apache.kafka.common.requests.ExpireDelegationTokenResponse;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsRequest;
 import org.apache.kafka.common.requests.IncrementalAlterConfigsResponse;
 import org.apache.kafka.common.requests.JoinGroupRequest;
+import org.apache.kafka.common.requests.ListClusterMirrorsRequest;
+import org.apache.kafka.common.requests.ListClusterMirrorsResponse;
 import org.apache.kafka.common.requests.ListConfigResourcesRequest;
 import org.apache.kafka.common.requests.ListConfigResourcesResponse;
 import org.apache.kafka.common.requests.ListGroupsRequest;
@@ -247,10 +265,20 @@ import org.apache.kafka.common.requests.ListPartitionReassignmentsRequest;
 import org.apache.kafka.common.requests.ListPartitionReassignmentsResponse;
 import org.apache.kafka.common.requests.MetadataRequest;
 import org.apache.kafka.common.requests.MetadataResponse;
+import org.apache.kafka.common.requests.PauseMirrorTopicsRequest;
+import org.apache.kafka.common.requests.PauseMirrorTopicsResponse;
+import org.apache.kafka.common.requests.RecoverMirrorTopicsRequest;
+import org.apache.kafka.common.requests.RecoverMirrorTopicsResponse;
 import org.apache.kafka.common.requests.RemoveRaftVoterRequest;
 import org.apache.kafka.common.requests.RemoveRaftVoterResponse;
 import org.apache.kafka.common.requests.RenewDelegationTokenRequest;
 import org.apache.kafka.common.requests.RenewDelegationTokenResponse;
+import org.apache.kafka.common.requests.ResumeMirrorTopicsRequest;
+import org.apache.kafka.common.requests.ResumeMirrorTopicsResponse;
+import org.apache.kafka.common.requests.StartMirrorTopicsRequest;
+import org.apache.kafka.common.requests.StartMirrorTopicsResponse;
+import org.apache.kafka.common.requests.StopMirrorTopicsRequest;
+import org.apache.kafka.common.requests.StopMirrorTopicsResponse;
 import org.apache.kafka.common.requests.UnregisterBrokerRequest;
 import org.apache.kafka.common.requests.UnregisterBrokerResponse;
 import org.apache.kafka.common.requests.UnregisterControllerRequest;
@@ -5384,5 +5412,217 @@ public class KafkaAdminClient extends AdminClient {
         } else {
             return subLevelErrors.get(subKey).exception();
         }
+    }
+
+    /**
+     * Sends a cluster mirroring request to a broker (KIP-1279) and completes the future with its response, or with the
+     * top-level error of the response.
+     */
+    private <T extends AbstractResponse> void sendClusterMirrorRequest(String name, AbstractOptions<?> options,
+                                                                       AbstractRequest.Builder<?> builder,
+                                                                       java.util.function.Function<T, Errors> topLevelError,
+                                                                       java.util.function.Function<T, String> topLevelMessage,
+                                                                       java.util.function.Consumer<T> onSuccess,
+                                                                       KafkaFutureImpl<?> future) {
+        final long now = time.milliseconds();
+        runnable.call(new Call(name, calcDeadlineMs(now, options.timeoutMs()), new LeastLoadedNodeProvider()) {
+            @Override
+            AbstractRequest.Builder<?> createRequest(int timeoutMs) {
+                return builder;
+            }
+
+            @SuppressWarnings("unchecked")
+            @Override
+            void handleResponse(AbstractResponse abstractResponse) {
+                T response = (T) abstractResponse;
+                Errors error = topLevelError.apply(response);
+                if (error != Errors.NONE) {
+                    future.completeExceptionally(error.exception(topLevelMessage.apply(response)));
+                } else {
+                    onSuccess.accept(response);
+                }
+            }
+
+            @Override
+            void handleFailure(Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        }, now);
+    }
+
+    private static void completeWithTopicErrors(KafkaFutureImpl<Void> future, Map<String, Errors> errors, Map<String, String> messages) {
+        for (Map.Entry<String, Errors> entry : errors.entrySet()) {
+            if (entry.getValue() != Errors.NONE) {
+                future.completeExceptionally(entry.getValue().exception("Topic " + entry.getKey() + ": " + messages.get(entry.getKey())));
+                return;
+            }
+        }
+        future.complete(null);
+    }
+
+    @Override
+    public CreateClusterMirrorResult createClusterMirror(String mirrorName, Map<String, String> configs, CreateClusterMirrorOptions options) {
+        KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        CreateClusterMirrorRequestData data = new CreateClusterMirrorRequestData().setMirrorName(mirrorName);
+        configs.forEach((name, value) -> data.config().add(new CreateClusterMirrorRequestData.ClusterMirrorConfig().setName(name).setValue(value)));
+        sendClusterMirrorRequest("createClusterMirror", options, new CreateClusterMirrorRequest.Builder(data),
+            (CreateClusterMirrorResponse r) -> Errors.forCode(r.data().errorCode()), r -> r.data().errorMessage(),
+            r -> future.complete(null), future);
+        return new CreateClusterMirrorResult(future);
+    }
+
+    @Override
+    public DeleteClusterMirrorResult deleteClusterMirror(String mirrorName, DeleteClusterMirrorOptions options) {
+        KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        sendClusterMirrorRequest("deleteClusterMirror", options,
+            new DeleteClusterMirrorRequest.Builder(new DeleteClusterMirrorRequestData().setMirrorName(mirrorName)),
+            (DeleteClusterMirrorResponse r) -> Errors.forCode(r.data().errorCode()), r -> r.data().errorMessage(),
+            r -> future.complete(null), future);
+        return new DeleteClusterMirrorResult(future);
+    }
+
+    @Override
+    public StartMirrorTopicsResult startMirrorTopics(String mirrorName, List<String> topicPatterns, StartMirrorTopicsOptions options) {
+        KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        StartMirrorTopicsRequestData data = new StartMirrorTopicsRequestData().setMirrorName(mirrorName)
+            .setTopicPatterns(new ArrayList<>(topicPatterns));
+        sendClusterMirrorRequest("startMirrorTopics", options, new StartMirrorTopicsRequest.Builder(data),
+            (StartMirrorTopicsResponse r) -> Errors.forCode(r.data().errorCode()), r -> r.data().errorMessage(), r -> {
+                Map<String, Errors> errors = new HashMap<>();
+                Map<String, String> messages = new HashMap<>();
+                r.data().topics().forEach(t -> {
+                    errors.put(t.topicName(), Errors.forCode(t.errorCode()));
+                    messages.put(t.topicName(), t.errorMessage());
+                });
+                completeWithTopicErrors(future, errors, messages);
+            }, future);
+        return new StartMirrorTopicsResult(future);
+    }
+
+    @Override
+    public StopMirrorTopicsResult stopMirrorTopics(String mirrorName, List<String> topicPatterns, StopMirrorTopicsOptions options) {
+        KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        StopMirrorTopicsRequestData data = new StopMirrorTopicsRequestData().setMirrorName(mirrorName)
+            .setTopicPatterns(new ArrayList<>(topicPatterns));
+        sendClusterMirrorRequest("stopMirrorTopics", options, new StopMirrorTopicsRequest.Builder(data),
+            (StopMirrorTopicsResponse r) -> Errors.forCode(r.data().errorCode()), r -> r.data().errorMessage(), r -> {
+                Map<String, Errors> errors = new HashMap<>();
+                Map<String, String> messages = new HashMap<>();
+                r.data().topics().forEach(t -> {
+                    errors.put(t.topicName(), Errors.forCode(t.errorCode()));
+                    messages.put(t.topicName(), t.errorMessage());
+                });
+                completeWithTopicErrors(future, errors, messages);
+            }, future);
+        return new StopMirrorTopicsResult(future);
+    }
+
+    @Override
+    public PauseMirrorTopicsResult pauseMirrorTopics(String mirrorName, List<String> topicPatterns, PauseMirrorTopicsOptions options) {
+        KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        PauseMirrorTopicsRequestData data = new PauseMirrorTopicsRequestData().setMirrorName(mirrorName)
+            .setTopicPatterns(new ArrayList<>(topicPatterns));
+        sendClusterMirrorRequest("pauseMirrorTopics", options, new PauseMirrorTopicsRequest.Builder(data),
+            (PauseMirrorTopicsResponse r) -> Errors.forCode(r.data().errorCode()), r -> r.data().errorMessage(), r -> {
+                Map<String, Errors> errors = new HashMap<>();
+                Map<String, String> messages = new HashMap<>();
+                r.data().topics().forEach(t -> {
+                    errors.put(t.topicName(), Errors.forCode(t.errorCode()));
+                    messages.put(t.topicName(), t.errorMessage());
+                });
+                completeWithTopicErrors(future, errors, messages);
+            }, future);
+        return new PauseMirrorTopicsResult(future);
+    }
+
+    @Override
+    public ResumeMirrorTopicsResult resumeMirrorTopics(String mirrorName, List<String> topicPatterns, ResumeMirrorTopicsOptions options) {
+        KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        ResumeMirrorTopicsRequestData data = new ResumeMirrorTopicsRequestData().setMirrorName(mirrorName)
+            .setTopicPatterns(new ArrayList<>(topicPatterns));
+        sendClusterMirrorRequest("resumeMirrorTopics", options, new ResumeMirrorTopicsRequest.Builder(data),
+            (ResumeMirrorTopicsResponse r) -> Errors.forCode(r.data().errorCode()), r -> r.data().errorMessage(), r -> {
+                Map<String, Errors> errors = new HashMap<>();
+                Map<String, String> messages = new HashMap<>();
+                r.data().topics().forEach(t -> {
+                    errors.put(t.topicName(), Errors.forCode(t.errorCode()));
+                    messages.put(t.topicName(), t.errorMessage());
+                });
+                completeWithTopicErrors(future, errors, messages);
+            }, future);
+        return new ResumeMirrorTopicsResult(future);
+    }
+
+    @Override
+    public RecoverMirrorTopicsResult recoverMirrorTopics(String mirrorName, List<String> topicPatterns, RecoverMirrorTopicsOptions options) {
+        KafkaFutureImpl<Void> future = new KafkaFutureImpl<>();
+        RecoverMirrorTopicsRequestData data = new RecoverMirrorTopicsRequestData().setMirrorName(mirrorName)
+            .setTopicPatterns(new ArrayList<>(topicPatterns));
+        sendClusterMirrorRequest("recoverMirrorTopics", options, new RecoverMirrorTopicsRequest.Builder(data),
+            (RecoverMirrorTopicsResponse r) -> Errors.forCode(r.data().errorCode()), r -> r.data().errorMessage(), r -> {
+                Map<String, Errors> errors = new HashMap<>();
+                Map<String, String> messages = new HashMap<>();
+                r.data().topics().forEach(t -> {
+                    errors.put(t.topicName(), Errors.forCode(t.errorCode()));
+                    messages.put(t.topicName(), t.errorMessage());
+                });
+                completeWithTopicErrors(future, errors, messages);
+            }, future);
+        return new RecoverMirrorTopicsResult(future);
+    }
+
+    @Override
+    public ListClusterMirrorsResult listClusterMirrors(ListClusterMirrorsOptions options) {
+        KafkaFutureImpl<Collection<ClusterMirrorListing>> future = new KafkaFutureImpl<>();
+        ListClusterMirrorsRequestData data = new ListClusterMirrorsRequestData()
+            .setMirrorNameFilter(new ArrayList<>(options.mirrorNameFilter()))
+            .setSourceClusterIdFilter(new ArrayList<>(options.sourceClusterIdFilter()))
+            .setDesiredStateFilter(new ArrayList<>(options.desiredStateFilter()));
+        sendClusterMirrorRequest("listClusterMirrors", options, new ListClusterMirrorsRequest.Builder(data),
+            (ListClusterMirrorsResponse r) -> Errors.forCode(r.data().errorCode()), r -> r.data().errorMessage(), r -> {
+                List<ClusterMirrorListing> listings = new ArrayList<>();
+                r.data().mirrors().forEach(m -> listings.add(new ClusterMirrorListing(m.mirrorName(), m.sourceBootstrap(),
+                    m.sourceClusterId(), m.topicNames())));
+                future.complete(listings);
+            }, future);
+        return new ListClusterMirrorsResult(future);
+    }
+
+    @Override
+    public DescribeClusterMirrorsResult describeClusterMirrors(Collection<String> mirrorNames,
+                                                               Map<String, List<Integer>> topicPartitions,
+                                                               DescribeClusterMirrorsOptions options) {
+        KafkaFutureImpl<Map<String, ClusterMirrorDescription>> future = new KafkaFutureImpl<>();
+        DescribeClusterMirrorsRequestData data = new DescribeClusterMirrorsRequestData()
+            .setMirrorNames(new ArrayList<>(mirrorNames))
+            .setIncludeMirrorState(options.includeMirrorState())
+            .setIncludeMirrorOffset(options.includeMirrorOffset())
+            .setIncludeAuthorizedOperations(options.includeAuthorizedOperations())
+            .setClusterId(options.clusterId());
+        if (!topicPartitions.isEmpty()) {
+            DescribeClusterMirrorsRequestData.TopicMetadataCollection topics = new DescribeClusterMirrorsRequestData.TopicMetadataCollection();
+            topicPartitions.forEach((topic, partitions) -> topics.add(new DescribeClusterMirrorsRequestData.TopicMetadata()
+                .setTopicName(topic).setPartitions(partitions.isEmpty() ? null : new ArrayList<>(partitions))));
+            data.setTopics(topics);
+        }
+        sendClusterMirrorRequest("describeClusterMirrors", options, new DescribeClusterMirrorsRequest.Builder(data),
+            (DescribeClusterMirrorsResponse r) -> Errors.forCode(r.data().errorCode()), r -> r.data().errorMessage(), r -> {
+                Map<String, ClusterMirrorDescription> descriptions = new HashMap<>();
+                for (DescribeClusterMirrorsResponseData.DescribedMirror mirror : r.data().mirrors()) {
+                    if (mirror.errorCode() != Errors.NONE.code()) {
+                        future.completeExceptionally(Errors.forCode(mirror.errorCode()).exception(mirror.errorMessage()));
+                        return;
+                    }
+                    Map<String, Set<ClusterMirrorDescription.LeaderStateDescription>> states = new HashMap<>();
+                    mirror.topics().forEach(topic -> topic.partitions().forEach(p ->
+                        states.computeIfAbsent(topic.topicName(), k -> new HashSet<>()).add(new ClusterMirrorDescription.LeaderStateDescription(
+                            new TopicPartition(topic.topicName(), p.partitionIndex()), p.sourceOffset(), p.destinationOffset(),
+                            p.stateValue(), p.retryAttempt(), p.errorMessage(), p.lastMirrorEpoch(), p.lastMirrorOffset()))));
+                    descriptions.put(mirror.mirrorName(), new ClusterMirrorDescription(mirror.mirrorName(),
+                        mirror.sourceBootstrap(), mirror.sourceClusterId(), states));
+                }
+                future.complete(descriptions);
+            }, future);
+        return new DescribeClusterMirrorsResult(future);
     }
 }

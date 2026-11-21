@@ -731,12 +731,44 @@ public class ReplicationControlManager {
         }
     }
 
+    /**
+     * Creates a mirror topic with the topic id of its source topic (KIP-1279), and the default replication factor.
+     */
+    ApiError createMirrorTopic(ControllerRequestContext context, String name, Uuid topicId, int numPartitions,
+                               List<ApiMessageAndVersion> records) {
+        if (topics.containsKey(topicId)) {
+            return new ApiError(Errors.TOPIC_ALREADY_EXISTS, "Topic id " + topicId + " is already used by another topic.");
+        }
+        CreatableTopic topic = new CreatableTopic().setName(name).setNumPartitions(numPartitions).setReplicationFactor((short) -1);
+        return createTopic(context, topic, records, new HashMap<>(), List.of(), false, Optional.of(topicId));
+    }
+
+    /**
+     * @return the id and number of partitions of a topic, if it exists
+     */
+    Optional<Entry<Uuid, Integer>> topicIdAndPartitions(String name) {
+        Uuid topicId = topicsByName.get(name);
+        if (topicId == null) return Optional.empty();
+        TopicControlInfo topic = topics.get(topicId);
+        return topic == null ? Optional.empty() : Optional.of(Map.entry(topicId, topic.parts.size()));
+    }
+
     private ApiError createTopic(ControllerRequestContext context,
                                  CreatableTopic topic,
                                  List<ApiMessageAndVersion> records,
                                  Map<String, CreatableTopicResult> successes,
                                  List<ApiMessageAndVersion> configRecords,
                                  boolean authorizedToReturnConfigs) {
+        return createTopic(context, topic, records, successes, configRecords, authorizedToReturnConfigs, Optional.empty());
+    }
+
+    private ApiError createTopic(ControllerRequestContext context,
+                                 CreatableTopic topic,
+                                 List<ApiMessageAndVersion> records,
+                                 Map<String, CreatableTopicResult> successes,
+                                 List<ApiMessageAndVersion> configRecords,
+                                 boolean authorizedToReturnConfigs,
+                                 Optional<Uuid> topicIdOverride) {
         Map<String, String> creationConfigs = translateCreationConfigs(topic.configs());
         Map<Integer, PartitionRegistration> newParts = new HashMap<>();
         if (!topic.assignments().isEmpty()) {
@@ -837,7 +869,7 @@ public class ReplicationControlManager {
                 numPartitions, e.throttleTimeMs());
             return ApiError.fromThrowable(e);
         }
-        Uuid topicId = Uuid.randomUuid();
+        Uuid topicId = topicIdOverride.orElseGet(Uuid::randomUuid);
         CreatableTopicResult result = new CreatableTopicResult().
             setName(topic.name()).
             setTopicId(topicId).

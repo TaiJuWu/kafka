@@ -35,20 +35,32 @@ import org.apache.kafka.common.message.BrokerRegistrationRequestData;
 import org.apache.kafka.common.message.BumpLeaderEpochsRequestData;
 import org.apache.kafka.common.message.BumpLeaderEpochsResponseData;
 import org.apache.kafka.common.message.ControllerRegistrationRequestData;
+import org.apache.kafka.common.message.CreateClusterMirrorRequestData;
+import org.apache.kafka.common.message.CreateClusterMirrorResponseData;
 import org.apache.kafka.common.message.CreateDelegationTokenRequestData;
 import org.apache.kafka.common.message.CreateDelegationTokenResponseData;
 import org.apache.kafka.common.message.CreatePartitionsRequestData.CreatePartitionsTopic;
 import org.apache.kafka.common.message.CreatePartitionsResponseData.CreatePartitionsTopicResult;
 import org.apache.kafka.common.message.CreateTopicsRequestData;
 import org.apache.kafka.common.message.CreateTopicsResponseData;
+import org.apache.kafka.common.message.DeleteClusterMirrorRequestData;
+import org.apache.kafka.common.message.DeleteClusterMirrorResponseData;
 import org.apache.kafka.common.message.ElectLeadersRequestData;
 import org.apache.kafka.common.message.ElectLeadersResponseData;
 import org.apache.kafka.common.message.ExpireDelegationTokenRequestData;
 import org.apache.kafka.common.message.ExpireDelegationTokenResponseData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.ListPartitionReassignmentsResponseData;
+import org.apache.kafka.common.message.PauseMirrorTopicsRequestData;
+import org.apache.kafka.common.message.PauseMirrorTopicsResponseData;
 import org.apache.kafka.common.message.RenewDelegationTokenRequestData;
 import org.apache.kafka.common.message.RenewDelegationTokenResponseData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsRequestData;
+import org.apache.kafka.common.message.ResumeMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StartMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StartMirrorTopicsResponseData;
+import org.apache.kafka.common.message.StopMirrorTopicsRequestData;
+import org.apache.kafka.common.message.StopMirrorTopicsResponseData;
 import org.apache.kafka.common.message.UpdateFeaturesRequestData;
 import org.apache.kafka.common.message.UpdateFeaturesResponseData;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
@@ -91,6 +103,54 @@ public interface Controller extends AclMutator, AutoCloseable {
     CompletableFuture<BumpLeaderEpochsResponseData> bumpLeaderEpochs(
         ControllerRequestContext context,
         BumpLeaderEpochsRequestData request
+    );
+
+    /**
+     * Handle a CreateClusterMirror request of cluster mirroring (KIP-1279).
+     */
+    CompletableFuture<CreateClusterMirrorResponseData> createClusterMirror(
+        ControllerRequestContext context,
+        CreateClusterMirrorRequestData request
+    );
+
+    /**
+     * Handle a DeleteClusterMirror request of cluster mirroring (KIP-1279).
+     */
+    CompletableFuture<DeleteClusterMirrorResponseData> deleteClusterMirror(
+        ControllerRequestContext context,
+        DeleteClusterMirrorRequestData request
+    );
+
+    /**
+     * Handle a StartMirrorTopics request of cluster mirroring (KIP-1279).
+     */
+    CompletableFuture<StartMirrorTopicsResponseData> startMirrorTopics(
+        ControllerRequestContext context,
+        StartMirrorTopicsRequestData request
+    );
+
+    /**
+     * Handle a StopMirrorTopics request of cluster mirroring (KIP-1279).
+     */
+    CompletableFuture<StopMirrorTopicsResponseData> stopMirrorTopics(
+        ControllerRequestContext context,
+        StopMirrorTopicsRequestData request
+    );
+
+    /**
+     * Handle a PauseMirrorTopics request of cluster mirroring (KIP-1279).
+     */
+    CompletableFuture<PauseMirrorTopicsResponseData> pauseMirrorTopics(
+        ControllerRequestContext context,
+        PauseMirrorTopicsRequestData request
+    );
+
+    /**
+     * Handle a ResumeMirrorTopics request of cluster mirroring (KIP-1279).
+     */
+    CompletableFuture<ResumeMirrorTopicsResponseData> resumeMirrorTopics(
+        ControllerRequestContext context,
+        ResumeMirrorTopicsRequestData request
     );
 
     /**
