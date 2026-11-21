@@ -792,6 +792,17 @@ public class MemoryRecords extends AbstractRecords {
         }
     }
 
+    /**
+     * @return a control batch with a MIRROR_PID_RESET record (KIP-1279), to append to a mirror partition as its leader
+     */
+    public static MemoryRecords withMirrorPidReset(long timestamp, int leaderEpoch) {
+        ByteBuffer buffer = ByteBuffer.allocate(256);
+        try (MemoryRecordsBuilder builder = createKraftControlRecordBuilder(0L, timestamp, leaderEpoch, buffer)) {
+            builder.appendMirrorPidReset(timestamp);
+            return builder.build();
+        }
+    }
+
     public static MemoryRecords withVotersRecord(
         long initialOffset,
         long timestamp,

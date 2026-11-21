@@ -34,7 +34,7 @@ import org.apache.kafka.common.{TopicPartition, Uuid}
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.utils.{Time, Utils}
 import org.apache.kafka.common.utils.internals.LogContext
-import org.apache.kafka.coordinator.mirror.{ClusterMirrorBrokerConfig, ClusterMirrorConfig}
+import org.apache.kafka.coordinator.mirror.{ClusterMirrorBrokerConfig, ClusterMirrorConfig, MirrorCoordinatorService}
 import org.apache.kafka.image.{MetadataDelta, MetadataImage}
 import org.apache.kafka.image.loader.LoaderManifest
 import org.apache.kafka.image.publisher.MetadataPublisher
@@ -103,7 +103,9 @@ class MirrorMetadataManager(config: KafkaConfig,
                             replicaManager: ReplicaManager,
                             controllerChannel: NodeToControllerChannelManager,
                             metrics: Metrics,
-                            time: Time) extends MetadataPublisher with MirrorPartitionListener with Logging {
+                            time: Time,
+                            clusterId: String = null,
+                            mirrorCoordinator: Option[MirrorCoordinatorService] = None) extends MetadataPublisher with MirrorPartitionListener with Logging {
   import MirrorMetadataManager._
 
   this.logIdent = s"[MirrorMetadataManager id=${config.brokerId}] "
@@ -129,6 +131,7 @@ class MirrorMetadataManager(config: KafkaConfig,
   // Local state of the transitions in progress: the last mirror epoch and offset of a STOPPING partition, the leader
   // epoch it waits for, the retries of FAILED partitions.
   private val stoppingLastMirror = mutable.Map[TopicPartition, (Int, Long, Int)]()
+  private val failbackTargets = mutable.Map[TopicPartition, Either[String, Long]]()
   private val retryAttempts = mutable.Map[TopicPartition, Int]()
   private val nextRetryMs = mutable.Map[TopicPartition, Long]()
 
@@ -212,6 +215,10 @@ class MirrorMetadataManager(config: KafkaConfig,
     fetcherManagers.keySet.toSet.foreach { (name: String) =>
       if (!configs.get(name).contains(fetcherManagers(name)._1)) {
         info(s"Cluster mirror $name was ${if (configs.contains(name)) "updated" else "deleted"}")
+        if (!configs.contains(name)) {
+          // The states of the partitions of a deleted mirror are removed from the shards which this broker leads.
+          mirrorCoordinator.foreach(_.deleteClusterMirrorStates(name))
+        }
         fetcherManagers.remove(name).foreach(_._2.shutdown())
         mirrored.remove(name)
         admins.remove(name).foreach(admin => Utils.closeQuietly(admin, "mirror admin client"))
@@ -251,6 +258,9 @@ class MirrorMetadataManager(config: KafkaConfig,
     thread.awaitShutdown()
     fetcherManagers.values.foreach(_._2.shutdown())
     synchronizer.close()
+    stateCounts.keySet.forEach { case (name, state) =>
+      metricsGroup.removeMetric("MirrorPartitionCount", java.util.Map.of("mirror", name, "state", state.name))
+    }
     admins.values.foreach(admin => Utils.closeQuietly(admin, "mirror admin client"))
     admins.clear()
     coordinatorSenders.values.foreach(sender => Utils.closeQuietly(() => sender.close(), "mirror coordinator client"))
@@ -375,6 +385,7 @@ class MirrorMetadataManager(config: KafkaConfig,
     if (partitions.isEmpty)
       return Seq.empty
     val states = readStates(name, partitions)
+    updateStateMetrics(name, states.values.map(_.state))
     partitions.filter { partition =>
       states.get(partition.topicPartition) match {
         case None => false // The coordinator is not available yet, the partition is retried in the next round.
@@ -387,6 +398,25 @@ class MirrorMetadataManager(config: KafkaConfig,
               false
           }
       }
+    }
+  }
+
+  private val metricsGroup = new org.apache.kafka.server.metrics.KafkaMetricsGroup("kafka.server.mirror", "MirrorMetadataManager")
+  private val stateCounts = new ConcurrentHashMap[(String, MirrorPartitionState), Integer]()
+
+  /**
+   * Updates the number of partitions in each state of a cluster mirror, which this broker leads.
+   */
+  private def updateStateMetrics(name: String, states: Iterable[MirrorPartitionState]): Unit = {
+    val counts = states.groupBy(identity).view.mapValues(_.size).toMap
+    MirrorPartitionState.values.foreach { state =>
+      val key = (name, state)
+      if (!stateCounts.containsKey(key)) {
+        stateCounts.put(key, Integer.valueOf(0))
+        metricsGroup.newGauge("MirrorPartitionCount", () => stateCounts.getOrDefault(key, Integer.valueOf(0)),
+          java.util.Map.of("mirror", name, "state", state.name))
+      }
+      stateCounts.put(key, Integer.valueOf(counts.getOrElse(state, 0)))
     }
   }
 
@@ -414,17 +444,30 @@ class MirrorMetadataManager(config: KafkaConfig,
 
     if (desiredMirroring) {
       view.state match {
+        case _ if log.remoteLogEnabled && view.state != FAILED =>
+          write(FAILED, error = Some("Tiered storage is not supported by cluster mirroring"), nonRetryable = true)
         case UNKNOWN | STOPPED =>
+          failbackTargets.remove(tp)
           write(LOG_ALIGNMENT)
         case LOG_ALIGNMENT =>
           // Only the source owns the leader epochs above the last mirror epoch, so the log is truncated to the last
-          // mirror offset; without one, the mirror starts from scratch.
-          val target = view.lastMirror.map(_._2).getOrElse(0L)
+          // mirror offset. Without one, the source is asked for the last mirror epoch of the mirror from this cluster
+          // (failback), and otherwise the mirror starts from scratch.
+          val alignment = view.lastMirror.map(lastMirror => Right(lastMirror._2)).getOrElse(
+            failbackTargets.getOrElseUpdate(tp, failbackTarget(name, partition)))
+          if (alignment.isLeft) {
+            failbackTargets.remove(tp)
+            return write(FAILED, error = alignment.left.toOption, nonRetryable = true)
+          }
+          val target = alignment.toOption.get
           if (log.logEndOffset > target) {
             info(s"Truncating mirror partition $tp from ${log.logEndOffset} to the last mirror offset $target")
             partition.truncateTo(target, isFuture = false)
           }
-          if (replicasCaughtUp(partition, inSyncOnly = !log.config.mirrorUncleanLeaderElectionEnable)) write(MIRRORING) else LOG_ALIGNMENT
+          if (replicasCaughtUp(partition, inSyncOnly = !log.config.mirrorUncleanLeaderElectionEnable)) {
+            failbackTargets.remove(tp)
+            write(MIRRORING)
+          } else LOG_ALIGNMENT
         case MIRRORING =>
           Option(events.remove(tp)) match {
             case Some(LeaderEpochExceeded) => write(EPOCH_FENCING)
@@ -482,6 +525,42 @@ class MirrorMetadataManager(config: KafkaConfig,
   }
 
   /**
+   * Asks the source cluster for its cluster mirrors from this cluster (KIP-1279): if one of them still mirrors the
+   * partition, the mirrors would loop, and the partition fails; otherwise the log is truncated to the end of the last
+   * mirror epoch which the source stored when that mirror stopped (failback), or to zero if there is none.
+   *
+   * @return the error, or the offset to truncate to
+   */
+  private def failbackTarget(name: String, partition: Partition): Either[String, Long] = {
+    if (clusterId == null)
+      return Right(0L)
+    try {
+      val descriptions = adminFor(name).describeClusterMirrors(java.util.List.of(),
+        java.util.Map.of(partition.topic, java.util.List.of(Integer.valueOf(partition.partitionId))),
+        new org.apache.kafka.clients.admin.DescribeClusterMirrorsOptions().clusterId(clusterId).includeMirrorState(true))
+        .allDescriptions.get(config.requestTimeoutMs, TimeUnit.MILLISECONDS).asScala
+      val states = descriptions.values.flatMap(d => Option(d.leaderStates.get(partition.topic)).map(_.asScala).getOrElse(Set.empty))
+        .filter(_.topicPartition == partition.topicPartition)
+      val active = states.filter(s => s.state != STOPPED.name && s.state != UNKNOWN.name)
+      if (active.nonEmpty) {
+        Left(s"The source cluster mirrors ${partition.topicPartition} from this cluster, so the mirrors would loop")
+      } else {
+        val lastMirrorEpoch = states.map(_.lastMirrorEpoch).maxOption.getOrElse(-1)
+        val target = if (lastMirrorEpoch < 0) 0L
+          else partition.localLogOrException.endOffsetForEpoch(lastMirrorEpoch).toScala.map(_.offset).getOrElse(0L)
+        info(s"Mirror partition ${partition.topicPartition} truncates to $target, the end of the last mirror epoch " +
+          s"$lastMirrorEpoch stored by the source cluster")
+        Right(target)
+      }
+    } catch {
+      case e: Throwable =>
+        // A source which does not support it is mirrored from scratch.
+        debug(s"Did not look up the last mirror epoch of ${partition.topicPartition} on the source cluster: ${e.getMessage}")
+        Right(0L)
+    }
+  }
+
+  /**
    * STOPPING: removes the fetcher, bumps the leader epoch to draw a boundary between the mirrored records and the
    * records written locally, and stores the last mirror epoch and offset. The partition becomes writable once STOPPED.
    */
@@ -497,6 +576,9 @@ class MirrorMetadataManager(config: KafkaConfig,
       requestLeaderEpochBump(tp, targetEpoch)
       STOPPING
     } else {
+      // The ongoing transactions of the source producers are aborted and their states removed with a MIRROR_PID_RESET
+      // record. Repeating it after a leader change is harmless.
+      partition.finishMirrorStop()
       val state = write(STOPPED, Some((lastMirrorEpoch, lastMirrorOffset)), None, false)
       if (state == STOPPED) {
         stoppingLastMirror.remove(tp)

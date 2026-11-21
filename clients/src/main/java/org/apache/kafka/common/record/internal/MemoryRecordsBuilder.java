@@ -21,6 +21,7 @@ import org.apache.kafka.common.compress.Compression;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.message.KRaftVersionRecord;
 import org.apache.kafka.common.message.LeaderChangeMessage;
+import org.apache.kafka.common.message.MirrorPidResetRecord;
 import org.apache.kafka.common.message.SnapshotFooterRecord;
 import org.apache.kafka.common.message.SnapshotHeaderRecord;
 import org.apache.kafka.common.message.VotersRecord;
@@ -665,6 +666,14 @@ public class MemoryRecordsBuilder implements AutoCloseable {
             timestamp,
             ControlRecordType.KRAFT_VERSION,
             MessageUtil.toByteBufferAccessor(kraftVersionRecord, ControlRecordUtils.KRAFT_VERSION_CURRENT_VERSION).buffer()
+        );
+    }
+
+    public void appendMirrorPidReset(long timestamp) {
+        appendControlRecord(
+            timestamp,
+            ControlRecordType.MIRROR_PID_RESET,
+            MessageUtil.toByteBufferAccessor(new MirrorPidResetRecord().setVersion((short) 0), (short) 0).buffer()
         );
     }
 

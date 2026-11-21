@@ -200,6 +200,15 @@ public class MirrorCoordinatorService {
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[0]));
     }
 
+    /**
+     * Removes the states of all the partitions of a deleted cluster mirror, in the shards which this broker leads.
+     */
+    public CompletableFuture<Void> deleteClusterMirrorStates(String mirrorName) {
+        List<CompletableFuture<Void>> futures = runtime.scheduleWriteAllOperation("delete-cluster-mirror-states",
+            shard -> shard.deleteMirror(mirrorName));
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[0]));
+    }
+
     public static class Builder {
         private final int nodeId;
         private final ClusterMirrorBrokerConfig config;

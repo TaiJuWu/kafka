@@ -53,6 +53,10 @@ public enum ControlRecordType {
     KRAFT_VERSION((short) 5),
     KRAFT_VOTERS((short) 6),
 
+    // Cluster mirroring (KIP-1279): written to a mirror partition when its mirroring stops, it removes the producer
+    // states of the source cluster.
+    MIRROR_PID_RESET((short) 7),
+
     // UNKNOWN is used to indicate a control type which the client is not aware of and should be ignored
     UNKNOWN((short) -1);
 
@@ -120,10 +124,27 @@ public enum ControlRecordType {
                 return KRAFT_VERSION;
             case 6:
                 return KRAFT_VOTERS;
+            case 7:
+                return MIRROR_PID_RESET;
 
             default:
                 return UNKNOWN;
         }
+    }
+
+    /**
+     * @return true if the batch is a control batch with a MIRROR_PID_RESET record
+     */
+    public static boolean isMirrorPidReset(RecordBatch batch) {
+        if (!batch.isControlBatch()) {
+            return false;
+        }
+        java.util.Iterator<Record> records = batch.iterator();
+        if (!records.hasNext()) {
+            return false;
+        }
+        Record record = records.next();
+        return record.key() != null && parse(record.key()) == MIRROR_PID_RESET;
     }
 
     public static ControlRecordType parse(ByteBuffer key) {

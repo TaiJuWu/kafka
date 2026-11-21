@@ -200,6 +200,18 @@ public class MirrorCoordinatorShard implements CoordinatorShard<CoordinatorRecor
     }
 
     /**
+     * @return the records which remove the states of all the partitions of a deleted cluster mirror in this shard
+     */
+    public CoordinatorResult<Void, CoordinatorRecord> deleteMirror(String mirrorName) {
+        List<CoordinatorRecord> records = new ArrayList<>();
+        states.keySet().stream().filter(p -> p.mirrorName().equals(mirrorName)).forEach(p -> records.add(
+            CoordinatorRecord.tombstone(new MirrorPartitionStateKey().setMirrorName(p.mirrorName()).setTopicId(p.topicId()).setPartition(p.partition()))));
+        lastMirrors.keySet().stream().filter(p -> p.mirrorName().equals(mirrorName)).forEach(p -> records.add(
+            CoordinatorRecord.tombstone(new LastMirrorEpochsKey().setMirrorName(p.mirrorName()).setTopicId(p.topicId()).setPartition(p.partition()))));
+        return new CoordinatorResult<>(records, null);
+    }
+
+    /**
      * @return the mirror partitions of the given cluster mirror which have a state in this shard
      */
     public List<MirrorPartition> partitionsOf(String mirrorName, long committedOffset) {

@@ -19,6 +19,7 @@ package org.apache.kafka.storage.internals.log;
 import org.apache.kafka.common.InvalidRecordException;
 import org.apache.kafka.common.errors.CorruptRecordException;
 import org.apache.kafka.common.message.AbortedTxn;
+import org.apache.kafka.common.record.internal.ControlRecordType;
 import org.apache.kafka.common.record.internal.FileLogInputStream.FileChannelRecordBatch;
 import org.apache.kafka.common.record.internal.FileRecords;
 import org.apache.kafka.common.record.internal.FileRecords.LogOffsetPosition;
@@ -368,6 +369,9 @@ public class LogSegment implements Closeable {
                 updateTxnIndex(completedTxn, lastStableOffset);
                 producerStateManager.completeTxn(completedTxn);
             }
+        }
+        if (ControlRecordType.isMirrorPidReset(batch)) {
+            producerStateManager.clearProducersBefore(batch.baseOffset());
         }
         producerStateManager.updateMapEndOffset(batch.lastOffset() + 1);
     }

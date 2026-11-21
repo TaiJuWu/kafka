@@ -33,4 +33,22 @@ public class DescribeClusterMirrorsResult {
     public KafkaFuture<Map<String, ClusterMirrorDescription>> allDescriptions() {
         return future;
     }
+
+    /**
+     * @return the last mirror epoch of each partition, by topic, of the mirrors whose source cluster is the cluster
+     *         given in {@link DescribeClusterMirrorsOptions#clusterId}, which a failback truncates to
+     */
+    public KafkaFuture<Map<String, Map<Integer, Integer>>> lookupEpochs() {
+        return future.thenApply(descriptions -> {
+            Map<String, Map<Integer, Integer>> epochs = new java.util.HashMap<>();
+            descriptions.values().forEach(description -> description.leaderStates().forEach((topic, states) ->
+                states.forEach(state -> {
+                    if (state.lastMirrorEpoch() >= 0) {
+                        epochs.computeIfAbsent(topic, k -> new java.util.HashMap<>())
+                            .merge(state.topicPartition().partition(), state.lastMirrorEpoch(), Math::max);
+                    }
+                })));
+            return epochs;
+        });
+    }
 }

@@ -34,6 +34,7 @@ import org.apache.kafka.common.message.AbortedTxn;
 import org.apache.kafka.common.message.DescribeProducersResponseData;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.record.internal.CompressionType;
+import org.apache.kafka.common.record.internal.ControlRecordType;
 import org.apache.kafka.common.record.internal.FileRecords;
 import org.apache.kafka.common.record.internal.MemoryRecords;
 import org.apache.kafka.common.record.internal.MutableRecordBatch;
@@ -1308,6 +1309,14 @@ public class UnifiedLog implements AutoCloseable {
                                     long lastStableOffset = producerStateManager.lastStableOffset(completedTxn);
                                     segment.updateTxnIndex(completedTxn, lastStableOffset);
                                     producerStateManager.completeTxn(completedTxn);
+                                }
+
+                                // A MIRROR_PID_RESET record removes the producers of the source, after the markers
+                                // appended with it completed their transactions.
+                                for (RecordBatch batch : validRecords.batches()) {
+                                    if (ControlRecordType.isMirrorPidReset(batch)) {
+                                        producerStateManager.clearProducersBefore(batch.baseOffset());
+                                    }
                                 }
 
                                 // always update the last producer id map offset so that the snapshot reflects the current offset
@@ -2730,6 +2739,13 @@ public class UnifiedLog implements AutoCloseable {
                         AppendOrigin.REPLICATION,
                         (short) 0);
                 maybeCompletedTxn.ifPresent(completedTxns::add);
+            } else if (ControlRecordType.isMirrorPidReset(batch)) {
+                // The producers loaded so far are applied before the reset removes them.
+                loadedProducers.values().forEach(producerStateManager::update);
+                completedTxns.forEach(producerStateManager::completeTxn);
+                loadedProducers.clear();
+                completedTxns.clear();
+                producerStateManager.clearProducersBefore(batch.baseOffset());
             }
         });
         loadedProducers.values().forEach(producerStateManager::update);

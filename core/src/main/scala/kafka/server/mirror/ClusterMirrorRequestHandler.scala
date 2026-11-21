@@ -97,9 +97,11 @@ class ClusterMirrorRequestHandler(manager: () => MirrorMetadataManager,
    */
   private def invalidStates(name: String, topics: Seq[String], allowed: Set[MirrorPartitionState]): Map[String, String] = {
     val partitions = topics.flatMap(localPartitions)
-    val states = manager().readStates(name, partitions)
+    // Without the __mirror_state topic, no partition has a state yet.
+    val stateTopicExists = replicaManager.metadataCache.contains(org.apache.kafka.common.internals.Topic.MIRROR_STATE_TOPIC_NAME)
+    val states = if (stateTopicExists) manager().readStates(name, partitions) else Map.empty[TopicPartition, MirrorMetadataManager.StateView]
     partitions.flatMap { case (tp, _) =>
-      val state = states.get(tp).map(_.state)
+      val state = if (stateTopicExists) states.get(tp).map(_.state) else Some(UNKNOWN)
       if (state.exists(allowed.contains)) None
       else Some(tp.topic -> s"Partition $tp is in state ${state.getOrElse("unavailable")}, not ${allowed.mkString(" or ")}")
     }.toMap
@@ -343,7 +345,12 @@ class ClusterMirrorRequestHandler(manager: () => MirrorMetadataManager,
     manager().runOnManagerThread { () =>
       val response = new DescribeClusterMirrorsResponseData()
       val configs = manager().mirrorConfigs
-      val names = Option(request.mirrorNames).map(_.asScala.toSeq).filter(_.nonEmpty).getOrElse(configs.keys.toSeq.sorted)
+      val requestedNames = Option(request.mirrorNames).map(_.asScala.toSeq).filter(_.nonEmpty).getOrElse(configs.keys.toSeq.sorted)
+      // A cluster which fails back asks for the mirrors whose source cluster it is, to find the epochs to truncate to.
+      val names = Option(request.clusterId).filter(_.nonEmpty) match {
+        case Some(clusterId) => requestedNames.filter(name => configs.get(name).exists(c => sourceClusterId(name, c) == clusterId))
+        case None => requestedNames
+      }
       names.foreach { name =>
         val mirror = new DescribeClusterMirrorsResponseData.DescribedMirror().setMirrorName(name)
         response.mirrors.add(mirror)

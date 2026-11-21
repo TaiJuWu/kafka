@@ -599,7 +599,8 @@ class BrokerServer(
       metadataPublishers.add(brokerRegistrationTracker)
       metadataPublishers.add(new MirrorCoordinatorPublisher(config.brokerId, mirrorCoordinator,
         sharedServer.metadataPublishingFaultHandler))
-      mirrorMetadataManager = new MirrorMetadataManager(config, replicaManager, clientToControllerChannelManager, metrics, time)
+      mirrorMetadataManager = new MirrorMetadataManager(config, replicaManager, clientToControllerChannelManager, metrics, time,
+        clusterId, Some(mirrorCoordinator))
       metadataPublishers.add(mirrorMetadataManager)
       mirrorMetadataManager.startup()
 

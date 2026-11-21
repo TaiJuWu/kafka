@@ -87,7 +87,8 @@ public class ClusterMirrorIntegrationTest {
 
     @BeforeEach
     public void setUp() throws Exception {
-        source = startCluster(Map.of());
+        // The source cluster runs cluster mirrors too, for the failback tests.
+        source = startCluster(Map.of("mirror.metadata.refresh.interval.ms", "1000", "default.replication.factor", "3"));
         // Mirror topics are created with the default replication factor of the destination cluster.
         destination = startCluster(Map.of("mirror.metadata.refresh.interval.ms", "1000", "default.replication.factor", "3"));
         sourceAdmin = Admin.create(Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, source.bootstrapServers()));
@@ -520,15 +521,92 @@ public class ClusterMirrorIntegrationTest {
             .values().get().contains(binding), 60_000, "the ACL was not synchronized");
     }
 
+    @Test
+    public void testStopAbortsTransactionsAndResetsProducers() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        produce(source, 0, "r", 5);
+        try (KafkaProducer<byte[], byte[]> transactional = producer(source, Map.of(ProducerConfig.TRANSACTIONAL_ID_CONFIG, "hanging"))) {
+            transactional.initTransactions();
+            transactional.beginTransaction();
+            transactional.send(new ProducerRecord<>(TOPIC, 0, null, "uncommitted".getBytes())).get();
+            startMirroring();
+            waitForMirror();
+
+            // The transaction is still open on the source when the mirroring stops.
+            setMirrorState(LogConfig.MIRROR_STATE_STOPPED);
+            TestUtils.waitForCondition(() -> mirrorState(tp).map(st -> st.state() == MirrorPartitionState.STOPPED.value()).orElse(false),
+                () -> "the partition did not reach STOPPED: " + mirrorState(tp));
+            UnifiedLog log = leaderLog(destination, tp);
+            List<org.apache.kafka.common.record.internal.ControlRecordType> controls = new ArrayList<>();
+            for (LogSegment segment : log.logSegments()) {
+                segment.log().batches().forEach(batch -> {
+                    if (batch.isControlBatch()) {
+                        var record = batch.iterator().next();
+                        controls.add(org.apache.kafka.common.record.internal.ControlRecordType.parse(record.key()));
+                    }
+                });
+            }
+            assertEquals(List.of(org.apache.kafka.common.record.internal.ControlRecordType.ABORT,
+                org.apache.kafka.common.record.internal.ControlRecordType.MIRROR_PID_RESET), controls);
+            assertEquals(0, log.producerStateManager().activeProducers().size());
+            // The LSO reaches the log end once the followers replicate the markers, as no transaction hangs.
+            TestUtils.waitForCondition(() -> log.lastStableOffset() == log.logEndOffset(),
+                () -> "a hanging transaction blocks the READ_COMMITTED consumers: LSO " + log.lastStableOffset() + ", LEO " + log.logEndOffset());
+            transactional.abortTransaction();
+        }
+        // An idempotent producer of the destination writes after the stop.
+        produce(destination, 0, "local", 3);
+    }
+
+    @Test
+    public void testFailback() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        produce(source, 0, "first", 20);
+        startMirroring();
+        waitForMirror();
+
+        // Failover: the destination stops mirroring, becomes writable and gets records of its own.
+        setMirrorState(LogConfig.MIRROR_STATE_STOPPED);
+        TestUtils.waitForCondition(() -> mirrorState(tp).map(st -> st.state() == MirrorPartitionState.STOPPED.value()).orElse(false),
+            () -> "the partition did not reach STOPPED: " + mirrorState(tp));
+        produce(destination, 0, "after-failover", 10);
+
+        // Failback: the old source mirrors from the old destination, from the last mirror epoch of the first mirror.
+        sourceAdmin.createClusterMirror("reverse", Map.of("bootstrap.servers", destination.bootstrapServers())).all().get();
+        retry(() -> sourceAdmin.startMirrorTopics("reverse", List.of(TOPIC)).all().get(), "start the reverse mirror");
+        TestUtils.waitForCondition(() -> batches(destination, tp).equals(batches(source, tp)), 60_000,
+            () -> "the old source did not converge: " + batches(source, tp).size() + " batches, expected " + batches(destination, tp).size());
+        assertTrue(consume(source, "read_committed").stream().anyMatch(v -> v.contains(":after-failover-")));
+    }
+
+    @Test
+    public void testMirrorLoopIsRejected() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        produce(source, 0, "r", 10);
+        startMirroring();
+        waitForMirror();
+
+        sourceAdmin.createClusterMirror("reverse", Map.of("bootstrap.servers", destination.bootstrapServers())).all().get();
+        retry(() -> sourceAdmin.startMirrorTopics("reverse", List.of(TOPIC)).all().get(), "start the reverse mirror");
+        TestUtils.waitForCondition(() -> mirrorState(source, "reverse", tp).map(st -> st.state() == MirrorPartitionState.FAILED.value()).orElse(false),
+            () -> "the looping partition did not fail: " + mirrorState(source, "reverse", tp));
+        assertEquals(-1, mirrorState(source, "reverse", tp).orElseThrow().retryAttempt());
+    }
+
     /**
      * @return the state of a mirror partition, read from the coordinator of the destination cluster which keeps it
      */
     private java.util.Optional<ReadMirrorStatesResponseData.PartitionResult> mirrorState(TopicPartition tp) {
-        ReadMirrorStatesRequestData request = new ReadMirrorStatesRequestData().setMirrorName(MIRROR);
+        return mirrorState(destination, MIRROR, tp);
+    }
+
+    private static java.util.Optional<ReadMirrorStatesResponseData.PartitionResult> mirrorState(KafkaClusterTestKit cluster,
+                                                                                               String mirror, TopicPartition tp) {
+        ReadMirrorStatesRequestData request = new ReadMirrorStatesRequestData().setMirrorName(mirror);
         ReadMirrorStatesRequestData.TopicMetadata topic = new ReadMirrorStatesRequestData.TopicMetadata().setTopicName(tp.topic());
         topic.partitions().add(new ReadMirrorStatesRequestData.PartitionData().setPartitionIndex(tp.partition()));
         request.topics().add(topic);
-        for (BrokerServer broker : destination.brokers().values()) {
+        for (BrokerServer broker : cluster.brokers().values()) {
             try {
                 ReadMirrorStatesResponseData.PartitionResult result = broker.mirrorCoordinator().readMirrorStates(request).get()
                     .topics().iterator().next().partitions().get(0);

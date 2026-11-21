@@ -30,7 +30,7 @@ import org.apache.kafka.common.message.{DescribeProducersResponseData, FetchResp
 import org.apache.kafka.common.message.OffsetForLeaderEpochResponseData.EpochEndOffset
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.internal.FileRecords.TimestampAndOffset
-import org.apache.kafka.common.record.internal.{FileRecords, MemoryRecords, RecordBatch}
+import org.apache.kafka.common.record.internal.{ControlRecordType, EndTransactionMarker, FileRecords, MemoryRecords, RecordBatch}
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.requests.OffsetsForLeaderEpochResponse.{UNDEFINED_EPOCH, UNDEFINED_EPOCH_OFFSET}
 import org.apache.kafka.common.utils.{Time, Utils}
@@ -1278,6 +1278,35 @@ class Partition(val topicPartition: TopicPartition,
    * @throws org.apache.kafka.storage.internals.log.MirrorLeaderEpochExceededException if a batch has a partition
    *         leader epoch higher than the current leader epoch
    */
+  /**
+   * Completes the STOPPING transition of a mirror partition (KIP-1279): the transactions of the source producers which
+   * are still ongoing are aborted, so they do not block the READ_COMMITTED consumers, and a MIRROR_PID_RESET record
+   * removes the producer states of the source, before the partition becomes writable.
+   */
+  def finishMirrorStop(): Unit = {
+    val hwIncremented = inReadLock(leaderIsrUpdateLock, () => {
+      leaderLogIfLocal match {
+        case Some(leaderLog) =>
+          val now = time.milliseconds()
+          leaderLog.producerStateManager.activeProducers.asScala.foreachEntry { (producerId, entry) =>
+            if (entry.currentTxnFirstOffset.isPresent) {
+              leaderLog.appendAsLeader(MemoryRecords.withEndTransactionMarker(now, producerId.longValue, entry.producerEpoch,
+                  new EndTransactionMarker(ControlRecordType.ABORT, entry.coordinatorEpoch)),
+                this.leaderEpoch, AppendOrigin.COORDINATOR, RequestLocal.noCaching, VerificationGuard.SENTINEL,
+                TransactionVersion.TV_0.featureLevel)
+            }
+          }
+          leaderLog.appendAsLeader(MemoryRecords.withMirrorPidReset(now, this.leaderEpoch), this.leaderEpoch,
+            AppendOrigin.COORDINATOR, RequestLocal.noCaching, VerificationGuard.SENTINEL, TransactionVersion.TV_0.featureLevel)
+          maybeIncrementLeaderHW(leaderLog)
+        case None =>
+          throw new NotLeaderOrFollowerException(s"Leader not local for partition $topicPartition on broker $localBrokerId")
+      }
+    })
+    if (hwIncremented)
+      tryCompleteDelayedRequests()
+  }
+
   def appendRecordsToMirrorLeader(records: MemoryRecords): (LogAppendInfo, Boolean) = {
     inReadLock(leaderIsrUpdateLock, () => {
       leaderLogIfLocal match {

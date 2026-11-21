@@ -285,6 +285,17 @@ public class ProducerStateManager {
     /**
      * Get an unmodifiable map of active producers.
      */
+    /**
+     * Removes the producers whose last data is before the given offset, and the transactions which started before
+     * it, when a MIRROR_PID_RESET record at that offset is appended or recovered (KIP-1279).
+     */
+    public void clearProducersBefore(long offset) {
+        producers.entrySet().removeIf(entry -> entry.getValue().lastDataOffset() < offset);
+        ongoingTxns.entrySet().removeIf(entry -> entry.getKey() < offset);
+        unreplicatedTxns.entrySet().removeIf(entry -> entry.getKey() < offset);
+        producerIdCount = producers.size();
+    }
+
     public Map<Long, ProducerStateEntry> activeProducers() {
         return Collections.unmodifiableMap(producers);
     }
