@@ -112,6 +112,9 @@ public class ClusterMirrorIntegrationTest {
             .setBootstrapMetadataVersion(MetadataVersion.IBP_4_5_IV1)
             .build());
         builder.setConfigProp("unstable.feature.versions.enable", "true");
+        // The ACLs are synchronized between the clusters; the clients of the tests are super users.
+        builder.setConfigProp("authorizer.class.name", "org.apache.kafka.metadata.authorizer.StandardAuthorizer");
+        builder.setConfigProp("super.users", "User:ANONYMOUS");
         props.forEach(builder::setConfigProp);
         KafkaClusterTestKit cluster = builder.build();
         cluster.format();
@@ -436,6 +439,85 @@ public class ClusterMirrorIntegrationTest {
                 return false;
             }
         }, "the destination topic did not become writable after the mirror was deleted");
+    }
+
+    @Test
+    public void testTopicConfigsAndPartitionsAreSynchronized() throws Exception {
+        produce(source, 0, "r", 10);
+        startMirroring();
+        waitForMirror();
+
+        sourceAdmin.incrementalAlterConfigs(Map.of(new ConfigResource(ConfigResource.Type.TOPIC, TOPIC), List.of(
+            new AlterConfigOp(new ConfigEntry(TopicConfig.RETENTION_MS_CONFIG, "123456789"), AlterConfigOp.OpType.SET)
+        ))).all().get();
+        sourceAdmin.createPartitions(Map.of(TOPIC, org.apache.kafka.clients.admin.NewPartitions.increaseTo(3))).all().get();
+        TestUtils.waitForCondition(() -> "123456789".equals(destinationAdmin.describeConfigs(
+                List.of(new ConfigResource(ConfigResource.Type.TOPIC, TOPIC))).all().get()
+                .get(new ConfigResource(ConfigResource.Type.TOPIC, TOPIC)).get(TopicConfig.RETENTION_MS_CONFIG).value()),
+            "the topic config was not synchronized");
+        TestUtils.waitForCondition(() -> destinationAdmin.describeTopics(Set.of(TOPIC)).allTopicNames().get()
+            .get(TOPIC).partitions().size() == 3, "the partitions were not synchronized");
+
+        produce(source, 2, "new-partition", 5);
+        TopicPartition added = new TopicPartition(TOPIC, 2);
+        TestUtils.waitForCondition(() -> {
+            try {
+                return batches(source, added).equals(batches(destination, added));
+            } catch (Exception e) {
+                return false;
+            }
+        }, "the added partition was not mirrored");
+    }
+
+    @Test
+    public void testNewSourceTopicIsDiscovered() throws Exception {
+        startMirroring();
+        TestUtils.waitForCondition(() -> destinationAdmin.listTopics().names().get().contains(TOPIC), "no destination topic");
+
+        String discovered = "discovered";
+        sourceAdmin.createTopics(List.of(new NewTopic(discovered, 1, (short) 3))).all().get();
+        try (KafkaProducer<byte[], byte[]> producer = producer(source, Map.of())) {
+            for (int i = 0; i < 5; i++) producer.send(new ProducerRecord<>(discovered, 0, null, ("d-" + i).getBytes())).get();
+        }
+        TestUtils.waitForCondition(() -> destinationAdmin.listTopics().names().get().contains(discovered), 60_000,
+            "the new source topic was not discovered");
+        assertEquals(sourceAdmin.describeTopics(Set.of(discovered)).allTopicNames().get().get(discovered).topicId(),
+            destinationAdmin.describeTopics(Set.of(discovered)).allTopicNames().get().get(discovered).topicId());
+        TopicPartition tp = new TopicPartition(discovered, 0);
+        TestUtils.waitForCondition(() -> destinationAdmin.listOffsets(Map.of(tp, OffsetSpec.latest())).all().get().get(tp).offset() == 5,
+            60_000, "the discovered topic was not mirrored");
+    }
+
+    @Test
+    public void testConsumerGroupOffsetsAreSynchronized() throws Exception {
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        produce(source, 0, "r", 30);
+        startMirroring();
+        waitForMirror();
+
+        sourceAdmin.alterConsumerGroupOffsets("group", Map.of(tp, new org.apache.kafka.clients.consumer.OffsetAndMetadata(20))).all().get();
+        TestUtils.waitForCondition(() -> {
+            var offsets = destinationAdmin.listConsumerGroupOffsets("group").partitionsToOffsetAndMetadata().get();
+            return offsets.get(tp) != null && offsets.get(tp).offset() == 20;
+        }, 60_000, "the consumer group offsets were not synchronized");
+
+        // An offset beyond the mirrored records is clamped to the log end offset of the destination.
+        sourceAdmin.alterConsumerGroupOffsets("group", Map.of(tp, new org.apache.kafka.clients.consumer.OffsetAndMetadata(30))).all().get();
+        TestUtils.waitForCondition(() -> destinationAdmin.listConsumerGroupOffsets("group").partitionsToOffsetAndMetadata().get()
+            .get(tp).offset() == 30, 60_000, "the consumer group offsets were not synchronized again");
+    }
+
+    @Test
+    public void testAclsAreSynchronized() throws Exception {
+        startMirroring();
+        var binding = new org.apache.kafka.common.acl.AclBinding(
+            new org.apache.kafka.common.resource.ResourcePattern(org.apache.kafka.common.resource.ResourceType.TOPIC, TOPIC,
+                org.apache.kafka.common.resource.PatternType.LITERAL),
+            new org.apache.kafka.common.acl.AccessControlEntry("User:alice", "*", org.apache.kafka.common.acl.AclOperation.READ,
+                org.apache.kafka.common.acl.AclPermissionType.ALLOW));
+        sourceAdmin.createAcls(List.of(binding)).all().get();
+        TestUtils.waitForCondition(() -> destinationAdmin.describeAcls(org.apache.kafka.common.acl.AclBindingFilter.ANY)
+            .values().get().contains(binding), 60_000, "the ACL was not synchronized");
     }
 
     /**

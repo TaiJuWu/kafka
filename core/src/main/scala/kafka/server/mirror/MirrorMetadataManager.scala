@@ -115,6 +115,7 @@ class MirrorMetadataManager(config: KafkaConfig,
   @volatile private var latestImage: MetadataImage = MetadataImage.EMPTY
   private val fetcherManagers = mutable.Map[String, (Map[String, String], MirrorFetcherManager)]()
   private val tasks = new ConcurrentLinkedQueue[Runnable]()
+  private val synchronizer = new MirrorSourceSynchronizer(this, replicaManager, config, time)
   private val admins = mutable.Map[String, Admin]()
   private val mirrored = mutable.Map[String, mutable.Map[TopicPartition, MirroredPartition]]()
 
@@ -249,6 +250,7 @@ class MirrorMetadataManager(config: KafkaConfig,
     signal()
     thread.awaitShutdown()
     fetcherManagers.values.foreach(_._2.shutdown())
+    synchronizer.close()
     admins.values.foreach(admin => Utils.closeQuietly(admin, "mirror admin client"))
     admins.clear()
     coordinatorSenders.values.foreach(sender => Utils.closeQuietly(() => sender.close(), "mirror coordinator client"))
@@ -335,6 +337,9 @@ class MirrorMetadataManager(config: KafkaConfig,
     maybeBumpLeaderEpochs()
 
     syncFetcherManagers()
+    fetcherManagers.foreachEntry { case (name, (_, manager)) =>
+      synchronizer.maybeSync(name, manager.mirrorConfig, brokerConfig.metadataRefreshIntervalMs)
+    }
     val desiredStates = mutable.Map[TopicPartition, MirrorPartitionState]()
     val partitionsByMirror = replicaManager.leaderPartitionsIterator.flatMap { partition =>
       mirrorOf(partition.topic, partition.log.map(_.config)).map { case (name, desired) =>
