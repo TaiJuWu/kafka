@@ -22,7 +22,10 @@ import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientTestUtils;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.NewPartitionReassignment;
 import org.apache.kafka.clients.admin.TopicDescription;
+import org.apache.kafka.common.ElectionType;
+import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.apache.kafka.common.Uuid;
@@ -55,6 +58,8 @@ import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -257,6 +262,80 @@ public class ProduceRequestTest {
         sendAndCheckProduceResponse(leaderId, 0,
             idempotentRecords(producerId, producerEpoch, 17, 2),
             17L, Errors.NONE);
+    }
+
+    @ClusterTest
+    public void testRetryOfRetainedBatchesAfterLeaderRestart() throws Exception {
+        // The leader retains the metadata of the last five batches per producer, so a retry of any of them is
+        // answered with the original offset. That must still hold after the leader restarts.
+        cluster.createTopic(TOPIC, 1, (short) 1);
+        int leaderId = getLeaderId();
+        long producerId = 1000L;
+        short producerEpoch = 0;
+        int numBatches = 5;
+        for (int seq = 0; seq < numBatches; seq++) {
+            sendAndCheckProduceResponse(leaderId, 0, idempotentRecords(producerId, producerEpoch, seq, 1), seq, Errors.NONE);
+        }
+
+        cluster.shutdownBroker(leaderId);
+        cluster.startBroker(leaderId);
+        TestUtils.waitForCondition(() -> isLeader(leaderId), "broker " + leaderId + " did not become the leader again");
+
+        for (int seq = 0; seq < numBatches; seq++) {
+            sendAndCheckProduceResponse(leaderId, 0, idempotentRecords(producerId, producerEpoch, seq, 1), seq, Errors.NONE);
+        }
+    }
+
+    @ClusterTest
+    public void testRetryOfRetainedBatchesAfterRestartedFollowerBecomesLeader() throws Exception {
+        // Same as above, but the retries go to a follower which was restarted after it replicated the batches and
+        // then took over the leadership, as in a rolling restart followed by a preferred leader election.
+        cluster.createTopic(TOPIC, 1, (short) 2);
+        TopicPartition tp = new TopicPartition(TOPIC, 0);
+        int leaderId = getLeaderId();
+        int followerId = replicas().stream().filter(id -> id != leaderId).findFirst().orElseThrow();
+        long producerId = 1000L;
+        short producerEpoch = 0;
+        int numBatches = 5;
+        for (int seq = 0; seq < numBatches; seq++) {
+            sendAndCheckProduceResponse(leaderId, 0, idempotentRecords(producerId, producerEpoch, seq, 1), seq, Errors.NONE);
+        }
+
+        cluster.shutdownBroker(followerId);
+        cluster.startBroker(followerId);
+        try (Admin admin = cluster.admin()) {
+            TestUtils.waitForCondition(() -> isr().contains(followerId), "broker " + followerId + " did not rejoin the ISR");
+            admin.alterPartitionReassignments(Map.of(tp,
+                Optional.of(new NewPartitionReassignment(List.of(followerId, leaderId))))).all().get();
+            TestUtils.waitForCondition(() -> replicas().equals(List.of(followerId, leaderId)),
+                "the replicas of " + tp + " were not reordered");
+            admin.electLeaders(ElectionType.PREFERRED, Set.of(tp)).all().get();
+        }
+        TestUtils.waitForCondition(() -> isLeader(followerId), "broker " + followerId + " did not become the leader");
+
+        for (int seq = 0; seq < numBatches; seq++) {
+            sendAndCheckProduceResponse(followerId, 0, idempotentRecords(producerId, producerEpoch, seq, 1), seq, Errors.NONE);
+        }
+    }
+
+    private boolean isLeader(int brokerId) throws ExecutionException, InterruptedException {
+        try (Admin admin = cluster.admin()) {
+            return AdminClientTestUtils.currentLeader(admin, new TopicPartition(TOPIC, 0)).orElse(-1) == brokerId;
+        }
+    }
+
+    private List<Integer> replicas() throws ExecutionException, InterruptedException {
+        return partitionInfo().replicas().stream().map(Node::id).toList();
+    }
+
+    private List<Integer> isr() throws ExecutionException, InterruptedException {
+        return partitionInfo().isr().stream().map(Node::id).toList();
+    }
+
+    private TopicPartitionInfo partitionInfo() throws ExecutionException, InterruptedException {
+        try (Admin admin = cluster.admin()) {
+            return admin.describeTopics(List.of(TOPIC)).topicNameValues().get(TOPIC).get().partitions().get(0);
+        }
     }
 
     private MemoryRecords idempotentRecords(long producerId, short producerEpoch, int baseSequence, int recordCount) {
