@@ -51,6 +51,8 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.server.config.ReplicationConfigs;
 import org.apache.kafka.test.TestUtils;
 
+import org.junit.jupiter.api.Timeout;
+
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -61,7 +63,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.stream.IntStream;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class ProducerRetryAfterLeaderRestartTest {
@@ -88,11 +92,11 @@ public class ProducerRetryAfterLeaderRestartTest {
 
         List<Future<RecordMetadata>> futures = new ArrayList<>();
         ResponseDroppingClient client = new ResponseDroppingClient();
-        try (KafkaProducer<String, String> producer = createProducer(client)) {
+        try (KafkaProducer<String, String> producer = createProducer(client, Map.of())) {
             futures.add(producer.send(new ProducerRecord<>(TOPIC, 0, null, "0")));
             futures.get(0).get();
 
-            client.dropProduceResponsesFrom(oldLeader);
+            client.dropProduceResponsesFrom(oldLeader, false);
             for (int i = 1; i <= 2; i++) {
                 futures.add(producer.send(new ProducerRecord<>(TOPIC, 0, null, String.valueOf(i))));
                 long expectedHighWatermark = i + 1;
@@ -100,17 +104,7 @@ public class ProducerRetryAfterLeaderRestartTest {
                     "record " + i + " was not replicated");
             }
 
-            cluster.shutdownBroker(newLeader);
-            cluster.startBroker(newLeader);
-            TestUtils.waitForCondition(() -> isr().contains(newLeader), "broker " + newLeader + " did not rejoin the ISR");
-            try (Admin admin = cluster.admin()) {
-                admin.alterPartitionReassignments(Map.of(TP,
-                    Optional.of(new NewPartitionReassignment(List.of(newLeader, oldLeader))))).all().get();
-                TestUtils.waitForCondition(() -> replicas().equals(List.of(newLeader, oldLeader)),
-                    "the replicas of " + TP + " were not reordered");
-                admin.electLeaders(ElectionType.PREFERRED, Set.of(TP)).all().get();
-            }
-            TestUtils.waitForCondition(() -> leader() == newLeader, "broker " + newLeader + " did not become the leader");
+            restartAndMoveLeadership(newLeader, oldLeader);
 
             client.stopDropping();
             for (Future<RecordMetadata> future : futures) {
@@ -121,7 +115,114 @@ public class ProducerRetryAfterLeaderRestartTest {
         assertEquals(List.of("0", "1", "2"), readAll());
     }
 
-    private KafkaProducer<String, String> createProducer(ResponseDroppingClient client) {
+    @ClusterTest(types = {Type.KRAFT}, brokers = 2, serverProperties = {
+        @ClusterConfigProperty(key = ReplicationConfigs.AUTO_LEADER_REBALANCE_ENABLE_CONFIG, value = "false")
+    })
+    public void testNoDuplicateOrFailureWhenRetryingManyBatchesToRestartedFollower() throws Exception {
+        // Same as above, but more batches pile up while the responses are lost, and the producer has nothing new to
+        // send after the leader changes.
+        verifyRetriesToRestartedFollower(false);
+    }
+
+    @ClusterTest(types = {Type.KRAFT}, brokers = 2, serverProperties = {
+        @ClusterConfigProperty(key = ReplicationConfigs.AUTO_LEADER_REBALANCE_ENABLE_CONFIG, value = "false")
+    })
+    @Timeout(180)
+    public void testNoDuplicateOrFailureWhenNewRecordsReachRestartedFollowerBeforeRetries() throws Exception {
+        // Same as above, but the lost responses are only noticed later (as with request.timeout.ms), and the producer
+        // already knows the new leader, so the records sent after the leader changes reach it before the retries do.
+        verifyRetriesToRestartedFollower(true);
+    }
+
+    private void verifyRetriesToRestartedFollower(boolean noticeLossLate) throws Exception {
+        cluster.createTopic(TOPIC, 1, (short) 2);
+        int oldLeader = leader();
+        int newLeader = replicas().stream().filter(id -> id != oldLeader).findFirst().orElseThrow();
+        int numRecords = 20;
+
+        List<Future<RecordMetadata>> futures = new ArrayList<>();
+        ResponseDroppingClient client = new ResponseDroppingClient();
+        // batch.size=1 puts every record in its own batch
+        try (KafkaProducer<String, String> producer = createProducer(client, Map.of(
+                ProducerConfig.BATCH_SIZE_CONFIG, 1,
+                ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 90_000))) {
+            futures.add(producer.send(new ProducerRecord<>(TOPIC, 0, null, "0")));
+            futures.get(0).get();
+
+            client.dropProduceResponsesFrom(oldLeader, noticeLossLate);
+            for (int i = 1; i < numRecords; i++) {
+                futures.add(producer.send(new ProducerRecord<>(TOPIC, 0, null, String.valueOf(i))));
+            }
+            // The producer may hold back some of the records, so wait until the high watermark stops moving
+            long[] last = {-1, System.currentTimeMillis()};
+            TestUtils.waitForCondition(() -> {
+                long hw = highWatermark();
+                long now = System.currentTimeMillis();
+                if (hw != last[0]) {
+                    last[0] = hw;
+                    last[1] = now;
+                }
+                return hw == numRecords || (hw > 1 && now - last[1] >= 3_000);
+            }, "the records were not replicated");
+            long writtenBeforeRestart = last[0];
+
+            restartAndMoveLeadership(newLeader, oldLeader);
+
+            client.stopDropping();
+            int total = numRecords;
+            if (noticeLossLate) {
+                // Send new records and give them a chance to be acknowledged before the producer notices the loss
+                producerMetadata.requestUpdate(true);
+                client.wakeup();
+                TestUtils.waitForCondition(() -> producerMetadata.currentLeader(TP).leader.map(Node::id).orElse(-1) == newLeader,
+                    "the producer did not learn the new leader");
+                int firstNew = total;
+                for (int i = 0; i < 10; i++) {
+                    futures.add(producer.send(new ProducerRecord<>(TOPIC, 0, null, String.valueOf(total++))));
+                }
+                long deadline = System.currentTimeMillis() + 10_000;
+                while (!futures.get(firstNew).isDone() && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(100);
+                }
+                client.releaseHeldResponses();
+            }
+            List<Integer> failed = new ArrayList<>();
+            for (int i = 0; i < total; i++) {
+                try {
+                    futures.get(i).get();
+                } catch (ExecutionException e) {
+                    failed.add(i);
+                }
+            }
+
+            List<String> expected = IntStream.range(0, total).mapToObj(String::valueOf).toList();
+            List<String> actual = readAll();
+            int sent = total;
+            assertAll(
+                () -> assertEquals(List.of(), failed, "records reported as failed (" + writtenBeforeRestart
+                    + " records were written before the restart, " + sent + " sent)"),
+                () -> assertEquals(sent, actual.size(), "number of records in the log"),
+                () -> assertEquals(expected, actual, "records in the log"));
+        }
+    }
+
+    private void restartAndMoveLeadership(int newLeader, int oldLeader) throws Exception {
+        cluster.shutdownBroker(newLeader);
+        cluster.startBroker(newLeader);
+        TestUtils.waitForCondition(() -> isr().contains(newLeader), "broker " + newLeader + " did not rejoin the ISR");
+        try (Admin admin = cluster.admin()) {
+            admin.alterPartitionReassignments(Map.of(TP,
+                Optional.of(new NewPartitionReassignment(List.of(newLeader, oldLeader))))).all().get();
+            TestUtils.waitForCondition(() -> replicas().equals(List.of(newLeader, oldLeader)),
+                "the replicas of " + TP + " were not reordered");
+            admin.electLeaders(ElectionType.PREFERRED, Set.of(TP)).all().get();
+        }
+        TestUtils.waitForCondition(() -> leader() == newLeader, "broker " + newLeader + " did not become the leader");
+    }
+
+    private ProducerMetadata producerMetadata;
+
+    private KafkaProducer<String, String> createProducer(ResponseDroppingClient client, Map<String, Object> overrides) {
         Map<String, Object> props = new HashMap<>();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, cluster.bootstrapServers());
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
@@ -129,6 +230,7 @@ public class ProducerRetryAfterLeaderRestartTest {
         props.put(ProducerConfig.LINGER_MS_CONFIG, 0);
         props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 300_000);
         props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 30_000);
+        props.putAll(overrides);
         ProducerConfig config = new ProducerConfig(
             ProducerConfig.appendSerializerToConfig(props, new StringSerializer(), new StringSerializer()));
 
@@ -148,6 +250,7 @@ public class ProducerRetryAfterLeaderRestartTest {
             new Metrics(), "producer", logContext, apiVersions, Time.SYSTEM,
             config.getInt(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION), metadata, null, null);
         client.setDelegate(networkClient);
+        producerMetadata = metadata;
         return new KafkaProducer<>(config, new StringSerializer(), new StringSerializer(), metadata, client,
             clientInstanceId, null, apiVersions, Time.SYSTEM);
     }
@@ -204,19 +307,35 @@ public class ProducerRetryAfterLeaderRestartTest {
      * disconnection, so the producer does not know whether the batches were written and retries them.
      */
     private static class ResponseDroppingClient implements KafkaClient {
+        private final List<Runnable> heldResponses = new ArrayList<>();
         private KafkaClient delegate;
         private volatile String droppedNode;
+        private volatile boolean hold;
+        private volatile boolean release;
 
         void setDelegate(KafkaClient delegate) {
             this.delegate = delegate;
         }
 
-        void dropProduceResponsesFrom(int brokerId) {
+        /**
+         * @param hold whether to keep the disconnections until {@link #releaseHeldResponses()} instead of delivering
+         *             them right away
+         */
+        void dropProduceResponsesFrom(int brokerId, boolean hold) {
+            this.hold = hold;
             droppedNode = String.valueOf(brokerId);
         }
 
+        /**
+         * Stops dropping the responses of new requests. Held disconnections stay held.
+         */
         void stopDropping() {
             droppedNode = null;
+        }
+
+        void releaseHeldResponses() {
+            release = true;
+            delegate.wakeup();
         }
 
         @Override
@@ -227,10 +346,17 @@ public class ProducerRetryAfterLeaderRestartTest {
             if (requestBuilder.apiKey() == ApiKeys.PRODUCE && callback != null) {
                 handler = response -> {
                     if (response.destination().equals(droppedNode) && !response.wasDisconnected()) {
-                        callback.onComplete(new ClientResponse(response.requestHeader(), callback,
+                        ClientResponse disconnected = new ClientResponse(response.requestHeader(), callback,
                             response.destination(), response.receivedTimeMs() - response.requestLatencyMs(),
                             response.receivedTimeMs(),
-                            true, null, null, null));
+                            true, null, null, null);
+                        if (hold) {
+                            synchronized (heldResponses) {
+                                heldResponses.add(() -> callback.onComplete(disconnected));
+                            }
+                        } else {
+                            callback.onComplete(disconnected);
+                        }
                     } else {
                         callback.onComplete(response);
                     }
@@ -283,7 +409,16 @@ public class ProducerRetryAfterLeaderRestartTest {
 
         @Override
         public List<ClientResponse> poll(long timeout, long now) {
-            return delegate.poll(timeout, now);
+            List<ClientResponse> responses = delegate.poll(timeout, now);
+            if (release) {
+                List<Runnable> released;
+                synchronized (heldResponses) {
+                    released = new ArrayList<>(heldResponses);
+                    heldResponses.clear();
+                }
+                released.forEach(Runnable::run);
+            }
+            return responses;
         }
 
         @Override
