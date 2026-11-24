@@ -282,7 +282,7 @@ public class ProduceRequestTest {
         TestUtils.waitForCondition(() -> isLeader(leaderId), "broker " + leaderId + " did not become the leader again");
 
         for (int seq = 0; seq < numBatches; seq++) {
-            sendAndCheckProduceResponse(leaderId, 0, idempotentRecords(producerId, producerEpoch, seq, 1), seq, Errors.NONE);
+            sendAndCheckDuplicateResponse(leaderId, 0, idempotentRecords(producerId, producerEpoch, seq, 1), seq);
         }
     }
 
@@ -314,7 +314,7 @@ public class ProduceRequestTest {
         TestUtils.waitForCondition(() -> isLeader(followerId), "broker " + followerId + " did not become the leader");
 
         for (int seq = 0; seq < numBatches; seq++) {
-            sendAndCheckProduceResponse(followerId, 0, idempotentRecords(producerId, producerEpoch, seq, 1), seq, Errors.NONE);
+            sendAndCheckDuplicateResponse(followerId, 0, idempotentRecords(producerId, producerEpoch, seq, 1), seq);
         }
     }
 
@@ -502,6 +502,21 @@ public class ProduceRequestTest {
 
     private void sendAndCheckProduceResponse(int leaderId, int partition,
                                              MemoryRecords records, long expectedOffset, Errors expectedError) throws IOException, ExecutionException, InterruptedException {
+        assertEquals(-1L, sendAndCheckOffset(leaderId, partition, records, expectedOffset, expectedError).logAppendTimeMs());
+    }
+
+    /**
+     * A duplicate batch is answered with the max timestamp of the original batch as the log append time, so only
+     * the error and the offset are checked.
+     */
+    private void sendAndCheckDuplicateResponse(int leaderId, int partition, MemoryRecords records, long expectedOffset)
+            throws IOException, ExecutionException, InterruptedException {
+        sendAndCheckOffset(leaderId, partition, records, expectedOffset, Errors.NONE);
+    }
+
+    private ProduceResponseData.PartitionProduceResponse sendAndCheckOffset(int leaderId, int partition, MemoryRecords records,
+                                                                            long expectedOffset, Errors expectedError)
+            throws IOException, ExecutionException, InterruptedException {
         Uuid topicId = getTopicId();
         ProduceRequest request = ProduceRequest.builder(new ProduceRequestData()
             .setTopicData(new ProduceRequestData.TopicProduceDataCollection(List.of(
@@ -526,8 +541,8 @@ public class ProduceRequestTest {
         assertEquals(partition, partitionResponse.index());
         assertEquals(expectedError, Errors.forCode(partitionResponse.errorCode()));
         assertEquals(expectedOffset, partitionResponse.baseOffset());
-        assertEquals(-1L, partitionResponse.logAppendTimeMs());
         assertTrue(partitionResponse.recordErrors().isEmpty());
+        return partitionResponse;
     }
 
     private void doTestProduceWithInvalidTimestamp(String timestampConfig, long recordTimestamp) throws Exception {

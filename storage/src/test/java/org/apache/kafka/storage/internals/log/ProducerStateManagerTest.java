@@ -22,10 +22,12 @@ import org.apache.kafka.common.errors.InvalidTxnStateException;
 import org.apache.kafka.common.errors.OutOfOrderSequenceException;
 import org.apache.kafka.common.errors.TransactionCoordinatorFencedException;
 import org.apache.kafka.common.internals.Topic;
+import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.record.internal.ControlRecordType;
 import org.apache.kafka.common.record.internal.EndTransactionMarker;
 import org.apache.kafka.common.record.internal.RecordBatch;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.server.log.remote.metadata.storage.generated.ProducerSnapshot;
 import org.apache.kafka.server.util.MockTime;
 import org.apache.kafka.test.TestUtils;
 
@@ -479,10 +481,9 @@ public class ProducerStateManagerTest {
                 maxTransactionTimeoutMs, producerStateManagerConfig, time);
         recoveredMapping.truncateAndReload(0L, 3L, time.milliseconds());
 
-        // The snapshot only persists the last appended batch metadata
         ProducerStateEntry loadedEntry = getLastEntryOrElseThrownByProducerId(recoveredMapping, producerId);
-        assertEquals(1, loadedEntry.firstDataOffset());
-        assertEquals(1, loadedEntry.firstSeq());
+        assertEquals(0, loadedEntry.firstDataOffset());
+        assertEquals(0, loadedEntry.firstSeq());
         assertEquals(1, loadedEntry.lastDataOffset());
         assertEquals(1, loadedEntry.lastSeq());
         assertEquals(OptionalLong.of(0), loadedEntry.currentTxnFirstOffset());
@@ -502,10 +503,9 @@ public class ProducerStateManagerTest {
                 maxTransactionTimeoutMs, producerStateManagerConfig, time);
         recoveredMapping.truncateAndReload(0L, 3L, time.milliseconds());
 
-        // The snapshot only persists the last appended batch metadata
         ProducerStateEntry loadedEntry = getLastEntryOrElseThrownByProducerId(recoveredMapping, producerId);
-        assertEquals(1, loadedEntry.firstDataOffset());
-        assertEquals(1, loadedEntry.firstSeq());
+        assertEquals(0, loadedEntry.firstDataOffset());
+        assertEquals(0, loadedEntry.firstSeq());
         assertEquals(1, loadedEntry.lastDataOffset());
         assertEquals(1, loadedEntry.lastSeq());
         assertEquals(OptionalLong.empty(), loadedEntry.currentTxnFirstOffset());
@@ -1432,6 +1432,64 @@ public class ProducerStateManagerTest {
         File file = new File(logDir, "testReadWriteSnapshot");
         ProducerStateManager.writeSnapshot(file, expectedEntryMap, true);
         assertEntries(expectedEntryMap, ProducerStateManager.readSnapshot(file));
+    }
+
+    @Test
+    public void testRecoverFromSnapshotRetainsAllBatches() throws IOException {
+        long now = time.milliseconds();
+        int numBatches = RecordBatch.NUM_BATCHES_RETAINED_PER_PRODUCER + 1;
+        for (int seq = 0; seq < numBatches; seq++)
+            appendClientEntry(stateManager, producerId, epoch, seq, seq, now + seq, false);
+
+        stateManager.takeSnapshot();
+        ProducerStateManager recoveredMapping = new ProducerStateManager(partition, logDir,
+                maxTransactionTimeoutMs, producerStateManagerConfig, time);
+        recoveredMapping.truncateAndReload(0L, numBatches, time.milliseconds());
+
+        ProducerStateEntry loadedEntry = getLastEntryOrElseThrownByProducerId(recoveredMapping, producerId);
+        assertProducerStateEntry(getLastEntryOrElseThrownByProducerId(stateManager, producerId), loadedEntry);
+        assertEquals(1, loadedEntry.firstSeq());
+        assertEquals(numBatches - 1, loadedEntry.lastSeq());
+    }
+
+    @Test
+    public void testReadWriteSnapshotWithMultipleBatches() throws IOException {
+        ProducerStateEntry transactional = new ProducerStateEntry(producerId, epoch, 3, RecordBatch.NO_TIMESTAMP, OptionalLong.of(10L));
+        for (int seq = 0; seq < RecordBatch.NUM_BATCHES_RETAINED_PER_PRODUCER; seq++)
+            transactional.addBatch(epoch, seq, 10L + seq, 0, 1000L + seq);
+        ProducerStateEntry idempotent = new ProducerStateEntry(2L, epoch, -1, RecordBatch.NO_TIMESTAMP, OptionalLong.empty());
+        idempotent.addBatch(epoch, 4, 20L, 4, 2000L);
+        idempotent.addBatch(epoch, 9, 25L, 4, 2001L);
+        Map<Long, ProducerStateEntry> expectedEntryMap = Map.of(producerId, transactional, 2L, idempotent);
+
+        File file = new File(logDir, "testReadWriteSnapshotWithMultipleBatches");
+        ProducerStateManager.writeSnapshot(file, expectedEntryMap, true);
+        assertEntries(expectedEntryMap, ProducerStateManager.readSnapshot(file));
+    }
+
+    @Test
+    public void testLastSnapshotEntryOfProducerHoldsLastBatch() throws IOException {
+        // Older versions keep only the last entry they read for a producer, so it must hold the last batch.
+        ProducerStateEntry entry = new ProducerStateEntry(producerId, epoch, 3, RecordBatch.NO_TIMESTAMP, OptionalLong.of(100L));
+        for (int seq = 0; seq < 3; seq++)
+            entry.addBatch(epoch, seq, 100L + seq, 0, 1000L + seq);
+
+        File file = new File(logDir, "testLastSnapshotEntryOfProducerHoldsLastBatch");
+        ProducerStateManager.writeSnapshot(file, Map.of(producerId, entry), true);
+
+        ByteBuffer buffer = ByteBuffer.wrap(Files.readAllBytes(file.toPath()));
+        short version = buffer.getShort();
+        List<ProducerSnapshot.ProducerEntry> written = new ProducerSnapshot(new ByteBufferAccessor(buffer), version).producerEntries();
+        assertEquals(List.of(0, 1, 2), written.stream().map(ProducerSnapshot.ProducerEntry::lastSequence).toList());
+        assertEquals(new ProducerSnapshot.ProducerEntry()
+                .setProducerId(producerId)
+                .setEpoch(epoch)
+                .setLastSequence(2)
+                .setLastOffset(102L)
+                .setOffsetDelta(0)
+                .setTimestamp(1002L)
+                .setCoordinatorEpoch(3)
+                .setCurrentTxnFirstOffset(100L), written.get(2));
     }
 
     private void appendEntry(ProducerStateManager stateManager,

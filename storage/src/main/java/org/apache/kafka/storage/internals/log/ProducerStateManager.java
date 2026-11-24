@@ -43,6 +43,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -641,9 +642,9 @@ public class ProducerStateManager {
             throw new CorruptSnapshotException("Snapshot is corrupt (CRC is no longer valid). Stored crc: " + crc
                     + ". Computed crc: " + computedCrc);
 
-        List<ProducerSnapshot.ProducerEntry> producerEntries = producerSnapshot.producerEntries();
-        List<ProducerStateEntry> entries = new ArrayList<>(producerEntries.size());
-        for (ProducerSnapshot.ProducerEntry producerEntry : producerEntries) {
+        // A producer has one entry per retained batch, from the oldest to the newest (see writeSnapshot).
+        Map<Long, ProducerStateEntry> entries = new LinkedHashMap<>();
+        for (ProducerSnapshot.ProducerEntry producerEntry : producerSnapshot.producerEntries()) {
             long producerId = producerEntry.producerId();
             short producerEpoch = producerEntry.epoch();
             int lastSequence = producerEntry.lastSequence();
@@ -654,34 +655,39 @@ public class ProducerStateManager {
             long currentTxnFirstOffset = producerEntry.currentTxnFirstOffset();
 
             OptionalLong currentTxnFirstOffsetVal = currentTxnFirstOffset >= 0 ? OptionalLong.of(currentTxnFirstOffset) : OptionalLong.empty();
-            ProducerStateEntry stateEntry = new ProducerStateEntry(producerId, producerEpoch, coordinatorEpoch, timestamp, currentTxnFirstOffsetVal);
+            ProducerStateEntry stateEntry = entries.computeIfAbsent(producerId,
+                id -> new ProducerStateEntry(id, producerEpoch, coordinatorEpoch, timestamp, currentTxnFirstOffsetVal));
 
             if (lastOffset >= 0)
                 stateEntry.addBatch(producerEpoch, lastSequence, lastOffset, offsetDelta, timestamp);
-
-            entries.add(stateEntry);
         }
 
-        return entries;
+        return new ArrayList<>(entries.values());
     }
 
+    /**
+     * Write one entry per retained batch of each producer, from the oldest to the newest, so that a retry of any
+     * of them is still detected as a duplicate after the snapshot is loaded. The last entry of a producer carries
+     * the same values as the single entry written by older versions, and older versions keep only the last entry
+     * they read for a producer, so they load the same state as before.
+     */
     // visible for testing
     public static void writeSnapshot(File file, Map<Long, ProducerStateEntry> entries, boolean sync) throws IOException {
         ProducerSnapshot producerSnapshot = new ProducerSnapshot();
         List<ProducerSnapshot.ProducerEntry> producerEntries = new ArrayList<>(entries.size());
         for (Map.Entry<Long, ProducerStateEntry> producerIdEntry : entries.entrySet()) {
-            Long producerId = producerIdEntry.getKey();
+            long producerId = producerIdEntry.getKey();
             ProducerStateEntry entry = producerIdEntry.getValue();
-            ProducerSnapshot.ProducerEntry producerEntry = new ProducerSnapshot.ProducerEntry()
-                    .setProducerId(producerId)
-                    .setEpoch(entry.producerEpoch())
-                    .setLastSequence(entry.lastSeq())
-                    .setLastOffset(entry.lastDataOffset())
-                    .setOffsetDelta(entry.lastOffsetDelta())
-                    .setTimestamp(entry.lastTimestamp())
-                    .setCoordinatorEpoch(entry.coordinatorEpoch())
-                    .setCurrentTxnFirstOffset(entry.currentTxnFirstOffset().orElse(-1L));
-            producerEntries.add(producerEntry);
+            Iterator<BatchMetadata> batches = entry.batchMetadata().iterator();
+            if (!batches.hasNext()) {
+                producerEntries.add(producerEntry(producerId, entry, RecordBatch.NO_SEQUENCE, -1L, 0, entry.lastTimestamp()));
+                continue;
+            }
+            while (batches.hasNext()) {
+                BatchMetadata batch = batches.next();
+                long timestamp = batches.hasNext() ? batch.timestamp() : entry.lastTimestamp();
+                producerEntries.add(producerEntry(producerId, entry, batch.lastSeq(), batch.lastOffset(), batch.offsetDelta(), timestamp));
+            }
         }
 
         producerSnapshot.setProducerEntries(producerEntries);
@@ -697,6 +703,19 @@ public class ProducerStateManager {
                 fileChannel.force(true);
             }
         }
+    }
+
+    private static ProducerSnapshot.ProducerEntry producerEntry(long producerId, ProducerStateEntry entry, int lastSequence,
+                                                                long lastOffset, int offsetDelta, long timestamp) {
+        return new ProducerSnapshot.ProducerEntry()
+                .setProducerId(producerId)
+                .setEpoch(entry.producerEpoch())
+                .setLastSequence(lastSequence)
+                .setLastOffset(lastOffset)
+                .setOffsetDelta(offsetDelta)
+                .setTimestamp(timestamp)
+                .setCoordinatorEpoch(entry.coordinatorEpoch())
+                .setCurrentTxnFirstOffset(entry.currentTxnFirstOffset().orElse(-1L));
     }
 
     private static boolean isSnapshotFile(Path path) {

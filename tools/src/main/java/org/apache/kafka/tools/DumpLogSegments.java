@@ -181,8 +181,7 @@ public class DumpLogSegments {
                     " currentTxnFirstOffset: " + entry.currentTxnFirstOffset() +
                     " lastTimestamp: " + entry.lastTimestamp());
 
-                if (!entry.batchMetadata().isEmpty()) {
-                    BatchMetadata metadata = entry.batchMetadata().iterator().next();
+                for (BatchMetadata metadata : entry.batchMetadata()) {
                     System.out.print(" firstSequence: " + metadata.firstSeq() +
                         " lastSequence: " + metadata.lastSeq() +
                         " lastOffset: " + metadata.lastOffset() +

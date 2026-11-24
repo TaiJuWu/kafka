@@ -29,7 +29,7 @@
       "name": "ProducerEntries",
       "type": "[]ProducerEntry",
       "versions": "1",
-      "about": "The entries in the producer table",
+      "about": "The entries in the producer table, one per retained batch of each producer from the oldest to the newest",
       "fields": [
         {
           "name": "ProducerId",
